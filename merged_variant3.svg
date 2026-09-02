@@ -1,0 +1,13 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#00f0ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Full Checklist Sheet -->
+  <path d="M6 4a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v6" />
+  <path d="M6 4v14a2 2 0 0 0 2 2h4" />
+  <!-- Task Lines -->
+  <path d="M9 7h6" />
+  <path d="M9 11h4" />
+  <path d="M9 15h2" />
+  <!-- Lock integrated at bottom-right -->
+  <path d="M15 15v-1.5a2 2 0 0 1 4 0v1.5" stroke="#38bdf8" />
+  <rect x="13.5" y="15" width="7" height="6" rx="1.5" stroke="#00f0ff" />
+  <circle cx="17" cy="18" r="0.5" fill="#00f0ff" stroke="none" />
+</svg>

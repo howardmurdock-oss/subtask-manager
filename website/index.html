@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>(sub)Task Manager — High-Discipline Accountability &amp; Directive System</title>
+  <meta name="description" content="Local-first, cross-platform accountability and directive execution system with dual Player HUD &amp; Director control, end-to-end encryption, and stealth disguise mode.">
+  <meta name="keywords" content="task manager, accountability app, directives, discipline, flutter, android, windows, e2ee, offline-first">
+  
+  <!-- Open Graph -->
+  <meta property="og:title" content="(sub)Task Manager — Absolute Accountability">
+  <meta property="og:description" content="Cross-platform directive execution system with dual-mode control and emergency stealth disguise.">
+  <meta property="og:url" content="https://subtaskmanager.com">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#07090e">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css?v=5">
+</head>
+<body>
+
+  <!-- Ambient Glow & Background Grid -->
+  <div class="bg-grid-overlay"></div>
+  <div class="ambient-glow glow-top-left"></div>
+  <div class="ambient-glow glow-top-right"></div>
+  <div class="ambient-glow glow-bottom-center"></div>
+
+  <!-- Site Header -->
+  <header class="site-header">
+    <div class="container nav-wrap">
+      <a href="#" class="brand-link">
+        <img src="assets/logo.svg" alt="subTask Manager Logo" class="brand-logo">
+        <span>(sub)Task Manager</span>
+        <span class="brand-badge">v1.0 Release</span>
+      </a>
+
+      <nav class="main-nav">
+        <a href="#features">Features</a>
+        <a href="#dual-mode">Dual-Mode</a>
+        <a href="#security">Privacy &amp; Stealth</a>
+        <a href="#downloads">Downloads</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+
+      <div class="header-actions">
+        <!-- Live Theme Switcher -->
+        <div class="theme-selector" title="Switch Theme">
+          <div class="theme-dot dot-cyber active" data-theme="cyber" title="Obsidian Cyberpunk"></div>
+          <div class="theme-dot dot-crimson" data-theme="crimson" title="Velvet Crimson"></div>
+          <div class="theme-dot dot-noir" data-theme="noir" title="Minimalist Noir"></div>
+          <div class="theme-dot dot-terminal" data-theme="terminal" title="Slate Terminal"></div>
+        </div>
+
+        <a href="#downloads" class="btn btn-sm btn-primary">Get App</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="container">
+      <div class="pill-badge">
+        <span class="pill-pulse"></span>
+        <span>Local-First &bull; Zero Cloud Tracking &bull; AES-256 E2EE</span>
+      </div>
+
+      <h1>
+        Absolute Accountability.<br>
+        <span class="text-gradient">Total Dynamic Control.</span>
+      </h1>
+
+      <p class="lead">
+        A task oriented control app for power play couples and single players looking to replicate the experience - completely customizable, with both remote and local play, across <strong>Windows, Android, Linux, and macOS</strong>.
+      </p>
+
+      <div class="hero-cta">
+        <a href="#downloads" class="btn btn-primary">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download Releases
+        </a>
+        <a href="#showcase" class="btn btn-outline">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+          Try Live Simulator
+        </a>
+      </div>
+
+      <!-- Interactive Mockup Showcase -->
+      <div class="mockup-container" id="showcase">
+        <div class="mockup-window">
+          <div class="window-header">
+            <div class="window-controls">
+              <span class="window-dot dot-red"></span>
+              <span class="window-dot dot-yellow"></span>
+              <span class="window-dot dot-green"></span>
+            </div>
+            
+            <div class="window-tabs">
+              <button class="tab-btn active" data-view="player">Player HUD</button>
+              <button class="tab-btn" data-view="director">Director Control</button>
+            </div>
+          </div>
+
+          <div class="window-body">
+            
+            <!-- 1. Player HUD View -->
+            <div class="view-content active" id="view-player">
+              <div class="player-hud-grid">
+                <div class="hud-left">
+                  <div class="timer-ring-wrap">
+                    <svg class="timer-svg" viewBox="0 0 160 160">
+                      <circle class="timer-bg-circle" cx="80" cy="80" r="70"></circle>
+                      <circle class="timer-progress-circle" cx="80" cy="80" r="70"></circle>
+                    </svg>
+                    <div class="timer-inner-text">
+                      <div class="timer-digits">14:02</div>
+                      <div class="timer-label">Active Directive</div>
+                    </div>
+                  </div>
+                  <div class="hud-stats-row">
+                    <div class="hud-stat-item">
+                      <div class="hud-stat-val">94%</div>
+                      <div class="hud-stat-lbl">Discipline</div>
+                    </div>
+                    <div class="hud-stat-item">
+                      <div class="hud-stat-val">&#128293; 14</div>
+                      <div class="hud-stat-lbl">Day Streak</div>
+                    </div>
+                    <div class="hud-stat-item">
+                      <div class="hud-stat-val">340</div>
+                      <div class="hud-stat-lbl">Tokens</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="hud-right">
+                  <div class="directive-card">
+                    <div class="directive-header">
+                      <span class="tier-tag">Tier 3: Intensive</span>
+                      <span class="bounty-tag">&#9733; +50 Tokens</span>
+                    </div>
+                    <h3 class="directive-title">Wall Sit &amp; Posture Hold</h3>
+                    <p class="directive-desc">
+                      Execute a 3-minute continuous wall sit with focused breathing. Upload photo proof before the timer chimes.
+                    </p>
+                    <div class="directive-actions">
+                      <button class="btn btn-sm btn-primary">Submit Verification Proof</button>
+                      <button class="btn btn-sm btn-outline" id="btn-draw-next">Draw Next</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. Director View (Faithful in-app Director Dashboard) -->
+            <div class="view-content" id="view-director">
+              <div class="director-screen">
+                
+                <!-- Remote Link Status Card -->
+                <div class="dir-card">
+                  <div class="dir-status-top">
+                    <div class="dir-avatar-circle">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                    </div>
+                    <div class="dir-status-info">
+                      <div class="dir-overline">REMOTE LINK STATUS</div>
+                      <div class="dir-partner-title">Paired with Submissive Unit 01</div>
+                      <div class="dir-balance-text">Submissive Balance: <span class="dir-cyan">340 Tokens</span> &bull; <span class="dir-cyan">14 Day Streak</span></div>
+                    </div>
+                    <button class="dir-refresh-btn" title="Refresh state from submissive">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                    </button>
+                  </div>
+                  <div class="dir-divider"></div>
+                  <div class="dir-partner-selector">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="partner-icon"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span class="dir-select-lbl">Active Submissive:</span>
+                    <div class="dir-dropdown-pill">
+                      <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v2"/></svg>
+                      <span>Submissive Unit 01</span>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><polyline points="6 9 12 15 18 9"/></svg>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 2x2 Action Buttons -->
+                <div class="dir-actions-grid">
+                  <button class="btn btn-primary dir-btn-action">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    Dispatch Order
+                  </button>
+                  <button class="btn btn-outline dir-btn-action">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    Schedule Order
+                  </button>
+                  <button class="btn btn-outline dir-btn-action">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    Adjust Tokens
+                  </button>
+                  <button class="btn btn-outline dir-btn-action">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+                    Privilege Shop
+                  </button>
+                </div>
+
+                <!-- Active Directives in Progress Section -->
+                <div class="dir-section-label">
+                  <span>ACTIVE DIRECTIVES IN PROGRESS (1)</span>
+                  <button class="dir-action-link">Re-sync All</button>
+                </div>
+
+                <div class="dir-card dir-directive-item">
+                  <div class="dir-item-header">
+                    <div class="dir-tags">
+                      <span class="dir-category-pill">EXERCISE</span>
+                      <span class="dir-tier-pill">Tier 3</span>
+                    </div>
+                    <span class="dir-stakes-chip">+50 / -30 Tokens</span>
+                  </div>
+                  <div class="dir-item-title">Wall Sit &amp; Posture Hold</div>
+                  <div class="dir-item-desc">Execute a 3-minute continuous wall sit with focused breathing.</div>
+                  <div class="dir-badges-row">
+                    <span class="dir-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> 3m 0s</span>
+                    <span class="dir-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Photo Upload</span>
+                  </div>
+                  <div class="dir-item-footer">
+                    <div class="dir-live-confirmed">
+                      <span class="pulse-dot"></span>
+                      <span>Active on Submissive's Device</span>
+                    </div>
+                    <div class="dir-order-buttons">
+                      <button class="btn btn-xs btn-outline">Re-send</button>
+                      <button class="btn btn-xs btn-danger-outline">Recall</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Pending Proof Reviews Section -->
+                <div class="dir-section-label">
+                  <span>PENDING PROOF REVIEWS (1)</span>
+                </div>
+
+                <div class="dir-card dir-review-item">
+                  <div class="dir-item-header">
+                    <div class="dir-item-title" style="margin: 0;">Desk &amp; Hydration Discipline</div>
+                    <span class="dir-stakes-chip" style="color: var(--accent-emerald);">+15 / -10</span>
+                  </div>
+                  <div class="dir-proof-box">
+                    <div class="dir-proof-thumb">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                      <span>photo_proof.jpg</span>
+                    </div>
+                    <div class="dir-proof-note">
+                      <span class="note-label">Player Note:</span> "Workspace cleared completely, 500ml water logged on timer."
+                    </div>
+                  </div>
+                  <div class="dir-review-actions">
+                    <button class="btn btn-xs btn-approve">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg>
+                      Approve (+15 Tokens)
+                    </button>
+                    <button class="btn btn-xs btn-warn-outline">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                      Reject &amp; Return
+                    </button>
+                    <button class="btn btn-xs btn-danger">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                      Reject &amp; Penalize
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+
+
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Core Features Grid -->
+  <section id="features">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Fully Customizable</h2>
+        <p class="section-subtitle">Take complete control of your submissive - craft custom tasks, rewards, and entire quest chains - or, take control of your own habits, schedule randomized tasks, and simulate the experience of having a superior watching over you.</p>
+      </div>
+
+      <div class="features-grid">
+        <!-- Feature 1 -->
+        <div class="feature-card">
+          <div class="feature-icon-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          </div>
+          <h3>Discipline Score &amp; Tokens</h3>
+          <p>Monitor task completion in real time, earn daily streak multipliers, and spend tokens on earned custom rewards. Reward flawless compliance or deduct penalties on missed timers.</p>
+        </div>
+
+
+        <!-- Feature 3 -->
+        <div class="feature-card">
+          <div class="feature-icon-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+          </div>
+          <h3>Asynchronous E2EE Sync</h3>
+          <p>Built-in <strong>ntfy</strong> backend signaling guarantees orders and proofs arrive even when devices are sleeping, with zero open router ports.</p>
+        </div>
+
+        <!-- Feature 4 -->
+        <div class="feature-card">
+          <div class="feature-icon-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          </div>
+          <h3>Visual Pack Studio</h3>
+          <p>Build fully customizable order packs, reward packs, and quest chains, all without touching a single line of code.</p>
+        </div>
+
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Dual Mode Section -->
+  <section id="dual-mode" class="dual-mode-section">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Architecture</span>
+        <h2 class="section-title">Two Distinct Modes.</h2>
+        <p class="section-subtitle">Whether running solo automated daily drills or connecting with a remote partner, each role receives a tailored interface.</p>
+      </div>
+
+      <div class="dual-columns">
+        <!-- Player Column -->
+        <div class="role-card role-player">
+          <span class="role-badge">Player / Submissive HUD</span>
+          <h3>Submissive Focus</h3>
+          <p class="role-desc">Designed for immersion, focus, and rapid verification feedback.</p>
+          <ul class="role-list">
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              <span><strong>Urgency Countdown Rings:</strong> Real-time progress gauges that turn amber and crimson as deadlines close in.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              <span><strong>Proof Submission:</strong> Fast photo/note uploads to verify task completion and submit for Director review.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              <span><strong>Token Economy &amp; Rewards:</strong> Accumulate balance to unlock custom rewards and preserve discipline streaks.</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Director Column -->
+        <div class="role-card role-director">
+          <span class="role-badge">Director / Dominant Control</span>
+          <h3>Dominant Authority</h3>
+          <p class="role-desc">Complete telemetry, instant command dispatch, and review queues.</p>
+          <ul class="role-list">
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              <span><strong>Instant Direct Dispatch:</strong> Push directives with custom timers, stakes, and required proof methods in seconds.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              <span><strong>Proof Review Hub:</strong> Approve submissions to award tokens, or reject with penalty deductions and feedback notes.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              <span><strong>Custom Reward Packs:</strong> Dole out rewards to your partner as you see fit, or keep them desperate for your approval with impossible goals.</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Security & Stealth Spotlight -->
+  <section id="security">
+    <div class="container">
+      <div class="security-spotlight">
+        <div class="security-text">
+          <span class="section-tag">Privacy &amp; Security</span>
+          <h2>Zero Telemetry.<br>Absolute Discretion.</h2>
+          <p>
+            Your routines, directives, and proofs belong solely to you and those you choose to share them with. Everything is stored locally on your device in an encrypted SQLite database. No third-party accounts, tracking scripts, or cloud servers can access your data.
+          </p>
+        </div>
+
+        <div class="security-points">
+          <div class="sec-box">
+            <h4>AES-256 Encryption</h4>
+            <p>End-to-end symmetric encryption derived from your private shared pairing secrets.</p>
+          </div>
+          <div class="sec-box">
+            <h4>Calculator Panic Decoy</h4>
+            <p>One-tap toggle switches to a fully functional calculator. Unlock with <code>7777=</code>.</p>
+          </div>
+          <div class="sec-box">
+            <h4>Local-First SQLite</h4>
+            <p>All stats, logs, and packs remain on your local filesystem with zero telemetry.</p>
+          </div>
+          <div class="sec-box">
+            <h4>PIN &amp; Shake Lock</h4>
+            <p>PIN lock, to keep prying eyes away from your tasks.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Downloads Section -->
+  <section id="downloads" class="download-section">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Get Started</span>
+        <h2 class="section-title">Download (sub)Task Manager</h2>
+        <p class="section-subtitle">Cross-platform releases available for Windows, macOS, Linux, and Android.</p>
+      </div>
+
+      <div class="download-grid">
+        <!-- Windows Card -->
+        <div class="download-card">
+          <div class="platform-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg>
+          </div>
+          <h3>Windows Desktop</h3>
+          <p class="plat-desc">Standalone portable x64 release. No installer required — simply unzip and launch.</p>
+          <a href="https://downloads.subtaskmanager.com/subTaskManager-Windows-Release.zip" class="btn btn-primary" download>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download Windows (.zip)
+          </a>
+          <p class="download-meta">Windows 10 / 11 (x64) &bull; Standalone Portable</p>
+        </div>
+
+        <!-- macOS Card -->
+        <div class="download-card">
+          <span class="card-badge">Coming Soon</span>
+          <div class="platform-icon" style="color: var(--accent-purple);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.94c1.88 0 3.87-.59 5.3-1.64 1.4-1.04 2.37-2.47 2.7-4.13-1.68-.09-3.23.82-4.08 2.34-.84-1.52-2.39-2.43-4.07-2.34.33 1.66 1.3 3.09 2.7 4.13 1.43 1.05 3.42 1.64 5.3 1.64zM12 3a9 9 0 0 0-9 9c0 4.97 4.03 9 9 9s9-4.03 9-9a9 9 0 0 0-9-9z"/><path d="M12 7v5l3 3"/></svg>
+          </div>
+          <h3>macOS Desktop</h3>
+          <p class="plat-desc">Native universal binary for Apple Silicon (M1/M2/M3/M4) and Intel Macs.</p>
+          <a href="#" class="btn btn-disabled" tabindex="-1" aria-disabled="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            macOS Build In Progress
+          </a>
+          <p class="download-meta">macOS 11.0+ &bull; Cloud Build Finalizing</p>
+        </div>
+
+        <!-- Linux Card -->
+        <div class="download-card">
+          <span class="card-badge">Coming Soon</span>
+          <div class="platform-icon" style="color: #f59e0b;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          </div>
+          <h3>Linux &amp; Steam Deck</h3>
+          <p class="plat-desc">Native ELF x64 release bundle for Ubuntu, Debian, Arch Linux, Fedora, and SteamOS.</p>
+          <a href="#" class="btn btn-disabled" tabindex="-1" aria-disabled="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Linux Build In Progress
+          </a>
+          <p class="download-meta">Linux x64 &bull; Cloud Build Finalizing</p>
+        </div>
+
+        <!-- Android Card -->
+        <div class="download-card">
+          <div class="platform-icon" style="color: var(--accent-emerald);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+          </div>
+          <h3>Android Mobile</h3>
+          <p class="plat-desc">Universal ARM64 release APK with full phone, tablet, and ChromeOS support.</p>
+          <a href="https://downloads.subtaskmanager.com/subTaskManager-Android-Release.apk" class="btn btn-android" download>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download Android (.apk)
+          </a>
+          <p class="download-meta">Android 8.0+ &bull; Direct Sideload APK</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ Accordion -->
+  <section id="faq">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Knowledge Base</span>
+        <h2 class="section-title">Frequently Asked Questions</h2>
+        <p class="section-subtitle">Everything you need to know about setup, pairing, and security.</p>
+      </div>
+
+      <div class="faq-wrap">
+        <div class="faq-item active">
+          <div class="faq-question">
+            <span>How does remote pairing work without opening router ports?</span>
+            <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="faq-answer">
+            The app uses an asynchronous encrypted signaling channel over <strong>ntfy</strong>. When paired, both devices communicate through a private, random topic name. All payloads are encrypted locally on the device with AES-256 before transmission using your shared secret code. When on the same local Wi-Fi, the app automatically switches to direct local WebSockets.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-question">
+            <span>How does the Calculator Panic Decoy work?</span>
+            <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="faq-answer">
+            Tapping the panic shield icon in the header (or pressing the panic hotkey) instantly replaces the entire application interface with a real, fully functioning arithmetic calculator. To exit disguise mode, type <code>7777</code> and hit <code>=</code>, or long-press the calculator top title bar.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-question">
+            <span>Can multiple Directors pair with one Submissive?</span>
+            <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="faq-answer">
+            Yes! The app features <strong>Strict Director Command Isolation</strong>. When multiple Directors pair with the same player, each Director only sees and reviews the directives that they personally dispatched. Other Directors' orders and solo routines are completely isolated and hidden.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-question">
+            <span>Are there any subscriptions?</span>
+            <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="faq-answer">
+            Advanced features such as scheduled tasks and questlines are available through Patreon, with more features coming to supporters soon. The vast majority of features are free!
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Site Footer -->
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-top">
+        <a href="#" class="brand-link">
+          <img src="assets/logo.svg" alt="subTask Manager Logo" class="brand-logo">
+          <span>(sub)Task Manager</span>
+        </a>
+        <div style="display: flex; gap: 20px;">
+          <a href="#features" style="color: var(--text-secondary); text-decoration: none; font-size: 0.9rem;">Features</a>
+          <a href="#dual-mode" style="color: var(--text-secondary); text-decoration: none; font-size: 0.9rem;">Dual-Mode</a>
+          <a href="#security" style="color: var(--text-secondary); text-decoration: none; font-size: 0.9rem;">Security</a>
+          <a href="#downloads" style="color: var(--text-secondary); text-decoration: none; font-size: 0.9rem;">Downloads</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>&copy; 2026 subTaskManager.com &mdash; All rights reserved. Built with Flutter &amp; Dart.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

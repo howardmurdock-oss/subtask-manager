@@ -1,0 +1,75 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { background: #090a0f; color: #f1f5f9; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 40px; }
+  h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 8px; color: #38bdf8; }
+  p.sub { font-size: 16px; color: #94a3b8; margin-bottom: 40px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; max-width: 1000px; width: 100%; }
+  .card { background: #131722; border: 1px solid #1e293b; border-radius: 24px; padding: 32px 24px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .icon-frame { width: 160px; height: 160px; background: linear-gradient(145deg, #181d2a, #0d111a); border-radius: 36px; display: flex; align-items: center; justify-content: center; box-shadow: 0 12px 30px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1); margin-bottom: 24px; border: 1px solid rgba(56, 189, 248, 0.2); }
+  .icon-frame svg { width: 96px; height: 96px; }
+  h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: #f8fafc; }
+  p.desc { font-size: 13px; color: #94a3b8; line-height: 1.5; }
+  .tag { display: inline-block; margin-top: 14px; padding: 4px 10px; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border-radius: 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+</style>
+</head>
+<body>
+  <h1>(sub)Task Manager — Merged Vector Icons</h1>
+  <p class="sub">Pixel-perfect fusion of Tabler lock.svg and checklist.svg</p>
+  <div class="grid">
+    <!-- Variant 1 -->
+    <div class="card">
+      <div class="icon-frame">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8.5 6.5v-2.5a3.5 3.5 0 0 1 7 0v2.5" />
+          <path d="M9.5 21h-2.5a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h9a2 2 0 0 1 2 2v7.5" />
+          <path d="M9 10h6" />
+          <path d="M9 14h3" />
+          <path d="M14 19l2.5 2.5l4.5 -4.5" stroke="#34d399" stroke-width="2" />
+        </svg>
+      </div>
+      <h2>Variant 1: Locked Checklist</h2>
+      <p class="desc">Lock shackle arches over the top of the checklist document, with task lines and emerald checkmark.</p>
+      <span class="tag">Recommended</span>
+    </div>
+
+    <!-- Variant 2 -->
+    <div class="card">
+      <div class="icon-frame">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 11v-4a4 4 0 1 1 8 0v4" />
+          <path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6" />
+          <path d="M8 15h3.5" />
+          <path d="M8 18h2" />
+          <path d="M13.5 17l1.5 1.5l3.5 -3.5" stroke="#34d399" stroke-width="2" />
+        </svg>
+      </div>
+      <h2>Variant 2: Task Padlock</h2>
+      <p class="desc">Padlock form factor where the lock body contains the checklist tasks and completion mark.</p>
+      <span class="tag">Compact Form</span>
+    </div>
+
+    <!-- Variant 3 -->
+    <div class="card">
+      <div class="icon-frame">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 4a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v6" />
+          <path d="M6 4v14a2 2 0 0 0 2 2h4" />
+          <path d="M9 7h6" />
+          <path d="M9 11h4" />
+          <path d="M9 15h2" />
+          <path d="M15 15v-1.5a2 2 0 0 1 4 0v1.5" stroke="#38bdf8" />
+          <rect x="13.5" y="15" width="7" height="6" rx="1.5" stroke="#38bdf8" fill="#131722" />
+          <circle cx="17" cy="18" r="0.75" fill="#34d399" stroke="none" />
+        </svg>
+      </div>
+      <h2>Variant 3: Checklist & Lock Badge</h2>
+      <p class="desc">Full checklist document with a mini security padlock badge nestled in the bottom right.</p>
+      <span class="tag">Document Focus</span>
+    </div>
+  </div>
+</body>
+</html>
