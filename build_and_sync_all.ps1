@@ -1,5 +1,16 @@
-# Automated Build & Google Drive Deployment Script
+param (
+    [string]$Version,
+    [switch]$LocalOnly,
+    [switch]$SkipCloudBuild,
+    [switch]$SkipDeploy
+)
 
+if (-not $LocalOnly) {
+    & powershell -ExecutionPolicy Bypass -File .\release_all.ps1 @PSBoundParameters
+    exit $LASTEXITCODE
+}
+
+# Local-only build below:
 Write-Host "==> Compiling Automated Tests..." -ForegroundColor Cyan
 & "F:\src\flutter\bin\flutter.bat" test
 if ($LASTEXITCODE -ne 0) {
