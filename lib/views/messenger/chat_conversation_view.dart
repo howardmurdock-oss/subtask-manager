@@ -205,51 +205,68 @@ class _ChatConversationViewState extends State<ChatConversationView> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
-        title: Row(
-          children: [
-            CircleAvatar(
-              radius: 18,
-              backgroundColor: currentPartner.isBlocked
-                  ? Colors.redAccent.withOpacity(0.2)
-                  : theme.colorScheme.primary.withOpacity(0.2),
-              child: Icon(
-                currentPartner.isBlocked ? Icons.block_rounded : Icons.person_rounded,
-                color: currentPartner.isBlocked ? Colors.redAccent : theme.colorScheme.primary,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    currentPartner.displayName,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                    overflow: TextOverflow.ellipsis,
+        title: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => _showEditContactDialog(context, currentPartner),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: currentPartner.isBlocked
+                      ? Colors.redAccent.withOpacity(0.2)
+                      : theme.colorScheme.primary.withOpacity(0.2),
+                  child: Icon(
+                    currentPartner.isBlocked ? Icons.block_rounded : Icons.person_rounded,
+                    color: currentPartner.isBlocked ? Colors.redAccent : theme.colorScheme.primary,
+                    size: 20,
                   ),
-                  Text(
-                    currentPartner.isBlocked
-                        ? 'BLOCKED'
-                        : 'Encrypted • Code: ${currentPartner.pairingCode}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: currentPartner.isBlocked
-                          ? Colors.redAccent
-                          : theme.colorScheme.onSurface.withOpacity(0.6),
-                      fontWeight: currentPartner.isBlocked ? FontWeight.bold : FontWeight.normal,
-                    ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              currentPartner.displayName,
+                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(Icons.edit_note_rounded, size: 14, color: theme.colorScheme.primary.withOpacity(0.6)),
+                        ],
+                      ),
+                      Text(
+                        currentPartner.isBlocked
+                            ? 'BLOCKED'
+                            : 'Encrypted • Code: ${currentPartner.pairingCode}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: currentPartner.isBlocked
+                              ? Colors.redAccent
+                              : theme.colorScheme.onSurface.withOpacity(0.6),
+                          fontWeight: currentPartner.isBlocked ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert_rounded),
             onSelected: (val) {
-              if (val == 'clear') {
+              if (val == 'edit_contact') {
+                _showEditContactDialog(context, currentPartner);
+              } else if (val == 'clear') {
                 chat.clearChat(currentPartner.id);
               } else if (val == 'block') {
                 partnerSvc.toggleBlock(currentPartner.id);
@@ -263,12 +280,23 @@ class _ChatConversationViewState extends State<ChatConversationView> {
             },
             itemBuilder: (ctx) => [
               PopupMenuItem(
+                value: 'edit_contact',
+                child: Row(
+                  children: [
+                    Icon(Icons.edit_note_rounded, size: 18, color: theme.colorScheme.primary),
+                    const SizedBox(width: 8),
+                    const Expanded(child: Text('Edit Contact Info')),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
                 value: 'clear',
-                child: const Row(
+                child: Row(
                   children: [
                     Icon(Icons.delete_sweep_rounded, size: 18),
                     SizedBox(width: 8),
-                    Text('Clear Chat History'),
+                    Expanded(child: Text('Clear Chat History')),
                   ],
                 ),
               ),
@@ -282,10 +310,12 @@ class _ChatConversationViewState extends State<ChatConversationView> {
                       color: currentPartner.isBlocked ? Colors.greenAccent : Colors.redAccent,
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      currentPartner.isBlocked ? 'Unblock Contact' : 'Block Contact',
-                      style: TextStyle(
-                        color: currentPartner.isBlocked ? Colors.greenAccent : Colors.redAccent,
+                    Expanded(
+                      child: Text(
+                        currentPartner.isBlocked ? 'Unblock Contact' : 'Block Contact',
+                        style: TextStyle(
+                          color: currentPartner.isBlocked ? Colors.greenAccent : Colors.redAccent,
+                        ),
                       ),
                     ),
                   ],
@@ -574,6 +604,225 @@ class _ChatConversationViewState extends State<ChatConversationView> {
             child: const Text('Delete'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showEditContactDialog(BuildContext context, PartnerContact contact) {
+    final partnerSvc = Provider.of<PartnerService>(context, listen: false);
+    final sync = Provider.of<SyncService>(context, listen: false);
+
+    final nameCtrl = TextEditingController(text: contact.displayName);
+    final codeCtrl = TextEditingController(text: contact.pairingCode);
+    final secretCtrl = TextEditingController(text: contact.pairingSecret);
+    final relayCtrl = TextEditingController(text: contact.customRelayHost);
+    final notesCtrl = TextEditingController(text: contact.notes ?? '');
+    PartnerRole role = contact.role;
+    bool obscureSecret = true;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (dialogCtx, setDialogState) {
+          final theme = Theme.of(dialogCtx);
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            title: Row(
+              children: [
+                CircleAvatar(
+                  radius: 16,
+                  backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+                  child: Icon(
+                    role == PartnerRole.dominant
+                        ? Icons.lock_person_rounded
+                        : (role == PartnerRole.submissive
+                            ? Icons.person_rounded
+                            : Icons.people_rounded),
+                    color: theme.colorScheme.primary,
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'Edit Contact Info',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Display Name / Alias',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(
+                      hintText: 'e.g. Primary Submissive / Master Dan',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Partner Role',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  DropdownButtonFormField<PartnerRole>(
+                    value: role,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: PartnerRole.submissive,
+                        child: Text('Submissive / Player'),
+                      ),
+                      DropdownMenuItem(
+                        value: PartnerRole.dominant,
+                        child: Text('Dominant / Director'),
+                      ),
+                      DropdownMenuItem(
+                        value: PartnerRole.peer,
+                        child: Text('Peer / Partner'),
+                      ),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) setDialogState(() => role = val);
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Pairing Code',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: codeCtrl,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: const InputDecoration(
+                      hintText: 'e.g. K8M2-9X4L',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'E2EE Shared Passphrase',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: secretCtrl,
+                    obscureText: obscureSecret,
+                    decoration: InputDecoration(
+                      hintText: 'Shared encryption password',
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                      suffixIcon: IconButton(
+                        icon: Icon(obscureSecret ? Icons.visibility : Icons.visibility_off, size: 20),
+                        onPressed: () => setDialogState(() => obscureSecret = !obscureSecret),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Custom Relay Host (Optional)',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: relayCtrl,
+                    decoration: const InputDecoration(
+                      hintText: 'ntfy.envs.net',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Private Notes (Only visible to you)',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: notesCtrl,
+                    maxLines: 3,
+                    minLines: 1,
+                    decoration: const InputDecoration(
+                      hintText: 'Boundaries, agreements, or notes...',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.check_rounded, size: 16),
+                label: const Text('Save Changes'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: theme.colorScheme.brightness == Brightness.dark ? Colors.black : Colors.white,
+                ),
+                onPressed: () async {
+                  final newName = nameCtrl.text.trim();
+                  final newCode = codeCtrl.text.trim().toUpperCase();
+                  final newSecret = secretCtrl.text.trim();
+                  final newRelay = relayCtrl.text.trim();
+                  final newNotes = notesCtrl.text.trim();
+
+                  if (newCode.isEmpty && !contact.isSelf) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Pairing Code cannot be empty')),
+                    );
+                    return;
+                  }
+
+                  final updated = contact.copyWith(
+                    displayName: newName.isNotEmpty ? newName : contact.displayName,
+                    pairingCode: newCode,
+                    pairingSecret: newSecret.isNotEmpty ? newSecret : contact.pairingSecret,
+                    role: role,
+                    customRelayHost: newRelay.isNotEmpty ? newRelay : contact.customRelayHost,
+                    notes: newNotes.isNotEmpty ? newNotes : null,
+                  );
+
+                  await partnerSvc.updateContact(updated);
+
+                  // If this contact is the active partner, update sync relay host if changed
+                  if (partnerSvc.activePartnerId == updated.id && updated.customRelayHost.isNotEmpty) {
+                    sync.setCustomRelay(updated.customRelayHost);
+                  }
+
+                  if (context.mounted) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Updated contact details for "${updated.displayName}"'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                },
+              ),
+            ],
+          );
+        },
       ),
     );
   }
