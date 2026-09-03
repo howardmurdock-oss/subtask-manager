@@ -54,6 +54,28 @@ class ActiveOrder {
         assignedAt = assignedAt ?? DateTime.now(),
         actionSecondsRemaining = actionSecondsRemaining ?? order.actionDurationSeconds;
 
+  /// Formats the directive assignment time in clean, human-readable format
+  static String formatAssignedTime(DateTime dt) {
+    final now = DateTime.now();
+    final local = dt.toLocal();
+    final hour = local.hour == 0 ? 12 : (local.hour > 12 ? local.hour - 12 : local.hour);
+    final minute = local.minute.toString().padLeft(2, '0');
+    final amPm = local.hour >= 12 ? 'PM' : 'AM';
+    final timeStr = '$hour:$minute $amPm';
+
+    final isToday = local.year == now.year && local.month == now.month && local.day == now.day;
+    if (isToday) {
+      return 'Today, $timeStr';
+    }
+    final yesterday = now.subtract(const Duration(days: 1));
+    final isYesterday = local.year == yesterday.year && local.month == yesterday.month && local.day == yesterday.day;
+    if (isYesterday) {
+      return 'Yesterday, $timeStr';
+    }
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${months[local.month - 1]} ${local.day}, $timeStr';
+  }
+
   /// Returns the live dynamic seconds remaining on the physical routine timer
   int get currentActionSecondsRemaining {
     if (isActionTimerFinished) return 0;

@@ -1167,6 +1167,11 @@ class DirectorDashboardView extends StatelessWidget {
                               label: 'Requires: ${active.order.requiredEquipment.join(", ")}',
                               color: Colors.orangeAccent,
                             ),
+                          _buildInfoBadge(
+                            icon: Icons.schedule_rounded,
+                            label: 'Assigned: ${ActiveOrder.formatAssignedTime(active.assignedAt)}',
+                            color: theme.colorScheme.onSurface.withOpacity(0.7),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 12),
@@ -1377,9 +1382,29 @@ class DirectorDashboardView extends StatelessWidget {
                     Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            active.order.title,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                active.order.title,
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Icon(Icons.schedule_rounded, size: 12, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Assigned: ${ActiveOrder.formatAssignedTime(active.assignedAt)}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(width: 8),

@@ -221,6 +221,25 @@ class OrderCard extends StatelessWidget {
                           ],
                         ),
                       ],
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.schedule_rounded,
+                            size: 13,
+                            color: theme.colorScheme.onSurface.withOpacity(0.55),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Assigned: ${ActiveOrder.formatAssignedTime(activeOrder.assignedAt)}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.colorScheme.onSurface.withOpacity(0.6),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),

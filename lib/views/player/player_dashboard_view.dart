@@ -776,29 +776,33 @@ class PlayerDashboardView extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'STATUS HUD',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.2,
-                        color: theme.colorScheme.primary,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'STATUS HUD',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
+                          color: theme.colorScheme.primary,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      runningOrders.isEmpty && !hasActiveQuest ? 'Ready for Assignment' : (hasActiveQuest ? 'Quest & ${runningOrders.length} Directives In Progress' : '${runningOrders.length} In Progress'),
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                      const SizedBox(height: 4),
+                      Text(
+                        runningOrders.isEmpty && !hasActiveQuest ? 'Ready for Assignment' : (hasActiveQuest ? 'Quest & ${runningOrders.length} In Progress' : '${runningOrders.length} In Progress'),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 IconButton(
                   tooltip: 'Clean / Override Tasks',
                   icon: const Icon(Icons.cleaning_services_rounded, size: 20),
@@ -962,6 +966,21 @@ class PlayerDashboardView extends StatelessWidget {
                           ),
                         ),
                     ],
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(Icons.schedule_rounded, size: 12, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Assigned: ${ActiveOrder.formatAssignedTime(active.assignedAt)}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: theme.colorScheme.onSurface.withOpacity(0.6),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
                     if (active.assignedByDirector) ...[
                       const SizedBox(height: 4),
                       Row(

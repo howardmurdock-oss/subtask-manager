@@ -249,7 +249,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('New Directive Dispatched!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    Text('Assigned by $assigner', style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6))),
+                    Text('Assigned by $assigner • ${ActiveOrder.formatAssignedTime(activeOrder.assignedAt)}', style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.6))),
                   ],
                 ),
               ),
@@ -424,10 +424,21 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                _currentRole == AppRole.player ? 'Orders & Directives' : 'Director Command Hub',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                overflow: TextOverflow.ellipsis,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final showFullTitle = constraints.maxWidth >= 200;
+                  final titleText = _currentRole == AppRole.player
+                      ? (showFullTitle ? 'Orders & Directives' : 'Directives')
+                      : (showFullTitle ? 'Director Command Hub' : 'Command Hub');
+                  return FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      titleText,
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  );
+                },
               ),
             ),
           ],
