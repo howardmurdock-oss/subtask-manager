@@ -684,6 +684,16 @@ class DirectiveSyncTaskHandler extends TaskHandler {
         case SyncMessageType.pairingRequest:
           final senderName = msg.payload['senderName'] as String? ?? 'Partner';
           final senderCode = msg.payload['senderCode'] as String? ?? '';
+          final senderId = msg.payload['senderId'] as String? ?? msg.senderId;
+
+          // Ignore if sender is already an existing partner or self
+          final isExistingPartner = _partnerCodes.any((c) => c.toUpperCase() == senderCode.toUpperCase()) ||
+              (senderCode.isNotEmpty && senderCode.toUpperCase() == _pairingCode.toUpperCase()) ||
+              (senderId.isNotEmpty && senderId == _deviceId);
+
+          if (isExistingPartner) {
+            break;
+          }
 
           _queuePendingPairing(msg.payload);
 

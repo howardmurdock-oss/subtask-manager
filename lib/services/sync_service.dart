@@ -357,15 +357,27 @@ class SyncService extends ChangeNotifier {
             final senderCode = data['senderCode'] as String? ?? '';
             final senderName = data['senderName'] as String? ?? 'Partner';
             final sharedSecret = data['sharedSecret'] as String? ?? '';
-            if (senderCode.isNotEmpty) {
-              _partnerService?.addIncomingRequest(IncomingPairingRequest(
-                senderId: senderId,
-                senderCode: senderCode,
-                senderName: senderName,
-                senderRole: PartnerRole.dominant,
-                sharedSecret: sharedSecret,
-                timestamp: DateTime.now(),
-              ));
+            final isAlreadyPartner = _partnerService?.isExistingContactOrSelf(
+                  senderId,
+                  senderCode,
+                  ownCode: _pairingCode,
+                  ownDeviceId: _deviceId,
+                ) ??
+                false;
+
+            if (senderCode.isNotEmpty && !isAlreadyPartner) {
+              _partnerService?.addIncomingRequest(
+                IncomingPairingRequest(
+                  senderId: senderId,
+                  senderCode: senderCode,
+                  senderName: senderName,
+                  senderRole: PartnerRole.dominant,
+                  sharedSecret: sharedSecret,
+                  timestamp: DateTime.now(),
+                ),
+                ownCode: _pairingCode,
+                ownDeviceId: _deviceId,
+              );
             }
           } catch (_) {}
         }
@@ -1705,15 +1717,42 @@ class SyncService extends ChangeNotifier {
           orElse: () => PartnerRole.submissive,
         );
 
+        // 1. Ignore if sender is self
+        if ((senderCode.isNotEmpty && senderCode.toUpperCase() == _pairingCode.toUpperCase()) ||
+            (senderId.isNotEmpty && senderId == _deviceId)) {
+          return;
+        }
+
+        // 2. Check if sender is ALREADY in contacts / friend list
+        final existingContact = _partnerService?.findContactByCode(senderCode) ??
+            _partnerService?.findContactById(senderId);
+
+        if (existingContact != null) {
+          // If the partner is already on the contact list, update secret or lastSeen seamlessly without re-prompting
+          if (sharedSecret.isNotEmpty && existingContact.pairingSecret != sharedSecret) {
+            _partnerService?.updateContact(existingContact.copyWith(
+              pairingSecret: sharedSecret,
+              lastSeen: DateTime.now(),
+            ));
+          } else {
+            _partnerService?.updateLastSeen(existingContact.id);
+          }
+          return;
+        }
+
         if (senderCode.isNotEmpty && sharedSecret.isNotEmpty) {
-          _partnerService?.addIncomingRequest(IncomingPairingRequest(
-            senderId: senderId,
-            senderCode: senderCode,
-            senderName: senderName,
-            senderRole: senderRole,
-            sharedSecret: sharedSecret,
-            timestamp: msg.timestamp,
-          ));
+          _partnerService?.addIncomingRequest(
+            IncomingPairingRequest(
+              senderId: senderId,
+              senderCode: senderCode,
+              senderName: senderName,
+              senderRole: senderRole,
+              sharedSecret: sharedSecret,
+              timestamp: msg.timestamp,
+            ),
+            ownCode: _pairingCode,
+            ownDeviceId: _deviceId,
+          );
           NotificationService.showPairingRequestNotification(
             senderName: senderName,
             senderCode: senderCode,

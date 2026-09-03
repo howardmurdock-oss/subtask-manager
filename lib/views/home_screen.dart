@@ -98,6 +98,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _checkAndShowIncomingRequestDialog(PartnerService partnerSvc, SyncService sync) {
     if (partnerSvc.pendingRequests.isNotEmpty && !_isRequestDialogShowing && mounted) {
+      // Purge any requests for contacts that already exist or are self
+      partnerSvc.cleanExistingContactRequests(ownCode: sync.pairingCode, ownDeviceId: sync.deviceId);
+      if (partnerSvc.pendingRequests.isEmpty) return;
+
       _isRequestDialogShowing = true;
       final req = partnerSvc.pendingRequests.first;
       final nameCtrl = TextEditingController(text: req.senderName.isNotEmpty ? req.senderName : 'Partner');

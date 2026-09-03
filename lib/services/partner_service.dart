@@ -73,6 +73,7 @@ class PartnerService extends ChangeNotifier {
       if (_activePartnerId == null && _contacts.isNotEmpty) {
         _activePartnerId = _contacts.first.id;
       }
+      cleanExistingContactRequests();
       _initialized = true;
       notifyListeners();
     } catch (e) {
@@ -106,6 +107,9 @@ class PartnerService extends ChangeNotifier {
     }
 
     _activePartnerId ??= contact.id;
+    _pendingRequests.removeWhere((r) =>
+        r.senderId == contact.id ||
+        (contact.pairingCode.isNotEmpty && r.senderCode.toUpperCase() == contact.pairingCode.toUpperCase()));
     await _save();
     notifyListeners();
   }
@@ -238,15 +242,40 @@ class PartnerService extends ChangeNotifier {
     }
   }
 
-  void addIncomingRequest(IncomingPairingRequest req) {
+  bool isExistingContactOrSelf(String? id, String? code, {String? ownCode, String? ownDeviceId}) {
+    if (id != null && id.isNotEmpty) {
+      if (id == PartnerContact.selfId || (ownDeviceId != null && ownDeviceId.isNotEmpty && id == ownDeviceId)) {
+        return true;
+      }
+      if (findContactById(id) != null) return true;
+    }
+    if (code != null && code.isNotEmpty) {
+      if (ownCode != null && ownCode.isNotEmpty && code.toUpperCase() == ownCode.toUpperCase()) {
+        return true;
+      }
+      if (findContactByCode(code) != null) return true;
+    }
+    return false;
+  }
+
+  void cleanExistingContactRequests({String? ownCode, String? ownDeviceId}) {
+    final beforeCount = _pendingRequests.length;
+    _pendingRequests.removeWhere((r) => isExistingContactOrSelf(r.senderId, r.senderCode, ownCode: ownCode, ownDeviceId: ownDeviceId));
+    if (_pendingRequests.length != beforeCount) {
+      notifyListeners();
+    }
+  }
+
+  void addIncomingRequest(IncomingPairingRequest req, {String? ownCode, String? ownDeviceId}) {
     if (isSenderBlocked(req.senderId) || isSenderBlocked(req.senderCode)) return;
+    if (isExistingContactOrSelf(req.senderId, req.senderCode, ownCode: ownCode, ownDeviceId: ownDeviceId)) return;
     _pendingRequests.removeWhere((r) => r.senderId == req.senderId || r.senderCode == req.senderCode);
     _pendingRequests.add(req);
     notifyListeners();
   }
 
   void removeIncomingRequest(String senderIdOrCode) {
-    _pendingRequests.removeWhere((r) => r.senderId == senderIdOrCode || r.senderCode == senderIdOrCode);
+    _pendingRequests.removeWhere((r) => r.senderId == senderIdOrCode || r.senderCode.toUpperCase() == senderIdOrCode.toUpperCase());
     notifyListeners();
   }
 }
