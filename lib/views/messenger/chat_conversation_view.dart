@@ -17,6 +17,7 @@ import '../../services/quest_service.dart';
 import '../../core/security/encryption_helper.dart';
 import '../../core/utils/image_compressor.dart';
 import '../../widgets/draggable_dialog.dart';
+import '../../widgets/linkable_text.dart';
 
 class ChatConversationView extends StatefulWidget {
   final PartnerContact partner;
@@ -1637,9 +1638,20 @@ class _ChatConversationViewState extends State<ChatConversationView> {
                 if (msg.text.isNotEmpty) const SizedBox(height: 6),
               ],
               if (msg.text.isNotEmpty && !msg.isPackTransfer)
-                Text(
-                  msg.text,
+                LinkableText(
+                  text: msg.text,
                   style: const TextStyle(fontSize: 14),
+                  linkStyle: TextStyle(
+                    fontSize: 14,
+                    color: isOut
+                        ? (theme.brightness == Brightness.dark ? Colors.lightBlueAccent : Colors.blue.shade900)
+                        : theme.colorScheme.primary,
+                    decoration: TextDecoration.underline,
+                    decorationColor: isOut
+                        ? (theme.brightness == Brightness.dark ? Colors.lightBlueAccent : Colors.blue.shade900)
+                        : theme.colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               const SizedBox(height: 4),
               Row(
