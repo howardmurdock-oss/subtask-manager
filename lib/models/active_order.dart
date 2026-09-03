@@ -9,6 +9,7 @@ enum OrderStatus {
   completed,    // Successfully finished
   failed,       // Expired or forfeited
   cancelled,    // Aborted by director
+  emergencyCleared, // Dismissed / cleared by player
 }
 
 class ActiveOrder {
@@ -189,6 +190,7 @@ class ActiveOrder {
     String? submissionProof,
     String? proofImageBase64,
     String? directorNote,
+    bool clearDirectorNote = false,
     bool? assignedByDirector,
     String? assignedByPartnerCode,
     String? assignedByPartnerId,
@@ -208,7 +210,7 @@ class ActiveOrder {
       actionTimerEndsAt: clearActionTimerEndsAt ? null : (actionTimerEndsAt ?? this.actionTimerEndsAt),
       submissionProof: submissionProof ?? this.submissionProof,
       proofImageBase64: proofImageBase64 ?? this.proofImageBase64,
-      directorNote: directorNote ?? this.directorNote,
+      directorNote: clearDirectorNote ? null : (directorNote ?? this.directorNote),
       assignedByDirector: assignedByDirector ?? this.assignedByDirector,
       assignedByPartnerCode: assignedByPartnerCode ?? this.assignedByPartnerCode,
       assignedByPartnerId: assignedByPartnerId ?? this.assignedByPartnerId,

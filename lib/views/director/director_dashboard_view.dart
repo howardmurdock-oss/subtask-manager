@@ -1032,14 +1032,14 @@ class DirectorDashboardView extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  if (activeOrders.any((o) => o.status == OrderStatus.failed)) ...[
+                  if (activeOrders.any((o) => o.status == OrderStatus.failed || o.status == OrderStatus.emergencyCleared)) ...[
                     TextButton.icon(
                       icon: const Icon(Icons.cleaning_services_rounded, size: 14),
-                      label: const Text('Clear Failed', style: TextStyle(fontSize: 11)),
+                      label: const Text('Clear Inactive', style: TextStyle(fontSize: 11)),
                       onPressed: () => sync.clearAllFailedRemoteOrders(),
                       style: TextButton.styleFrom(
                         visualDensity: VisualDensity.compact,
-                        foregroundColor: Colors.redAccent,
+                        foregroundColor: Colors.orangeAccent,
                       ),
                     ),
                     const SizedBox(width: 4),
@@ -1201,6 +1201,28 @@ class DirectorDashboardView extends StatelessWidget {
                                 ],
                               ),
                             ),
+                          ] else if (active.status == OrderStatus.emergencyCleared) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.deepOrangeAccent.withOpacity(0.18),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: Colors.deepOrangeAccent.withOpacity(0.55)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.warning_amber_rounded, size: 14, color: Colors.deepOrangeAccent),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    active.directorNote != null && active.directorNote!.isNotEmpty
+                                        ? active.directorNote!.toUpperCase()
+                                        : 'EMERGENCY CLEARED BY SUBMISSIVE',
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.deepOrangeAccent),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ] else if (isConfirmedOnDevice) ...[
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1247,29 +1269,50 @@ class DirectorDashboardView extends StatelessWidget {
                             runSpacing: 6,
                             alignment: WrapAlignment.end,
                             children: [
-                              OutlinedButton.icon(
-                                icon: const Icon(Icons.send_rounded, size: 13),
-                                label: const Text('Re-send', style: TextStyle(fontSize: 11)),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: isConfirmedOnDevice ? theme.colorScheme.primary : Colors.amberAccent,
-                                  side: BorderSide(
-                                    color: isConfirmedOnDevice
-                                        ? theme.colorScheme.primary.withOpacity(0.4)
-                                        : Colors.amberAccent.withOpacity(0.6),
+                              if (active.status == OrderStatus.emergencyCleared)
+                                ElevatedButton.icon(
+                                  icon: const Icon(Icons.send_rounded, size: 13),
+                                  label: const Text('Re-send', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.deepOrangeAccent,
+                                    foregroundColor: Colors.white,
+                                    visualDensity: VisualDensity.compact,
                                   ),
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                                onPressed: () {
-                                  sync.resendDispatchedOrder(active);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Re-sent "${active.order.title}" to Submissive.'),
-                                      behavior: SnackBarBehavior.floating,
-                                      duration: const Duration(seconds: 2),
+                                  onPressed: () {
+                                    sync.resendDispatchedOrder(active);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Re-sent "${active.order.title}" to Submissive.'),
+                                        behavior: SnackBarBehavior.floating,
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                  },
+                                )
+                              else
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.send_rounded, size: 13),
+                                  label: const Text('Re-send', style: TextStyle(fontSize: 11)),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: isConfirmedOnDevice ? theme.colorScheme.primary : Colors.amberAccent,
+                                    side: BorderSide(
+                                      color: isConfirmedOnDevice
+                                          ? theme.colorScheme.primary.withOpacity(0.4)
+                                          : Colors.amberAccent.withOpacity(0.6),
                                     ),
-                                  );
-                                },
-                              ),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                  onPressed: () {
+                                    sync.resendDispatchedOrder(active);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Re-sent "${active.order.title}" to Submissive.'),
+                                        behavior: SnackBarBehavior.floating,
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                  },
+                                ),
                               TextButton.icon(
                                 icon: const Icon(Icons.clear_rounded, size: 14),
                                 label: const Text('Clear', style: TextStyle(fontSize: 11)),

@@ -798,16 +798,80 @@ class SyncService extends ChangeNotifier {
     clearRemoteActiveOrder(activeOrderId, orderId: targetOrderId, orderTitle: title);
   }
 
+  /// Notifies the Director and dominant contacts that the player has emergency-cleared a directive
+  Future<void> notifyDirectiveEmergencyCleared(ActiveOrder activeOrder) async {
+    // 1. Un-mark from local handled ledger so if Director intentionally re-sends, it can be assigned again
+    _handledDirectiveIds.remove(activeOrder.id);
+    if (activeOrder.order.id.isNotEmpty) _handledDirectiveIds.remove(activeOrder.order.id);
+    _handledDirectiveIds.remove('title_${activeOrder.order.title.trim().toLowerCase()}');
+    _saveHandledDirectiveIds();
+
+    final myDisplayName = _nickname.isNotEmpty
+        ? _nickname
+        : (_role == ConnectionRole.director ? 'Director' : 'Submissive');
+
+    final msg = SyncMessage(
+      id: const Uuid().v4(),
+      type: SyncMessageType.orderStatusUpdate,
+      senderId: _deviceId,
+      payload: {
+        'activeOrderId': activeOrder.id,
+        'orderId': activeOrder.order.id,
+        'orderTitle': activeOrder.order.title,
+        'status': 'emergencyCleared',
+        'reason': 'Emergency Cleared by $myDisplayName',
+        'senderCode': _pairingCode,
+        'senderId': _deviceId,
+        'senderName': myDisplayName,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // Send direct to assigned partner code
+    final code = activeOrder.assignedByPartnerCode;
+    final partnerId = activeOrder.assignedByPartnerId;
+    if (code != null && code.isNotEmpty) {
+      final partner = _partnerService?.findContactByCode(code) ??
+          _partnerService?.findContactById(partnerId ?? '');
+      sendDirectToTopic(
+        code,
+        partner?.pairingSecret ?? _pairingSecret,
+        msg,
+        relayHost: partner != null && partner.customRelayHost.isNotEmpty ? partner.customRelayHost : _customRelayHost,
+      );
+    }
+
+    // Also send to all unblocked dominant partners
+    final dominants = _partnerService?.unblockedContacts.where((c) => c.role == PartnerRole.dominant).toList() ?? [];
+    for (final d in dominants) {
+      if (d.pairingCode.isNotEmpty && d.pairingCode != code) {
+        sendDirectToTopic(
+          d.pairingCode,
+          d.pairingSecret,
+          msg,
+          relayHost: d.customRelayHost.isNotEmpty ? d.customRelayHost : _customRelayHost,
+        );
+      }
+    }
+
+    // Send via active socket if connected
+    sendMessage(msg);
+
+    // Broadcast updated state
+    broadcastPlayerState();
+    notifyListeners();
+  }
+
   void clearAllFailedRemoteOrders() {
-    for (final o in _remoteActiveOrders.where((o) => o.status == OrderStatus.failed)) {
+    for (final o in _remoteActiveOrders.where((o) => o.status == OrderStatus.failed || o.status == OrderStatus.emergencyCleared)) {
       _confirmedOnPlayerOrderIds.remove(o.id);
       if (o.order.id.isNotEmpty) _confirmedOnPlayerOrderIds.remove(o.order.id);
       _confirmedOnPlayerOrderIds.remove(o.order.title.trim().toLowerCase());
     }
     _saveConfirmedOrders();
 
-    _remoteActiveOrders.removeWhere((o) => o.status == OrderStatus.failed);
-    final failedEngineIds = _engine.activeOrders.where((o) => o.status == OrderStatus.failed).map((o) => o.id).toList();
+    _remoteActiveOrders.removeWhere((o) => o.status == OrderStatus.failed || o.status == OrderStatus.emergencyCleared);
+    final failedEngineIds = _engine.activeOrders.where((o) => o.status == OrderStatus.failed || o.status == OrderStatus.emergencyCleared).map((o) => o.id).toList();
     for (final id in failedEngineIds) {
       _engine.removeActiveOrder(id);
     }
@@ -2093,6 +2157,7 @@ class SyncService extends ChangeNotifier {
           final senderName = msg.payload['senderName'] as String? ?? 'Director';
           final senderId = msg.senderId;
           final activeOrderId = msg.payload['activeOrderId'] as String?;
+          final isResend = msg.payload['isResend'] == true || msg.payload['forceAssign'] == true;
 
           String assignedId = activeOrderId ?? order.id;
 
@@ -2116,12 +2181,29 @@ class SyncService extends ChangeNotifier {
             orElse: () => null,
           );
 
-          // 3. Check if already recorded in completed discipline history
+          // 3. Check if this directive is currently actively running or under review
+          final isAlreadyActive = existingOrder != null &&
+              (existingOrder.status == OrderStatus.active ||
+               existingOrder.status == OrderStatus.pending ||
+               existingOrder.status == OrderStatus.underReview);
+
+          // 4. Check if already recorded in completed discipline history
           final alreadyInHistory = _engine.stats.history.any((h) =>
               (activeOrderId != null && activeOrderId.isNotEmpty && h.id == activeOrderId) ||
               h.orderTitle.trim().toLowerCase() == order.title.trim().toLowerCase());
 
-          if (existingOrder == null && !isAlreadyHandled && !alreadyInHistory) {
+          // If Director explicitly re-sent and it's not currently running, unblock it!
+          final shouldMount = (!isAlreadyActive && isResend) ||
+              (existingOrder == null && !isAlreadyHandled && !alreadyInHistory);
+
+          if (shouldMount) {
+            // Remove previous suppression if this is a deliberate re-send
+            if (isResend) {
+              if (activeOrderId != null) _handledDirectiveIds.remove(activeOrderId);
+              if (order.id.isNotEmpty) _handledDirectiveIds.remove(order.id);
+              _handledDirectiveIds.remove('title_${order.title.trim().toLowerCase()}');
+            }
+
             final assigned = _engine.assignOrder(
               order,
               id: activeOrderId,
@@ -2278,6 +2360,36 @@ class SyncService extends ChangeNotifier {
             } catch (_) {}
 
             broadcastPlayerState();
+            notifyListeners();
+          } else if (statusStr == 'emergencyCleared' || statusStr == 'cleared') {
+            final idx = _remoteActiveOrders.indexWhere(
+              (o) => (activeOrderId != null && activeOrderId.isNotEmpty && o.id == activeOrderId) ||
+                     (orderId.isNotEmpty && o.order.id == orderId) ||
+                     o.order.title.toLowerCase() == orderTitle.toLowerCase(),
+            );
+            if (idx != -1) {
+              _remoteActiveOrders[idx] = _remoteActiveOrders[idx].copyWith(
+                status: OrderStatus.emergencyCleared,
+                directorNote: reason ?? 'Emergency Cleared by ${senderName.isNotEmpty ? senderName : "Submissive"}',
+              );
+              _saveDirectorDispatchedOrders();
+            }
+            if (activeOrderId != null && activeOrderId.isNotEmpty) {
+              _confirmedOnPlayerOrderIds.remove(activeOrderId);
+            }
+            if (orderId.isNotEmpty) {
+              _confirmedOnPlayerOrderIds.remove(orderId);
+            }
+            _confirmedOnPlayerOrderIds.remove(orderTitle.toLowerCase());
+            _saveConfirmedOrders();
+
+            NotificationService.showGenericNotification(
+              title: 'Directive Emergency Cleared',
+              body: '${senderName.isNotEmpty ? senderName : "Submissive"} emergency-cleared "$orderTitle".',
+            );
+            try {
+              SoundService.playAlertSound();
+            } catch (_) {}
             notifyListeners();
           } else if (statusStr == 'completed') {
             _remoteActiveOrders.removeWhere(
@@ -2446,7 +2558,28 @@ class SyncService extends ChangeNotifier {
                       r.id == local.id ||
                       (r.order.id.isNotEmpty && r.order.id == local.order.id) ||
                       r.order.title.trim().toLowerCase() == local.order.title.trim().toLowerCase())) {
-                merged[local.id] = local;
+                final isPresentOnPlayer = incomingActive.any((inO) =>
+                    inO.id == local.id ||
+                    (inO.order.id.isNotEmpty && inO.order.id == local.order.id) ||
+                    inO.order.title.trim().toLowerCase() == local.order.title.trim().toLowerCase());
+
+                if (!isPresentOnPlayer &&
+                    isOrderConfirmedOnPlayer(local) &&
+                    local.status != OrderStatus.failed &&
+                    local.status != OrderStatus.cancelled &&
+                    local.status != OrderStatus.emergencyCleared) {
+                  // Submissive cleared this directive from their dashboard!
+                  final updatedLocal = local.copyWith(
+                    status: OrderStatus.emergencyCleared,
+                    directorNote: 'Emergency Cleared by Submissive',
+                  );
+                  merged[local.id] = updatedLocal;
+                  _confirmedOnPlayerOrderIds.remove(local.id);
+                  if (local.order.id.isNotEmpty) _confirmedOnPlayerOrderIds.remove(local.order.id);
+                  _confirmedOnPlayerOrderIds.remove(local.order.title.trim().toLowerCase());
+                } else {
+                  merged[local.id] = local;
+                }
               }
             }
             for (final incoming in incomingActive) {
@@ -2985,6 +3118,23 @@ class SyncService extends ChangeNotifier {
         ? _nickname
         : (_role == ConnectionRole.director ? 'Director' : 'Dominant');
 
+    // 0. Reset directive status back to active on Director side if previously emergencyCleared or cancelled
+    final idx = _remoteActiveOrders.indexWhere((o) =>
+        o.id == activeOrder.id ||
+        (o.order.id.isNotEmpty && o.order.id == activeOrder.order.id) ||
+        o.order.title.trim().toLowerCase() == activeOrder.order.title.trim().toLowerCase());
+    if (idx != -1) {
+      _remoteActiveOrders[idx] = _remoteActiveOrders[idx].copyWith(
+        status: OrderStatus.active,
+        clearDirectorNote: true,
+      );
+      _saveDirectorDispatchedOrders();
+    }
+    _confirmedOnPlayerOrderIds.remove(activeOrder.id);
+    if (activeOrder.order.id.isNotEmpty) _confirmedOnPlayerOrderIds.remove(activeOrder.order.id);
+    _confirmedOnPlayerOrderIds.remove(activeOrder.order.title.trim().toLowerCase());
+    _saveConfirmedOrders();
+
     final msg = SyncMessage(
       id: const Uuid().v4(),
       type: SyncMessageType.dispatchOrder,
@@ -2995,6 +3145,8 @@ class SyncService extends ChangeNotifier {
         'senderCode': _pairingCode,
         'senderId': _deviceId,
         'senderName': myDisplayName,
+        'isResend': true,
+        'forceAssign': true,
       },
     );
 

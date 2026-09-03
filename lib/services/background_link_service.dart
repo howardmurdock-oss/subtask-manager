@@ -745,8 +745,10 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           final activeOrderId = msg.payload['activeOrderId'] as String?;
           final orderId = orderData['id'] as String?;
 
-          // Check if directive was already handled or recorded in active orders / handled IDs
-          if (_isDirectiveHandled(activeOrderId: activeOrderId, orderId: orderId, msgId: msg.id, title: title)) {
+          final isResend = msg.payload['isResend'] == true || msg.payload['forceAssign'] == true;
+
+          // Check if directive was already handled or recorded in active orders / handled IDs (bypass if intentional re-send)
+          if (!isResend && _isDirectiveHandled(activeOrderId: activeOrderId, orderId: orderId, msgId: msg.id, title: title)) {
             break;
           }
           _markDirectiveHandled(activeOrderId: activeOrderId, orderId: orderId, msgId: msg.id, title: title);
@@ -764,6 +766,25 @@ class DirectiveSyncTaskHandler extends TaskHandler {
             assignerName: senderName,
             rewardTokens: tokens,
           );
+          break;
+
+        case SyncMessageType.orderStatusUpdate:
+          final statusStr = msg.payload['status'] as String?;
+          final orderTitle = msg.payload['orderTitle'] as String? ?? 'Directive';
+          final senderName = msg.payload['senderName'] as String? ?? 'Player';
+          if (statusStr == 'emergencyCleared' || statusStr == 'cleared') {
+            NotificationService.showGenericNotification(
+              title: 'Directive Emergency Cleared',
+              body: '$senderName emergency-cleared "$orderTitle".',
+            );
+          } else if (statusStr == 'failed') {
+            final reason = msg.payload['reason'] as String?;
+            NotificationService.showOrderFailedNotification(
+              title: orderTitle,
+              playerName: senderName,
+              reason: reason,
+            );
+          }
           break;
 
         case SyncMessageType.approveProof:

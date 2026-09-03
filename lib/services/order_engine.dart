@@ -957,27 +957,33 @@ class OrderEngine extends ChangeNotifier {
   }
 
   /// Dismiss/remove a specific active or review order from dashboard
-  void dismissOrDeleteOrder(String activeOrderId) {
-    _activeOrders.removeWhere((o) => o.id == activeOrderId);
+  ActiveOrder? dismissOrDeleteOrder(String activeOrderId) {
+    final idx = _activeOrders.indexWhere((o) => o.id == activeOrderId);
+    if (idx == -1) return null;
+    final removed = _activeOrders.removeAt(idx);
     _storage.saveActiveOrders(_activeOrders);
     notifyListeners();
+    return removed;
   }
 
-  /// Clear all completed, failed, and cancelled orders
+  /// Clear all completed, failed, cancelled, and emergency-cleared orders
   void clearAllFinishedAndFailedOrders() {
     _activeOrders.removeWhere((o) =>
         o.status == OrderStatus.completed ||
         o.status == OrderStatus.failed ||
-        o.status == OrderStatus.cancelled);
+        o.status == OrderStatus.cancelled ||
+        o.status == OrderStatus.emergencyCleared);
     _storage.saveActiveOrders(_activeOrders);
     notifyListeners();
   }
 
   /// Emergency clear all running and under review orders (clears dashboard)
-  void clearAllActiveOrders() {
+  List<ActiveOrder> clearAllActiveOrders() {
+    final removed = List<ActiveOrder>.from(_activeOrders);
     _activeOrders.clear();
     _storage.saveActiveOrders(_activeOrders);
     notifyListeners();
+    return removed;
   }
 
   void _saveStats() {

@@ -739,11 +739,16 @@ class PlayerDashboardView extends StatelessWidget {
                 foregroundColor: Colors.white,
               ),
               onPressed: () {
-                engine.clearAllActiveOrders();
+                final removed = engine.clearAllActiveOrders();
+                for (final o in removed) {
+                  if (o.assignedByDirector) {
+                    sync.notifyDirectiveEmergencyCleared(o);
+                  }
+                }
                 sync.broadcastPlayerState();
                 Navigator.pop(ctx);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Dashboard cleared')),
+                  const SnackBar(content: Text('Dashboard cleared. Director notified.')),
                 );
               },
               child: const Text('Confirm Clear All'),
@@ -752,6 +757,64 @@ class PlayerDashboardView extends StatelessWidget {
         );
       },
     );
+  }
+
+  void _handleOrderDismiss(BuildContext context, ActiveOrder active) {
+    final engine = Provider.of<OrderEngine>(context, listen: false);
+    final sync = Provider.of<SyncService>(context, listen: false);
+
+    if (active.assignedByDirector &&
+        (active.status == OrderStatus.active ||
+         active.status == OrderStatus.pending ||
+         active.status == OrderStatus.underReview)) {
+      showDialog(
+        context: context,
+        builder: (ctx) {
+          final theme = Theme.of(ctx);
+          return AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Colors.deepOrangeAccent),
+                const SizedBox(width: 8),
+                const Expanded(child: Text('Emergency Clear Directive?')),
+              ],
+            ),
+            content: Text(
+              'Are you sure you want to clear "${active.order.title}"? Your Director will be notified that you emergency-cleared this task from your dashboard.',
+              style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface.withOpacity(0.85)),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.delete_sweep_rounded, size: 16),
+                label: const Text('Emergency Clear'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepOrangeAccent,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  engine.dismissOrDeleteOrder(active.id);
+                  sync.notifyDirectiveEmergencyCleared(active);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Emergency cleared "${active.order.title}". Director notified.'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+              ),
+            ],
+          );
+        },
+      );
+    } else {
+      engine.dismissOrDeleteOrder(active.id);
+      sync.broadcastPlayerState();
+    }
   }
 
   @override
@@ -878,7 +941,7 @@ class PlayerDashboardView extends StatelessWidget {
               },
               onSubmitProof: () => _showProofSubmissionDialog(context, active),
               onForfeit: () => _showForfeitConfirmation(context, active),
-              onDismiss: () => engine.dismissOrDeleteOrder(active.id),
+              onDismiss: () => _handleOrderDismiss(context, active),
             ),
           ),
         ],
@@ -1030,7 +1093,7 @@ class PlayerDashboardView extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         TextButton.icon(
-                          onPressed: () => engine.dismissOrDeleteOrder(active.id),
+                          onPressed: () => _handleOrderDismiss(context, active),
                           icon: const Icon(Icons.delete_outline_rounded, size: 16),
                           label: const Text('Dismiss'),
                           style: TextButton.styleFrom(
