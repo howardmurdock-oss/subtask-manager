@@ -467,6 +467,7 @@ class OrderEngine extends ChangeNotifier {
     String? assignedByPartnerCode,
     String? assignedByPartnerId,
     String? assignedByPartnerName,
+    DateTime? assignedAt,
   }) {
     // 1. If an active order with this exact ID already exists, return it without resetting timer
     if (id != null && id.isNotEmpty) {
@@ -504,10 +505,17 @@ class OrderEngine extends ChangeNotifier {
       order = genuine;
     }
 
+    final effectiveAssignedAt = assignedAt ?? DateTime.now();
+
     DateTime? expires;
     if ((order.durationType == DurationType.deadlineCountdown || order.durationType == DurationType.actionWithDeadline) &&
         order.durationMinutes > 0) {
-      expires = DateTime.now().add(Duration(minutes: order.durationMinutes));
+      final calculatedExpires = effectiveAssignedAt.add(Duration(minutes: order.durationMinutes));
+      // If the scheduled window trigger occurred in the past while the app was closed or asleep,
+      // grant the user their full duration from now so they are not immediately penalized.
+      expires = calculatedExpires.isBefore(DateTime.now())
+          ? DateTime.now().add(Duration(minutes: order.durationMinutes))
+          : calculatedExpires;
     } else if (order.durationType == DurationType.dailyWindow) {
       final now = DateTime.now();
       expires = DateTime(now.year, now.month, now.day, 23, 59, 59);
@@ -516,7 +524,7 @@ class OrderEngine extends ChangeNotifier {
     final activeOrder = ActiveOrder(
       id: id,
       order: order,
-      assignedAt: DateTime.now(),
+      assignedAt: effectiveAssignedAt,
       expiresAt: expires,
       status: OrderStatus.active,
       assignedByDirector: assignedByDirector,

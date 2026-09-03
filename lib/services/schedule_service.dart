@@ -84,11 +84,23 @@ class ScheduleService extends ChangeNotifier {
         _rules.addAll(
           list.map((r) => ScheduledOrderRule.fromJson(Map<String, dynamic>.from(r as Map))),
         );
-        // Pre-arm native OS exact alarms for all enabled future rules
-        for (final r in _rules) {
+        // Pre-arm native OS exact alarms for all enabled future rules with staged orders
+        bool needsSave = false;
+        for (int i = 0; i < _rules.length; i++) {
+          final r = _rules[i];
           if (r.isEnabled) {
-            NotificationService.scheduleOrderNotification(r);
+            if (r.stagedOrder == null) {
+              final staged = _drawStagedOrderForRule(r);
+              if (staged != null) {
+                _rules[i] = r.copyWith(stagedOrder: staged);
+                needsSave = true;
+              }
+            }
+            NotificationService.scheduleOrderNotification(_rules[i]);
           }
+        }
+        if (needsSave) {
+          await _saveToStorage();
         }
       }
       notifyListeners();
@@ -140,13 +152,34 @@ class ScheduleService extends ChangeNotifier {
     notifyListeners();
   }
 
+  OrderItem? _drawStagedOrderForRule(ScheduledOrderRule rule) {
+    if (rule.isSpecificOrder && rule.specificOrder != null) {
+      return rule.specificOrder;
+    }
+    if (_orderEngine != null) {
+      return _orderEngine!.drawRandomOrder(
+        category: rule.categoryFilter,
+        minTier: rule.minTier,
+        maxTier: rule.maxTier,
+      );
+    }
+    return null;
+  }
+
   // ---- Rule CRUD ----
 
   Future<void> addRule(ScheduledOrderRule rule) async {
-    _rules.add(rule);
+    var ruleToSave = rule;
+    if (ruleToSave.stagedOrder == null) {
+      final staged = _drawStagedOrderForRule(ruleToSave);
+      if (staged != null) {
+        ruleToSave = ruleToSave.copyWith(stagedOrder: staged);
+      }
+    }
+    _rules.add(ruleToSave);
     await _saveToStorage();
-    if (rule.isEnabled) {
-      await NotificationService.scheduleOrderNotification(rule);
+    if (ruleToSave.isEnabled) {
+      await NotificationService.scheduleOrderNotification(ruleToSave);
     }
     notifyListeners();
   }
@@ -154,12 +187,19 @@ class ScheduleService extends ChangeNotifier {
   Future<void> updateRule(ScheduledOrderRule rule) async {
     final idx = _rules.indexWhere((r) => r.id == rule.id);
     if (idx >= 0) {
-      _rules[idx] = rule;
+      var ruleToSave = rule;
+      if (ruleToSave.stagedOrder == null) {
+        final staged = _drawStagedOrderForRule(ruleToSave);
+        if (staged != null) {
+          ruleToSave = ruleToSave.copyWith(stagedOrder: staged);
+        }
+      }
+      _rules[idx] = ruleToSave;
       await _saveToStorage();
-      if (rule.isEnabled) {
-        await NotificationService.scheduleOrderNotification(rule);
+      if (ruleToSave.isEnabled) {
+        await NotificationService.scheduleOrderNotification(ruleToSave);
       } else {
-        await NotificationService.cancelOrderNotification(rule.id);
+        await NotificationService.cancelOrderNotification(ruleToSave.id);
       }
       notifyListeners();
     }
@@ -183,9 +223,15 @@ class ScheduleService extends ChangeNotifier {
         );
       }
 
+      var staged = current.stagedOrder;
+      if (isEnabled && (staged == null || nextTrigger.isBefore(DateTime.now()))) {
+        staged = _drawStagedOrderForRule(current);
+      }
+
       _rules[idx] = current.copyWith(
         isEnabled: isEnabled,
         nextTriggerTime: nextTrigger,
+        stagedOrder: staged,
       );
       await _saveToStorage();
       if (isEnabled) {
@@ -219,9 +265,11 @@ class ScheduleService extends ChangeNotifier {
 
         final nextRecurrence = rule.computeNextRecurrence(now);
         if (nextRecurrence != null) {
+          final nextStaged = _drawStagedOrderForRule(rule);
           _rules[i] = rule.copyWith(
             lastTriggeredAt: now,
             nextTriggerTime: nextRecurrence,
+            stagedOrder: nextStaged,
           );
           // Pre-arm native alarm for next recurrence
           NotificationService.scheduleOrderNotification(_rules[i]);
@@ -230,6 +278,7 @@ class ScheduleService extends ChangeNotifier {
           _rules[i] = rule.copyWith(
             lastTriggeredAt: now,
             isEnabled: false,
+            clearStagedOrder: true,
           );
           NotificationService.cancelOrderNotification(rule.id);
         }
@@ -254,12 +303,9 @@ class ScheduleService extends ChangeNotifier {
   Future<void> _executeDirectorDispatch(ScheduledOrderRule rule) async {
     if (_syncService == null) return;
 
-    OrderItem? orderToDispatch;
+    OrderItem? orderToDispatch = rule.stagedOrder ?? rule.specificOrder;
 
-    if (rule.isSpecificOrder && rule.specificOrder != null) {
-      orderToDispatch = rule.specificOrder;
-    } else if (_orderEngine != null) {
-      // Draw random order based on category and tier
+    if (orderToDispatch == null && _orderEngine != null) {
       orderToDispatch = _orderEngine!.drawRandomOrder(
         category: rule.categoryFilter,
         minTier: rule.minTier,
@@ -287,24 +333,29 @@ class ScheduleService extends ChangeNotifier {
     _syncService!.dispatchOrderToPlayer(
       orderToDispatch,
       targetPartner: targetPartner,
+      assignedAt: rule.nextTriggerTime,
     );
 
-    NotificationService.showOrderDispatchedNotification(
-      title: orderToDispatch.title,
-      description: orderToDispatch.description.isNotEmpty
-          ? orderToDispatch.description
-          : (targetPartner.isSelf
-              ? 'Automated scheduled directive assigned to yourself.'
-              : 'Automated dispatch sent to ${targetPartner.displayName}'),
-      assignerName: targetPartner.isSelf ? 'Scheduled Directive' : 'Director Dispatch',
-      rewardTokens: orderToDispatch.rewardTokens,
-    );
+    final now = DateTime.now();
+    final wasJustDue = now.difference(rule.nextTriggerTime).inMinutes.abs() <= 5;
+    if (wasJustDue) {
+      NotificationService.showOrderDispatchedNotification(
+        title: orderToDispatch.title,
+        description: orderToDispatch.description.isNotEmpty
+            ? orderToDispatch.description
+            : (targetPartner.isSelf
+                ? 'Automated scheduled directive assigned to yourself.'
+                : 'Automated dispatch sent to ${targetPartner.displayName}'),
+        assignerName: targetPartner.isSelf ? 'Scheduled Directive' : 'Director Dispatch',
+        rewardTokens: orderToDispatch.rewardTokens,
+      );
+    }
   }
 
   Future<void> _executePlayerSelfDraw(ScheduledOrderRule rule) async {
     if (_orderEngine == null) return;
 
-    final order = _orderEngine!.drawRandomOrder(
+    final order = rule.stagedOrder ?? rule.specificOrder ?? _orderEngine!.drawRandomOrder(
       category: rule.categoryFilter,
       minTier: rule.minTier,
       maxTier: rule.maxTier,
@@ -315,17 +366,24 @@ class ScheduleService extends ChangeNotifier {
       return;
     }
 
-    _orderEngine!.assignOrder(order);
-
-    SoundService.playAlertSound();
-    NotificationService.showOrderDispatchedNotification(
-      title: order.title,
-      description: order.description.isNotEmpty
-          ? order.description
-          : 'Scheduled order drawn and active on your dashboard.',
-      assignerName: 'Scheduled Task',
-      rewardTokens: order.rewardTokens,
+    _orderEngine!.assignOrder(
+      order,
+      assignedAt: rule.nextTriggerTime,
     );
+
+    final now = DateTime.now();
+    final wasJustDue = now.difference(rule.nextTriggerTime).inMinutes.abs() <= 5;
+    if (wasJustDue) {
+      SoundService.playAlertSound();
+      NotificationService.showOrderDispatchedNotification(
+        title: order.title,
+        description: order.description.isNotEmpty
+            ? order.description
+            : 'Scheduled order drawn and active on your dashboard.',
+        assignerName: 'Scheduled Task',
+        rewardTokens: order.rewardTokens,
+      );
+    }
 
     _syncService?.broadcastPlayerState();
   }

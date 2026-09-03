@@ -15,6 +15,10 @@ class NotificationService {
   static const String _channelName = 'Directives & Orders Alert';
   static const String _channelDesc = 'Critical heads-up alerts for incoming directives, tasks, and verifications';
 
+  static const String _alarmChannelId = 'scheduled_orders_alarm_channel_v1';
+  static const String _alarmChannelName = 'Scheduled Orders & Alarms';
+  static const String _alarmChannelDesc = 'High-priority alerts for scheduled orders, directives, and window triggers';
+
   static Future<void> init() async {
     if (_initialized) return;
 
@@ -56,6 +60,12 @@ class NotificationService {
         if (Platform.isAndroid) {
           final androidImpl = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
           await androidImpl?.requestNotificationsPermission();
+          try {
+            final canExact = await androidImpl?.canScheduleExactNotifications() ?? false;
+            if (!canExact) {
+              await androidImpl?.requestExactAlarmsPermission();
+            }
+          } catch (_) {}
         }
       }
 
@@ -424,12 +434,18 @@ class NotificationService {
 
     final id = rule.id.hashCode & 0x7FFFFFFF;
     final isDirector = rule.targetType == ScheduleTargetType.directorDispatch;
+    final staged = rule.stagedOrder ?? rule.specificOrder;
+    final orderTitle = staged != null ? staged.title : rule.title;
+    final tokenInfo = (staged != null && staged.rewardTokens > 0) ? ' (+${staged.rewardTokens} tokens)' : '';
+
     final title = isDirector
-        ? '⚡ Scheduled Directive Ready!'
-        : '⚡ Scheduled Order Arrived!';
-    final body = isDirector
-        ? 'Directive "${rule.title}" has been dispatched. Open (sub)Task Manager to view.'
-        : 'A surprise order is ready for you to complete! Open (sub)Task Manager now.';
+        ? '⚡ Scheduled Directive: $orderTitle$tokenInfo'
+        : '⚡ Scheduled Task: $orderTitle$tokenInfo';
+    final body = (staged != null && staged.description.isNotEmpty)
+        ? staged.description
+        : (isDirector
+            ? 'Directive "${rule.title}" has been dispatched. Open (sub)Task Manager to view.'
+            : 'A surprise order is ready for you to complete! Open (sub)Task Manager now.');
 
     await scheduleExactNotification(
       id: id,
@@ -462,9 +478,9 @@ class NotificationService {
       if (scheduledDate.isBefore(DateTime.now())) return;
 
       final androidDetails = AndroidNotificationDetails(
-        _channelId,
-        _channelName,
-        channelDescription: _channelDesc,
+        _alarmChannelId,
+        _alarmChannelName,
+        channelDescription: _alarmChannelDesc,
         importance: Importance.max,
         priority: Priority.max,
         ticker: 'Scheduled Directive Ready',
@@ -494,16 +510,45 @@ class NotificationService {
 
       final tzScheduled = tz.TZDateTime.from(scheduledDate, tz.local);
 
-      await _plugin.zonedSchedule(
-        id,
-        title,
-        body,
-        tzScheduled,
-        details,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-        payload: payload,
-      );
+      AndroidScheduleMode scheduleMode = AndroidScheduleMode.exactAllowWhileIdle;
+      if (Platform.isAndroid) {
+        try {
+          final androidImpl = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+          final canExact = await androidImpl?.canScheduleExactNotifications() ?? false;
+          if (!canExact) {
+            scheduleMode = AndroidScheduleMode.inexactAllowWhileIdle;
+          }
+        } catch (_) {}
+      }
+
+      try {
+        await _plugin.zonedSchedule(
+          id,
+          title,
+          body,
+          tzScheduled,
+          details,
+          androidScheduleMode: scheduleMode,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          payload: payload,
+        );
+      } catch (innerErr) {
+        // Fallback to inexact if exact schedule fails
+        if (scheduleMode != AndroidScheduleMode.inexactAllowWhileIdle) {
+          await _plugin.zonedSchedule(
+            id,
+            title,
+            body,
+            tzScheduled,
+            details,
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+            payload: payload,
+          );
+        } else {
+          rethrow;
+        }
+      }
     } catch (e) {
       if (kDebugMode) print('Failed to schedule exact notification: $e');
     }

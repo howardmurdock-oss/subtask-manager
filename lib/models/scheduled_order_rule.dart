@@ -58,6 +58,9 @@ class ScheduledOrderRule {
   final bool isSpecificOrder;
   final OrderItem? specificOrder;
 
+  /// Pre-drawn order prepared for the upcoming nextTriggerTime
+  final OrderItem? stagedOrder;
+
   /// Filters for random order draws (both Director and Player)
   final String? categoryFilter;
   final int minTier;
@@ -86,6 +89,7 @@ class ScheduledOrderRule {
     DateTime? nextTriggerTime,
     this.isSpecificOrder = false,
     this.specificOrder,
+    this.stagedOrder,
     this.categoryFilter,
     this.minTier = 1,
     this.maxTier = 5,
@@ -297,6 +301,8 @@ class ScheduledOrderRule {
     DateTime? nextTriggerTime,
     bool? isSpecificOrder,
     OrderItem? specificOrder,
+    OrderItem? stagedOrder,
+    bool clearStagedOrder = false,
     String? categoryFilter,
     int? minTier,
     int? maxTier,
@@ -321,6 +327,7 @@ class ScheduledOrderRule {
       nextTriggerTime: nextTriggerTime ?? this.nextTriggerTime,
       isSpecificOrder: isSpecificOrder ?? this.isSpecificOrder,
       specificOrder: specificOrder ?? this.specificOrder,
+      stagedOrder: clearStagedOrder ? null : (stagedOrder ?? this.stagedOrder),
       categoryFilter: categoryFilter ?? this.categoryFilter,
       minTier: minTier ?? this.minTier,
       maxTier: maxTier ?? this.maxTier,
@@ -347,6 +354,7 @@ class ScheduledOrderRule {
         'nextTriggerTime': nextTriggerTime.toIso8601String(),
         'isSpecificOrder': isSpecificOrder,
         'specificOrder': specificOrder?.toJson(),
+        'stagedOrder': stagedOrder?.toJson(),
         'categoryFilter': categoryFilter,
         'minTier': minTier,
         'maxTier': maxTier,
@@ -387,6 +395,9 @@ class ScheduledOrderRule {
       isSpecificOrder: json['isSpecificOrder'] as bool? ?? false,
       specificOrder: json['specificOrder'] != null
           ? OrderItem.fromJson(Map<String, dynamic>.from(json['specificOrder'] as Map))
+          : null,
+      stagedOrder: json['stagedOrder'] != null
+          ? OrderItem.fromJson(Map<String, dynamic>.from(json['stagedOrder'] as Map))
           : null,
       categoryFilter: json['categoryFilter'] as String?,
       minTier: (json['minTier'] as num?)?.toInt() ?? 1,

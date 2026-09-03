@@ -526,9 +526,11 @@ class DirectiveSyncTaskHandler extends TaskHandler {
 
           final nextRecurrence = rule.computeNextRecurrence(now);
           if (nextRecurrence != null) {
+            final nextStaged = _drawBackgroundCandidateOrder(rule, prefs);
             rules[i] = rule.copyWith(
               lastTriggeredAt: now,
               nextTriggerTime: nextRecurrence,
+              stagedOrder: nextStaged,
             );
             // Arm native OS exact alarm for next recurrence
             NotificationService.scheduleOrderNotification(rules[i]);
@@ -536,6 +538,7 @@ class DirectiveSyncTaskHandler extends TaskHandler {
             rules[i] = rule.copyWith(
               lastTriggeredAt: now,
               isEnabled: false,
+              clearStagedOrder: true,
             );
             NotificationService.cancelOrderNotification(rule.id);
           }
@@ -552,112 +555,108 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     }
   }
 
-  Future<void> _executeBackgroundScheduledRule(ScheduledOrderRule rule, SharedPreferences prefs) async {
-    OrderItem? orderToDispatch;
-
+  OrderItem? _drawBackgroundCandidateOrder(ScheduledOrderRule rule, SharedPreferences prefs) {
     if (rule.isSpecificOrder && rule.specificOrder != null) {
-      orderToDispatch = rule.specificOrder;
-    } else {
-      // 1. Load packs from storage, falling back to default packs
-      List<OrderPack> packs = [];
-      try {
-        final rawPacks = prefs.getString('storage_order_packs');
-        if (rawPacks != null && rawPacks.isNotEmpty) {
-          final List packList = jsonDecode(rawPacks);
-          packs = packList
-              .map((p) => OrderPack.fromJson(Map<String, dynamic>.from(p as Map)))
-              .toList();
+      return rule.specificOrder;
+    }
+
+    List<OrderPack> packs = [];
+    try {
+      final rawPacks = prefs.getString('storage_order_packs');
+      if (rawPacks != null && rawPacks.isNotEmpty) {
+        final List packList = jsonDecode(rawPacks);
+        packs = packList
+            .map((p) => OrderPack.fromJson(Map<String, dynamic>.from(p as Map)))
+            .toList();
+      }
+    } catch (_) {}
+
+    if (packs.isEmpty) {
+      packs = StorageService.getDefaultPacks();
+    }
+
+    final ownedList = prefs.getStringList('storage_owned_equipment') ?? [];
+    final ownedEquipment = ownedList
+        .map((e) => e.trim().toLowerCase())
+        .where((e) => e.isNotEmpty)
+        .toSet();
+
+    final catFilter = (rule.categoryFilter == null ||
+            rule.categoryFilter!.isEmpty ||
+            rule.categoryFilter!.trim().toLowerCase() == 'all')
+        ? null
+        : rule.categoryFilter!.trim().toLowerCase();
+
+    final candidates = <OrderItem>[];
+    for (final pack in packs.where((p) => p.isEnabled)) {
+      for (final order in pack.orders) {
+        if (!order.allowRandomDraw) continue;
+
+        if (catFilter != null && order.category.trim().toLowerCase() != catFilter) {
+          continue;
         }
-      } catch (_) {}
 
-      if (packs.isEmpty) {
-        packs = StorageService.getDefaultPacks();
-      }
-
-      // 2. Load owned equipment
-      final ownedList = prefs.getStringList('storage_owned_equipment') ?? [];
-      final ownedEquipment = ownedList
-          .map((e) => e.trim().toLowerCase())
-          .where((e) => e.isNotEmpty)
-          .toSet();
-
-      // 3. Filter candidates matching category, tier, and equipment
-      final catFilter = (rule.categoryFilter == null ||
-              rule.categoryFilter!.isEmpty ||
-              rule.categoryFilter!.trim().toLowerCase() == 'all')
-          ? null
-          : rule.categoryFilter!.trim().toLowerCase();
-
-      final candidates = <OrderItem>[];
-      for (final pack in packs.where((p) => p.isEnabled)) {
-        for (final order in pack.orders) {
-          if (!order.allowRandomDraw) continue;
-
-          if (catFilter != null && order.category.trim().toLowerCase() != catFilter) {
-            continue;
-          }
-
-          if (order.tier < rule.minTier || order.tier > rule.maxTier) {
-            continue;
-          }
-
-          if (order.requiredEquipment.isNotEmpty) {
-            final hasMissing = order.requiredEquipment.any(
-              (eq) => !ownedEquipment.contains(eq.trim().toLowerCase()),
-            );
-            if (hasMissing) continue;
-          }
-
-          candidates.add(order);
+        if (order.tier < rule.minTier || order.tier > rule.maxTier) {
+          continue;
         }
-      }
 
-      // Fallback 1: If category/equipment was too restrictive, relax category & equipment within tier
-      if (candidates.isEmpty) {
-        for (final pack in packs.where((p) => p.isEnabled)) {
-          for (final order in pack.orders) {
-            if (!order.allowRandomDraw) continue;
-            if (order.tier >= rule.minTier && order.tier <= rule.maxTier) {
-              candidates.add(order);
-            }
-          }
+        if (order.requiredEquipment.isNotEmpty) {
+          final hasMissing = order.requiredEquipment.any(
+            (eq) => !ownedEquipment.contains(eq.trim().toLowerCase()),
+          );
+          if (hasMissing) continue;
         }
-      }
 
-      // Fallback 2: Any random-eligible order in any enabled pack
-      if (candidates.isEmpty) {
-        for (final pack in packs.where((p) => p.isEnabled)) {
-          for (final order in pack.orders) {
-            if (order.allowRandomDraw) {
-              candidates.add(order);
-            }
-          }
-        }
-      }
-
-      // Fallback 3: Draw directly from system default packs
-      if (candidates.isEmpty) {
-        final defaultPacks = StorageService.getDefaultPacks();
-        candidates.addAll(defaultPacks.expand((p) => p.orders));
-      }
-
-      if (candidates.isNotEmpty) {
-        orderToDispatch = candidates[Random().nextInt(candidates.length)];
+        candidates.add(order);
       }
     }
 
-    final finalOrder = orderToDispatch;
+    if (candidates.isEmpty) {
+      for (final pack in packs.where((p) => p.isEnabled)) {
+        for (final order in pack.orders) {
+          if (!order.allowRandomDraw) continue;
+          if (order.tier >= rule.minTier && order.tier <= rule.maxTier) {
+            candidates.add(order);
+          }
+        }
+      }
+    }
+
+    if (candidates.isEmpty) {
+      for (final pack in packs.where((p) => p.isEnabled)) {
+        for (final order in pack.orders) {
+          if (order.allowRandomDraw) {
+            candidates.add(order);
+          }
+        }
+      }
+    }
+
+    if (candidates.isEmpty) {
+      final defaultPacks = StorageService.getDefaultPacks();
+      candidates.addAll(defaultPacks.expand((p) => p.orders));
+    }
+
+    if (candidates.isNotEmpty) {
+      return candidates[Random().nextInt(candidates.length)];
+    }
+    return null;
+  }
+
+  Future<void> _executeBackgroundScheduledRule(ScheduledOrderRule rule, SharedPreferences prefs) async {
+    final finalOrder = rule.stagedOrder ?? rule.specificOrder ?? _drawBackgroundCandidateOrder(rule, prefs);
     if (finalOrder == null) return;
 
     if (rule.targetType == ScheduleTargetType.playerSelfDraw) {
-      // Queue order for main app OrderEngine
+      // Queue order for main app OrderEngine with scheduled window arrival timestamp
       final payload = {
         'type': 'dispatchOrder',
         'order': finalOrder.toJson(),
-        'senderName': 'Self',
+        'senderName': 'Scheduled Task',
         'senderId': '__self__',
         'senderCode': '',
         'assignedByDirector': false,
+        'assignedAt': rule.nextTriggerTime.toIso8601String(),
       };
       _queuePendingOrder(payload);
 
@@ -678,6 +677,7 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           'senderId': '__self__',
           'senderCode': '',
           'assignedByDirector': true,
+          'assignedAt': rule.nextTriggerTime.toIso8601String(),
         };
         _queuePendingOrder(payload);
 
@@ -701,6 +701,7 @@ class DirectiveSyncTaskHandler extends TaskHandler {
               'senderName': 'Director',
               'senderId': _deviceId,
               'assignedByDirector': true,
+              'assignedAt': rule.nextTriggerTime.toIso8601String(),
             },
           );
 

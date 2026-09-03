@@ -334,6 +334,10 @@ class SyncService extends ChangeNotifier {
                 h.orderTitle.trim().toLowerCase() == order.title.trim().toLowerCase());
 
             final isDirectorAssigned = data['assignedByDirector'] as bool? ?? (senderName != 'Self');
+            DateTime? parsedAssignedAt;
+            if (data['assignedAt'] is String) {
+              parsedAssignedAt = DateTime.tryParse(data['assignedAt'] as String);
+            }
             if (existingOrder == null && !isAlreadyHandled && !alreadyInHistory) {
               final assigned = _engine.assignOrder(
                 order,
@@ -342,6 +346,7 @@ class SyncService extends ChangeNotifier {
                 assignedByPartnerCode: senderCode,
                 assignedByPartnerId: senderId,
                 assignedByPartnerName: senderName,
+                assignedAt: parsedAssignedAt,
               );
               markDirectiveHandled(
                 activeOrderId: assigned.id,
@@ -2204,6 +2209,11 @@ class SyncService extends ChangeNotifier {
               _handledDirectiveIds.remove('title_${order.title.trim().toLowerCase()}');
             }
 
+            DateTime? parsedAssignedAt;
+            if (msg.payload['assignedAt'] is String) {
+              parsedAssignedAt = DateTime.tryParse(msg.payload['assignedAt'] as String);
+            }
+
             final assigned = _engine.assignOrder(
               order,
               id: activeOrderId,
@@ -2211,6 +2221,7 @@ class SyncService extends ChangeNotifier {
               assignedByPartnerCode: senderCode,
               assignedByPartnerId: senderId,
               assignedByPartnerName: senderName,
+              assignedAt: parsedAssignedAt,
             );
             assignedId = assigned.id;
             markDirectiveHandled(
@@ -2983,7 +2994,11 @@ class SyncService extends ChangeNotifier {
   }
 
   /// Director command helpers with targeted routing
-  bool dispatchOrderToPlayer(OrderItem order, {PartnerContact? targetPartner}) {
+  bool dispatchOrderToPlayer(
+    OrderItem order, {
+    PartnerContact? targetPartner,
+    DateTime? assignedAt,
+  }) {
     final myDisplayName = _nickname.isNotEmpty
         ? _nickname
         : (_role == ConnectionRole.director ? 'Director' : 'Dominant');
@@ -2999,6 +3014,7 @@ class SyncService extends ChangeNotifier {
         assignedByPartnerCode: _pairingCode,
         assignedByPartnerId: PartnerContact.selfId,
         assignedByPartnerName: myDisplayName.isNotEmpty ? '$myDisplayName (Self)' : 'Self (Director)',
+        assignedAt: assignedAt,
       );
       _remoteActiveOrders.removeWhere(
         (o) => o.id == assigned.id || (o.order.title == order.title && o.assignedByPartnerId == PartnerContact.selfId),
@@ -3034,6 +3050,7 @@ class SyncService extends ChangeNotifier {
         'senderCode': _pairingCode,
         'senderId': _deviceId,
         'senderName': myDisplayName,
+        if (assignedAt != null) 'assignedAt': assignedAt.toIso8601String(),
       },
     );
 
