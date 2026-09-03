@@ -98,12 +98,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _checkAndShowIncomingRequestDialog(PartnerService partnerSvc, SyncService sync) {
     if (partnerSvc.pendingRequests.isNotEmpty && !_isRequestDialogShowing && mounted) {
-      // Purge any requests for contacts that already exist or are self
+      // Purge any requests for contacts that already exist, are self, or are already handled
       partnerSvc.cleanExistingContactRequests(ownCode: sync.pairingCode, ownDeviceId: sync.deviceId);
       if (partnerSvc.pendingRequests.isEmpty) return;
 
-      _isRequestDialogShowing = true;
       final req = partnerSvc.pendingRequests.first;
+      if (partnerSvc.isRequestHandled(req.senderCode, req.sharedSecret) ||
+          partnerSvc.isExistingContactOrSelf(req.senderId, req.senderCode, ownCode: sync.pairingCode, ownDeviceId: sync.deviceId)) {
+        partnerSvc.removeIncomingRequest(req.senderId);
+        partnerSvc.removeIncomingRequest(req.senderCode);
+        return;
+      }
+
+      _isRequestDialogShowing = true;
       final nameCtrl = TextEditingController(text: req.senderName.isNotEmpty ? req.senderName : 'Partner');
       showDialog(
         context: context,
@@ -176,9 +183,10 @@ class _HomeScreenState extends State<HomeScreen> {
             actions: [
               TextButton(
                 style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-                onPressed: () {
-                  sync.declinePairingRequest(req);
-                  Navigator.pop(ctx);
+                onPressed: () async {
+                  await partnerSvc.markRequestHandled(req.senderCode, req.sharedSecret);
+                  await sync.declinePairingRequest(req);
+                  if (context.mounted) Navigator.pop(ctx);
                   _isRequestDialogShowing = false;
                 },
                 child: const Text('Decline'),
@@ -191,16 +199,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   foregroundColor: theme.colorScheme.brightness == Brightness.dark ? Colors.black : Colors.white,
                 ),
                 onPressed: () async {
+                  await partnerSvc.markRequestHandled(req.senderCode, req.sharedSecret);
                   final customName = nameCtrl.text.trim();
                   await sync.acceptPairingRequest(req, customName: customName.isNotEmpty ? customName : null);
-                  Navigator.pop(ctx);
+                  if (context.mounted) Navigator.pop(ctx);
                   _isRequestDialogShowing = false;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Connected with ${customName.isNotEmpty ? customName : req.senderName}!'),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Connected with ${customName.isNotEmpty ? customName : req.senderName}!'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
                 },
               ),
             ],

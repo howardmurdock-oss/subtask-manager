@@ -175,5 +175,85 @@ void main() {
       expect(partnerService.pendingRequests.length, 0);
       expect(prefs.getStringList('pending_background_pairings_v1'), isNull);
     });
+
+    test('PartnerService matches codes regardless of dashes or spaces (GMJ7-UCVY vs GMJ7UCVY)', () async {
+      final existing = PartnerContact(
+        id: 'contact_dash_test',
+        displayName: 'Submissive Player',
+        pairingCode: 'GMJ7UCVY', // Saved without dash
+        pairingSecret: 'sec123',
+        role: PartnerRole.submissive,
+      );
+      await partnerService.addContact(existing);
+
+      // Attempt to add with dash: GMJ7-UCVY
+      partnerService.addIncomingRequest(IncomingPairingRequest(
+        senderId: 'random_new_device_id',
+        senderCode: 'GMJ7-UCVY', // Received with dash
+        senderName: 'Submissive',
+        senderRole: PartnerRole.submissive,
+        sharedSecret: 'sec123',
+        timestamp: DateTime.now(),
+      ));
+
+      // Must be rejected as duplicate
+      expect(partnerService.pendingRequests.length, 0);
+    });
+
+    test('Declining a pairing request persists handled fingerprint and blocks replayed messages', () async {
+      final req = IncomingPairingRequest(
+        senderId: 'stranger_id',
+        senderCode: 'GMJ7-UCVY',
+        senderName: 'Submissive',
+        senderRole: PartnerRole.submissive,
+        sharedSecret: 'randomSecretXYZ',
+        timestamp: DateTime.now(),
+      );
+
+      partnerService.addIncomingRequest(req);
+      expect(partnerService.pendingRequests.length, 1);
+
+      // User declines the request
+      await syncService.declinePairingRequest(req);
+      expect(partnerService.pendingRequests.length, 0);
+      expect(partnerService.isRequestHandled('GMJ7-UCVY', 'randomSecretXYZ'), isTrue);
+
+      // Relay replays the exact same message later
+      final replayedMsg = SyncMessage(
+        type: SyncMessageType.pairingRequest,
+        senderId: 'stranger_id',
+        payload: {
+          'senderId': 'stranger_id',
+          'senderCode': 'GMJ7-UCVY',
+          'senderName': 'Submissive',
+          'senderRole': 'submissive',
+          'sharedSecret': 'randomSecretXYZ',
+        },
+      );
+      await syncService.handleIncomingSyncMessage(replayedMsg);
+
+      // Must still be 0 - not re-added!
+      expect(partnerService.pendingRequests.length, 0);
+    });
+
+    test('Past personal pairing codes are recognized as self and rejected', () async {
+      await syncService.updatePersonalIdentity(newCode: 'PAST-CODE-1');
+      await syncService.updatePersonalIdentity(newCode: 'CURRENT-CODE-2');
+
+      final echoMsg = SyncMessage(
+        type: SyncMessageType.pairingRequest,
+        senderId: 'echo_device',
+        payload: {
+          'senderId': 'echo_device',
+          'senderCode': 'PAST-CODE-1',
+          'senderName': 'Submissive',
+          'senderRole': 'submissive',
+          'sharedSecret': 'secretSelf',
+        },
+      );
+
+      await syncService.handleIncomingSyncMessage(echoMsg);
+      expect(partnerService.pendingRequests.length, 0);
+    });
   });
 }

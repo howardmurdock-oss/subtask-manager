@@ -22,8 +22,14 @@ class IncomingPairingRequest {
 }
 
 class PartnerService extends ChangeNotifier {
+  static String normalizeCode(String? code) {
+    if (code == null) return '';
+    return code.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+  }
+
   List<PartnerContact> _contacts = [];
   final List<IncomingPairingRequest> _pendingRequests = [];
+  final Set<String> _handledRequestFingerprints = {};
   String? _activePartnerId;
   bool _initialized = false;
 
@@ -69,6 +75,22 @@ class PartnerService extends ChangeNotifier {
         _contacts = decoded.map((e) => PartnerContact.fromJson(e as Map<String, dynamic>)).toList();
       }
 
+      final savedFingerprints = prefs.getStringList('handled_pairing_request_fingerprints_v1');
+      if (savedFingerprints != null) {
+        _handledRequestFingerprints.addAll(savedFingerprints);
+      }
+
+      // Automatically ensure all current contacts are registered in handled fingerprints
+      for (final c in _contacts) {
+        final clean = normalizeCode(c.pairingCode);
+        if (clean.isNotEmpty) {
+          _handledRequestFingerprints.add(clean);
+          if (c.pairingSecret.isNotEmpty) {
+            _handledRequestFingerprints.add('${clean}_${c.pairingSecret.trim()}');
+          }
+        }
+      }
+
       _activePartnerId = prefs.getString('active_partner_id');
       if (_activePartnerId == null && _contacts.isNotEmpty) {
         _activePartnerId = _contacts.first.id;
@@ -87,6 +109,7 @@ class PartnerService extends ChangeNotifier {
       final encoded = jsonEncode(_contacts.map((c) => c.toJson()).toList());
       await prefs.setString('partner_contacts_list', encoded);
       await prefs.setString('partner_contacts_v1', encoded);
+      await prefs.setStringList('handled_pairing_request_fingerprints_v1', _handledRequestFingerprints.toList());
       if (_activePartnerId != null) {
         await prefs.setString('active_partner_id', _activePartnerId!);
       } else {
@@ -98,8 +121,10 @@ class PartnerService extends ChangeNotifier {
   }
 
   Future<void> addContact(PartnerContact contact) async {
-    // Check if code or id already exists
-    final idx = _contacts.indexWhere((c) => c.id == contact.id || (c.pairingCode.isNotEmpty && c.pairingCode == contact.pairingCode));
+    final clean = normalizeCode(contact.pairingCode);
+    final idx = _contacts.indexWhere((c) =>
+        c.id == contact.id ||
+        (clean.isNotEmpty && normalizeCode(c.pairingCode) == clean));
     if (idx >= 0) {
       _contacts[idx] = contact;
     } else {
@@ -107,9 +132,15 @@ class PartnerService extends ChangeNotifier {
     }
 
     _activePartnerId ??= contact.id;
+    if (clean.isNotEmpty) {
+      _handledRequestFingerprints.add(clean);
+      if (contact.pairingSecret.isNotEmpty) {
+        _handledRequestFingerprints.add('${clean}_${contact.pairingSecret.trim()}');
+      }
+    }
     _pendingRequests.removeWhere((r) =>
         r.senderId == contact.id ||
-        (contact.pairingCode.isNotEmpty && r.senderCode.toUpperCase() == contact.pairingCode.toUpperCase()));
+        (clean.isNotEmpty && normalizeCode(r.senderCode) == clean));
     await _save();
     notifyListeners();
   }
@@ -191,8 +222,9 @@ class PartnerService extends ChangeNotifier {
   }
 
   PartnerContact? findContactByCode(String code) {
-    if (code.isEmpty) return null;
-    final match = _contacts.where((c) => c.pairingCode.toLowerCase() == code.toLowerCase());
+    final clean = normalizeCode(code);
+    if (clean.isEmpty) return null;
+    final match = _contacts.where((c) => normalizeCode(c.pairingCode) == clean);
     return match.isNotEmpty ? match.first : null;
   }
 
@@ -204,8 +236,9 @@ class PartnerService extends ChangeNotifier {
   }
 
   bool isSenderBlocked(String senderIdOrCode) {
+    final cleanCode = normalizeCode(senderIdOrCode);
     for (final c in _contacts) {
-      if ((c.id == senderIdOrCode || (c.pairingCode.isNotEmpty && c.pairingCode == senderIdOrCode)) && c.isBlocked) {
+      if ((c.id == senderIdOrCode || (cleanCode.isNotEmpty && normalizeCode(c.pairingCode) == cleanCode)) && c.isBlocked) {
         return true;
       }
     }
@@ -242,25 +275,62 @@ class PartnerService extends ChangeNotifier {
     }
   }
 
-  bool isExistingContactOrSelf(String? id, String? code, {String? ownCode, String? ownDeviceId}) {
-    if (id != null && id.isNotEmpty) {
-      if (id == PartnerContact.selfId || (ownDeviceId != null && ownDeviceId.isNotEmpty && id == ownDeviceId)) {
-        return true;
-      }
-      if (findContactById(id) != null) return true;
+  bool isRequestHandled(String? senderCode, [String? sharedSecret]) {
+    if (senderCode == null) return false;
+    final clean = normalizeCode(senderCode);
+    if (clean.isEmpty) return false;
+    if (_handledRequestFingerprints.contains(clean)) return true;
+    if (sharedSecret != null && sharedSecret.trim().isNotEmpty) {
+      if (_handledRequestFingerprints.contains('${clean}_${sharedSecret.trim()}')) return true;
     }
-    if (code != null && code.isNotEmpty) {
-      if (ownCode != null && ownCode.isNotEmpty && code.toUpperCase() == ownCode.toUpperCase()) {
+    return false;
+  }
+
+  Future<void> markRequestHandled(String senderCode, [String? sharedSecret]) async {
+    final clean = normalizeCode(senderCode);
+    if (clean.isNotEmpty) {
+      _handledRequestFingerprints.add(clean);
+      if (sharedSecret != null && sharedSecret.trim().isNotEmpty) {
+        _handledRequestFingerprints.add('${clean}_${sharedSecret.trim()}');
+      }
+      _pendingRequests.removeWhere((r) => normalizeCode(r.senderCode) == clean);
+      if (_handledRequestFingerprints.length > 500) {
+        final toRemove = _handledRequestFingerprints.take(100).toList();
+        _handledRequestFingerprints.removeAll(toRemove);
+      }
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setStringList('handled_pairing_request_fingerprints_v1', _handledRequestFingerprints.toList());
+      } catch (_) {}
+      notifyListeners();
+    }
+  }
+
+  bool isExistingContactOrSelf(String? id, String? code, {String? ownCode, String? ownDeviceId}) {
+    if (id != null && id.trim().isNotEmpty) {
+      final cleanId = id.trim();
+      if (cleanId == PartnerContact.selfId || (ownDeviceId != null && ownDeviceId.trim().isNotEmpty && cleanId == ownDeviceId.trim())) {
         return true;
       }
-      if (findContactByCode(code) != null) return true;
+      if (findContactById(cleanId) != null) return true;
+    }
+    if (code != null && code.trim().isNotEmpty) {
+      final clean = normalizeCode(code);
+      if (clean.isNotEmpty) {
+        if (ownCode != null && normalizeCode(ownCode) == clean) {
+          return true;
+        }
+        if (findContactByCode(clean) != null) return true;
+      }
     }
     return false;
   }
 
   void cleanExistingContactRequests({String? ownCode, String? ownDeviceId}) {
     final beforeCount = _pendingRequests.length;
-    _pendingRequests.removeWhere((r) => isExistingContactOrSelf(r.senderId, r.senderCode, ownCode: ownCode, ownDeviceId: ownDeviceId));
+    _pendingRequests.removeWhere((r) =>
+        isExistingContactOrSelf(r.senderId, r.senderCode, ownCode: ownCode, ownDeviceId: ownDeviceId) ||
+        isRequestHandled(r.senderCode, r.sharedSecret));
     if (_pendingRequests.length != beforeCount) {
       notifyListeners();
     }
@@ -269,13 +339,20 @@ class PartnerService extends ChangeNotifier {
   void addIncomingRequest(IncomingPairingRequest req, {String? ownCode, String? ownDeviceId}) {
     if (isSenderBlocked(req.senderId) || isSenderBlocked(req.senderCode)) return;
     if (isExistingContactOrSelf(req.senderId, req.senderCode, ownCode: ownCode, ownDeviceId: ownDeviceId)) return;
-    _pendingRequests.removeWhere((r) => r.senderId == req.senderId || r.senderCode == req.senderCode);
+    if (isRequestHandled(req.senderCode, req.sharedSecret)) return;
+
+    _pendingRequests.removeWhere((r) =>
+        r.senderId == req.senderId ||
+        normalizeCode(r.senderCode) == normalizeCode(req.senderCode));
     _pendingRequests.add(req);
     notifyListeners();
   }
 
   void removeIncomingRequest(String senderIdOrCode) {
-    _pendingRequests.removeWhere((r) => r.senderId == senderIdOrCode || r.senderCode.toUpperCase() == senderIdOrCode.toUpperCase());
+    final clean = normalizeCode(senderIdOrCode);
+    _pendingRequests.removeWhere((r) =>
+        r.senderId == senderIdOrCode ||
+        (clean.isNotEmpty && normalizeCode(r.senderCode) == clean));
     notifyListeners();
   }
 }

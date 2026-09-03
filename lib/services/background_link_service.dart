@@ -47,6 +47,7 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   Set<String> _processedIds = {};
   List<String> _partnerSecrets = [];
   List<String> _partnerCodes = [];
+  Set<String> _handledPairings = {};
   
   int _msgCount = 0;
   String _connectionState = 'Initializing';
@@ -56,6 +57,9 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   DirectiveSyncTaskHandler() {
     _httpClient.badCertificateCallback = (cert, host, port) => true;
   }
+
+  static String _cleanCode(String code) =>
+      code.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
 
   bool _isOwnMessage(SyncMessage? msg) {
     if (msg == null) return false;
@@ -175,6 +179,11 @@ class DirectiveSyncTaskHandler extends TaskHandler {
               .where((s) => s.isNotEmpty)
               .toList();
         } catch (_) {}
+      }
+
+      final savedHandled = prefs.getStringList('handled_pairing_request_fingerprints_v1');
+      if (savedHandled != null) {
+        _handledPairings = savedHandled.toSet();
       }
     } catch (e) {
       _lastError = 'Config error: $e';
@@ -685,10 +694,17 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           final senderName = msg.payload['senderName'] as String? ?? 'Partner';
           final senderCode = msg.payload['senderCode'] as String? ?? '';
           final senderId = msg.payload['senderId'] as String? ?? msg.senderId;
+          final sharedSecret = msg.payload['sharedSecret'] as String? ?? '';
 
-          // Ignore if sender is already an existing partner or self
-          final isExistingPartner = _partnerCodes.any((c) => c.toUpperCase() == senderCode.toUpperCase()) ||
-              (senderCode.isNotEmpty && senderCode.toUpperCase() == _pairingCode.toUpperCase()) ||
+          final cleanSender = _cleanCode(senderCode);
+          final isHandled = cleanSender.isNotEmpty &&
+              (_handledPairings.contains(cleanSender) ||
+               (sharedSecret.isNotEmpty && _handledPairings.contains('${cleanSender}_$sharedSecret')));
+
+          // Ignore if sender is already an existing partner or self or already handled
+          final isExistingPartner = isHandled ||
+              _partnerCodes.any((c) => _cleanCode(c) == cleanSender) ||
+              (cleanSender.isNotEmpty && cleanSender == _cleanCode(_pairingCode)) ||
               (senderId.isNotEmpty && senderId == _deviceId);
 
           if (isExistingPartner) {

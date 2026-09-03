@@ -76,6 +76,7 @@ class SyncService extends ChangeNotifier {
   Timer? _bgDrainTimer;
   final HttpClient _httpClient = HttpClient();
   final Set<String> _processedMessageIds = <String>{};
+  final Set<String> _pastPairingCodes = <String>{};
 
   // Broadcast throttling to prevent relay rate-limiting
   Timer? _broadcastDebounceTimer;
@@ -175,6 +176,14 @@ class SyncService extends ChangeNotifier {
       final savedProcessedIds = prefs.getStringList('processed_sync_message_ids');
       if (savedProcessedIds != null) {
         _processedMessageIds.addAll(savedProcessedIds);
+      }
+
+      final savedPastCodes = prefs.getStringList('past_pairing_codes_v1');
+      if (savedPastCodes != null) {
+        _pastPairingCodes.addAll(savedPastCodes.map((c) => PartnerService.normalizeCode(c)));
+      }
+      if (_pairingCode.isNotEmpty) {
+        _pastPairingCodes.add(PartnerService.normalizeCode(_pairingCode));
       }
 
       final rawRemoteActive = prefs.getStringList('director_remote_active_orders_v1');
@@ -357,15 +366,24 @@ class SyncService extends ChangeNotifier {
             final senderCode = data['senderCode'] as String? ?? '';
             final senderName = data['senderName'] as String? ?? 'Partner';
             final sharedSecret = data['sharedSecret'] as String? ?? '';
-            final isAlreadyPartner = _partnerService?.isExistingContactOrSelf(
-                  senderId,
-                  senderCode,
-                  ownCode: _pairingCode,
-                  ownDeviceId: _deviceId,
-                ) ??
-                false;
+            final cleanSender = PartnerService.normalizeCode(senderCode);
+            final isSelf = cleanSender.isNotEmpty &&
+                (_pastPairingCodes.contains(cleanSender) ||
+                 cleanSender == PartnerService.normalizeCode(_pairingCode) ||
+                 (senderId.isNotEmpty && senderId == _deviceId));
 
-            if (senderCode.isNotEmpty && !isAlreadyPartner) {
+            final isHandled = _partnerService?.isRequestHandled(cleanSender, sharedSecret) ?? false;
+            final isAlreadyPartner = isSelf ||
+                isHandled ||
+                (_partnerService?.isExistingContactOrSelf(
+                      senderId,
+                      senderCode,
+                      ownCode: _pairingCode,
+                      ownDeviceId: _deviceId,
+                    ) ??
+                    false);
+
+            if (cleanSender.isNotEmpty && !isAlreadyPartner) {
               _partnerService?.addIncomingRequest(
                 IncomingPairingRequest(
                   senderId: senderId,
@@ -827,6 +845,15 @@ class SyncService extends ChangeNotifier {
     }
 
     // 3. Commit new credentials
+    if (oldCode.isNotEmpty) {
+      _pastPairingCodes.add(PartnerService.normalizeCode(oldCode));
+    }
+    _pastPairingCodes.add(PartnerService.normalizeCode(cleanNewCode));
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('past_pairing_codes_v1', _pastPairingCodes.toList());
+    } catch (_) {}
+
     _pairingCode = cleanNewCode;
     _pairingSecret = cleanNewSecret;
     await _savePairingSettings();
@@ -1297,6 +1324,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<bool> acceptPairingRequest(IncomingPairingRequest req, {String? customName}) async {
+    await _partnerService?.markRequestHandled(req.senderCode, req.sharedSecret);
     final contact = PartnerContact(
       id: req.senderId,
       displayName: customName != null && customName.trim().isNotEmpty
@@ -1309,6 +1337,7 @@ class SyncService extends ChangeNotifier {
 
     await _partnerService?.addContact(contact);
     _partnerService?.removeIncomingRequest(req.senderId);
+    _partnerService?.removeIncomingRequest(req.senderCode);
 
     final myDisplayName = _nickname.isNotEmpty
         ? _nickname
@@ -1329,7 +1358,9 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<bool> declinePairingRequest(IncomingPairingRequest req) async {
+    await _partnerService?.markRequestHandled(req.senderCode, req.sharedSecret);
     _partnerService?.removeIncomingRequest(req.senderId);
+    _partnerService?.removeIncomingRequest(req.senderCode);
     final msg = SyncMessage(
       type: SyncMessageType.pairingDecline,
       senderId: _deviceId,
@@ -1717,18 +1748,23 @@ class SyncService extends ChangeNotifier {
           orElse: () => PartnerRole.submissive,
         );
 
-        // 1. Ignore if sender is self
-        if ((senderCode.isNotEmpty && senderCode.toUpperCase() == _pairingCode.toUpperCase()) ||
-            (senderId.isNotEmpty && senderId == _deviceId)) {
+        final cleanSender = PartnerService.normalizeCode(senderCode);
+
+        // 1. Ignore if sender is self (current identity, past identity, or device ID)
+        if (cleanSender.isNotEmpty &&
+            (_pastPairingCodes.contains(cleanSender) ||
+             cleanSender == PartnerService.normalizeCode(_pairingCode) ||
+             (senderId.isNotEmpty && senderId == _deviceId))) {
           return;
         }
 
         // 2. Check if sender is ALREADY in contacts / friend list
-        final existingContact = _partnerService?.findContactByCode(senderCode) ??
+        final existingContact = _partnerService?.findContactByCode(cleanSender) ??
             _partnerService?.findContactById(senderId);
 
         if (existingContact != null) {
-          // If the partner is already on the contact list, update secret or lastSeen seamlessly without re-prompting
+          // If the partner is already on the contact list, mark handled, update secret or lastSeen seamlessly without re-prompting
+          _partnerService?.markRequestHandled(cleanSender, sharedSecret);
           if (sharedSecret.isNotEmpty && existingContact.pairingSecret != sharedSecret) {
             _partnerService?.updateContact(existingContact.copyWith(
               pairingSecret: sharedSecret,
@@ -1737,6 +1773,11 @@ class SyncService extends ChangeNotifier {
           } else {
             _partnerService?.updateLastSeen(existingContact.id);
           }
+          return;
+        }
+
+        // 3. Ignore if already handled / accepted / declined
+        if (_partnerService?.isRequestHandled(cleanSender, sharedSecret) == true) {
           return;
         }
 
