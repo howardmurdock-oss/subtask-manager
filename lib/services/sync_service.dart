@@ -76,8 +76,41 @@ class SyncService extends ChangeNotifier {
   Timer? _bgDrainTimer;
   final HttpClient _httpClient = HttpClient();
   final Set<String> _processedMessageIds = <String>{};
+  final Set<String> _processedNtfyIds = <String>{};
   final Set<String> _pastPairingCodes = <String>{};
   final Set<String> _handledDirectiveIds = <String>{};
+  int? _lastSyncTimestampMs;
+  Timer? _saveProcessedIdsTimer;
+  Timer? _saveHandledDirectivesTimer;
+  bool _isConnecting = false;
+  bool _isPolling = false;
+
+  /// Calculates a dynamic 'since' parameter based on when the app last synced.
+  /// Protects against over-fetching 24 hours of messages on every launch.
+  String getDynamicSinceParam() {
+    if (_lastSyncTimestampMs == null || _lastSyncTimestampMs! <= 0) {
+      return '24h';
+    }
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final diffMs = nowMs - _lastSyncTimestampMs!;
+    final elapsedMinutes = diffMs > 0 ? (diffMs / 60000).floor() : 0;
+    // Safety buffer: elapsed + 5 minutes, clamped between 5m and 1440m (24h)
+    final safeMinutes = (elapsedMinutes + 5).clamp(5, 1440);
+    if (safeMinutes >= 1440) return '24h';
+    return '${safeMinutes}m';
+  }
+
+  void updateLastSyncTimestamp() {
+    _lastSyncTimestampMs = DateTime.now().millisecondsSinceEpoch;
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setInt('last_sync_timestamp_ms', _lastSyncTimestampMs!);
+    }).catchError((_) {});
+  }
+
+  @visibleForTesting
+  void setLastSyncTimestampForTesting(int? timestampMs) {
+    _lastSyncTimestampMs = timestampMs;
+  }
 
   // Broadcast throttling to prevent relay rate-limiting
   Timer? _broadcastDebounceTimer;
@@ -243,6 +276,7 @@ class SyncService extends ChangeNotifier {
       }
 
       _autoConnect = savedAuto;
+      _lastSyncTimestampMs = prefs.getInt('last_sync_timestamp_ms');
 
       // Drain and apply any directives or messages queued by the background isolate IMMEDIATELY
       // so active directives appear instantaneously on startup without multi-second delay.
@@ -250,23 +284,25 @@ class SyncService extends ChangeNotifier {
 
       notifyListeners();
 
-      // Always ensure device is listening to its personal cloud relay inbox topic
-      _ensureInboxListener();
-
-      // Start periodic background drain timer while foreground app is active
+      // Start gentle periodic background drain timer (30s) while foreground app is active.
+      // (Avoids running disk reloads every 3 seconds while user is typing or interacting).
       _bgDrainTimer?.cancel();
-      _bgDrainTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      _bgDrainTimer = Timer.periodic(const Duration(seconds: 30), (_) {
         processPendingBackgroundMessages();
       });
 
-      // Poll missed messages from relay topic(s) that arrived while the app was closed or offline
-      pollMissedMessages();
-
-      // Initiate auto-reconnect if enabled
-      if (_autoConnect && _pairingCode.isNotEmpty && _pairingSecret.isNotEmpty && _role != ConnectionRole.none) {
-        _startReconnectWatchdog();
-        _performAutoConnect();
-      }
+      // Defer network connection and topic synchronization past the initial UI frame (300ms)
+      // so PIN lock screen, navigation, and input controls paint and respond instantly with zero frame drops.
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (_pairingCode.isNotEmpty) {
+          if (_autoConnect && _pairingSecret.isNotEmpty && _role != ConnectionRole.none) {
+            _startReconnectWatchdog();
+            _performAutoConnect();
+          } else {
+            _ensureInboxListener();
+          }
+        }
+      });
     } catch (e) {
       if (kDebugMode) print('Error initializing SyncService: $e');
     }
@@ -500,7 +536,14 @@ class SyncService extends ChangeNotifier {
     }
   }
 
-  void _saveProcessedMessageIds() async {
+  void _saveProcessedMessageIds() {
+    _saveProcessedIdsTimer?.cancel();
+    _saveProcessedIdsTimer = Timer(const Duration(milliseconds: 500), () {
+      _saveProcessedMessageIdsNow();
+    });
+  }
+
+  void _saveProcessedMessageIdsNow() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList('processed_sync_message_ids_v2', _processedMessageIds.toList());
@@ -1153,6 +1196,9 @@ class SyncService extends ChangeNotifier {
     required String password,
     bool isAuto = false,
   }) async {
+    if (_isConnecting) return false;
+    _isConnecting = true;
+
     // Always cleanly cancel and tear down any existing subscription/socket
     await _cloudSubscription?.cancel();
     _cloudSubscription = null;
@@ -1184,12 +1230,14 @@ class SyncService extends ChangeNotifier {
         }
       }
       final combinedTopics = topics.join(',');
-      final wsUrl = 'wss://$_customRelayHost/$combinedTopics/ws?since=24h';
+      final sinceParam = getDynamicSinceParam();
+      final wsUrl = 'wss://$_customRelayHost/$combinedTopics/ws?since=$sinceParam';
 
       final socket = await WebSocket.connect(wsUrl).timeout(const Duration(seconds: 8));
       _cloudSocket = socket;
       _status = ConnectionStatus.connected;
       _statusMessage = 'Connected via Global Cloud Link (E2EE)';
+      updateLastSyncTimestamp();
       notifyListeners();
 
       _cloudSubscription = _cloudSocket!.listen(
@@ -1197,6 +1245,16 @@ class SyncService extends ChangeNotifier {
           try {
             final parsed = jsonDecode(data.toString());
             if (parsed is Map && parsed['event'] == 'message') {
+              final ntfyId = parsed['id'] as String?;
+              if (ntfyId != null && ntfyId.isNotEmpty) {
+                if (_processedNtfyIds.contains(ntfyId)) return;
+                _processedNtfyIds.add(ntfyId);
+                if (_processedNtfyIds.length > 500) {
+                  _processedNtfyIds.remove(_processedNtfyIds.first);
+                }
+              }
+              updateLastSyncTimestamp();
+
               if (parsed['attachment'] is Map && parsed['attachment']['url'] != null) {
                 final fileUrl = parsed['attachment']['url'] as String;
                 final req = await _httpClient.getUrl(Uri.parse(fileUrl));
@@ -1242,9 +1300,6 @@ class SyncService extends ChangeNotifier {
         }
       });
 
-      // Poll missed messages from topic history immediately
-      pollMissedMessages();
-
       // Initial state synchronization handshake
       if (_role == ConnectionRole.director) {
         requestStateFromPlayer();
@@ -1257,7 +1312,8 @@ class SyncService extends ChangeNotifier {
       if (kDebugMode) print('WebSocket failed ($e), attempting HTTPS SSE fallback...');
       try {
         final topic = _getHashedTopic(_pairingCode);
-        final url = Uri.parse('https://$_customRelayHost/$topic/sse?since=24h');
+        final sinceParam = getDynamicSinceParam();
+        final url = Uri.parse('https://$_customRelayHost/$topic/sse?since=$sinceParam');
         final req = await _httpClient.getUrl(url).timeout(const Duration(seconds: 8));
         req.headers.set('Accept', 'text/event-stream');
         final res = await req.close();
@@ -1265,6 +1321,7 @@ class SyncService extends ChangeNotifier {
         if (res.statusCode == 200) {
           _status = ConnectionStatus.connected;
           _statusMessage = 'Connected via Global Cloud Link (SSE/E2EE)';
+          updateLastSyncTimestamp();
           notifyListeners();
 
           _cloudSubscription = res.transform(utf8.decoder).transform(const LineSplitter()).listen(
@@ -1275,6 +1332,16 @@ class SyncService extends ChangeNotifier {
                   if (jsonStr.isNotEmpty) {
                     final parsed = jsonDecode(jsonStr);
                     if (parsed is Map && parsed['event'] == 'message') {
+                      final ntfyId = parsed['id'] as String?;
+                      if (ntfyId != null && ntfyId.isNotEmpty) {
+                        if (_processedNtfyIds.contains(ntfyId)) return;
+                        _processedNtfyIds.add(ntfyId);
+                        if (_processedNtfyIds.length > 500) {
+                          _processedNtfyIds.remove(_processedNtfyIds.first);
+                        }
+                      }
+                      updateLastSyncTimestamp();
+
                       if (parsed['attachment'] is Map && parsed['attachment']['url'] != null) {
                         final fileUrl = parsed['attachment']['url'] as String;
                         final req = await _httpClient.getUrl(Uri.parse(fileUrl));
@@ -1314,15 +1381,17 @@ class SyncService extends ChangeNotifier {
           return true;
         }
       } catch (sseErr) {
-        if (kDebugMode) print('SSE fallback also failed: $sseErr');
+        if (kDebugMode) print('HTTPS SSE fallback also failed: $sseErr');
       }
 
       _status = ConnectionStatus.disconnected;
-      _statusMessage = 'Could not reach relay server. Auto-retrying...';
+      _statusMessage = 'Relay connection failed (Will retry)';
       _cloudSubscription = null;
       _cloudSocket = null;
       notifyListeners();
       return false;
+    } finally {
+      _isConnecting = false;
     }
   }
 
@@ -1676,50 +1745,66 @@ class SyncService extends ChangeNotifier {
 
   /// Fetches historical messages from the relay topic(s) that arrived while app was closed or offline
   Future<void> pollMissedMessages() async {
-    if (_pairingCode.isEmpty) return;
+    if (_isPolling || _pairingCode.isEmpty) return;
+    _isPolling = true;
 
-    final topics = <String>{_getHashedTopic(_pairingCode)};
-    if (_partnerService != null) {
-      for (final c in _partnerService!.contacts) {
-        if (c.pairingCode.isNotEmpty) {
-          topics.add(_getHashedTopic(c.pairingCode));
-        }
-      }
-    }
-
-    final host = _customRelayHost.isNotEmpty ? _customRelayHost : 'ntfy.envs.net';
-
-    for (final topic in topics) {
-      try {
-        final url = Uri.parse('https://$host/$topic/json?poll=1&since=24h');
-        final req = await _httpClient.getUrl(url).timeout(const Duration(seconds: 6));
-        final res = await req.close().timeout(const Duration(seconds: 6));
-        if (res.statusCode == 200) {
-          final lines = await res.transform(utf8.decoder).transform(const LineSplitter()).toList();
-          for (final line in lines) {
-            if (line.trim().isEmpty) continue;
-            try {
-              final parsed = jsonDecode(line);
-              if (parsed is Map && parsed['event'] == 'message') {
-                if (parsed['attachment'] is Map && parsed['attachment']['url'] != null) {
-                  final fileUrl = parsed['attachment']['url'] as String;
-                  final aReq = await _httpClient.getUrl(Uri.parse(fileUrl));
-                  final aRes = await aReq.close();
-                  final raw = await utf8.decodeStream(aRes);
-                  _processIncomingRaw(raw);
-                  continue;
-                }
-                final raw = parsed['message'] as String?;
-                if (raw != null) {
-                  _processIncomingRaw(raw);
-                }
-              }
-            } catch (_) {}
+    try {
+      final topics = <String>{_getHashedTopic(_pairingCode)};
+      if (_partnerService != null) {
+        for (final c in _partnerService!.contacts) {
+          if (c.pairingCode.isNotEmpty) {
+            topics.add(_getHashedTopic(c.pairingCode));
           }
         }
-      } catch (e) {
-        if (kDebugMode) print('Error polling missed messages on $host for topic $topic: $e');
       }
+
+      final host = _customRelayHost.isNotEmpty ? _customRelayHost : 'ntfy.envs.net';
+      final sinceParam = getDynamicSinceParam();
+
+      for (final topic in topics) {
+        try {
+          final url = Uri.parse('https://$host/$topic/json?poll=1&since=$sinceParam');
+          final req = await _httpClient.getUrl(url).timeout(const Duration(seconds: 6));
+          final res = await req.close().timeout(const Duration(seconds: 6));
+          if (res.statusCode == 200) {
+            final lines = await res.transform(utf8.decoder).transform(const LineSplitter()).toList();
+            for (final line in lines) {
+              if (line.trim().isEmpty) continue;
+              try {
+                final parsed = jsonDecode(line);
+                if (parsed is Map && parsed['event'] == 'message') {
+                  final ntfyId = parsed['id'] as String?;
+                  if (ntfyId != null && ntfyId.isNotEmpty) {
+                    if (_processedNtfyIds.contains(ntfyId)) continue;
+                    _processedNtfyIds.add(ntfyId);
+                    if (_processedNtfyIds.length > 500) {
+                      _processedNtfyIds.remove(_processedNtfyIds.first);
+                    }
+                  }
+                  updateLastSyncTimestamp();
+
+                  if (parsed['attachment'] is Map && parsed['attachment']['url'] != null) {
+                    final fileUrl = parsed['attachment']['url'] as String;
+                    final aReq = await _httpClient.getUrl(Uri.parse(fileUrl));
+                    final aRes = await aReq.close();
+                    final raw = await utf8.decodeStream(aRes);
+                    _processIncomingRaw(raw);
+                    continue;
+                  }
+                  final raw = parsed['message'] as String?;
+                  if (raw != null) {
+                    _processIncomingRaw(raw);
+                  }
+                }
+              } catch (_) {}
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) print('Error polling missed messages on $host for topic $topic: $e');
+        }
+      }
+    } finally {
+      _isPolling = false;
     }
   }
 
@@ -3763,6 +3848,10 @@ class SyncService extends ChangeNotifier {
     _isDisposed = true;
     _reconnectTimer?.cancel();
     _bgDrainTimer?.cancel();
+    if (_saveProcessedIdsTimer?.isActive == true) {
+      _saveProcessedIdsTimer?.cancel();
+      _saveProcessedMessageIdsNow();
+    }
     _broadcastDebounceTimer?.cancel();
     _heartbeatTimer?.cancel();
     _engine.removeListener(_onEngineChanged);

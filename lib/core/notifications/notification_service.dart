@@ -59,13 +59,17 @@ class NotificationService {
 
         if (Platform.isAndroid) {
           final androidImpl = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-          await androidImpl?.requestNotificationsPermission();
-          try {
-            final canExact = await androidImpl?.canScheduleExactNotifications() ?? false;
-            if (!canExact) {
-              await androidImpl?.requestExactAlarmsPermission();
-            }
-          } catch (_) {}
+          // Run permission verification asynchronously so Android system prompts or channel IPC
+          // never block the startup execution flow or postpone runApp()
+          Future.microtask(() async {
+            try {
+              await androidImpl?.requestNotificationsPermission();
+              final canExact = await androidImpl?.canScheduleExactNotifications() ?? false;
+              if (!canExact) {
+                await androidImpl?.requestExactAlarmsPermission();
+              }
+            } catch (_) {}
+          });
         }
       }
 
