@@ -50,6 +50,8 @@ app.*.map.json
 # Release artifacts (built locally)
 *.apk
 *.aab
+*.dmg
+*.tar.gz
 OrdersApp-*.zip
 subTaskManager-*.zip
 OrdersApp-*.apk

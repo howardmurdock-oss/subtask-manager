@@ -67,7 +67,8 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
   late TextEditingController _titleController;
   late TextEditingController _descController;
   late TextEditingController _equipmentController;
-  int _selectedTier = 2;
+  late TextEditingController _categoryController;
+  int _selectedTier = 1;
   int _actionDurationSeconds = 120;
   int _actionValue = 2;
   String _actionUnit = 'Minutes';
@@ -78,7 +79,6 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
   VerificationType _verificationType = VerificationType.noteProof;
   int _rewardTokens = 20;
   int _penaltyTokens = 30;
-  String _category = 'Director Directive';
   bool _allowRandomDraw = true;
 
   @override
@@ -98,6 +98,7 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
       _titleController = TextEditingController(text: order.title);
       _descController = TextEditingController(text: order.description);
       _equipmentController = TextEditingController(text: order.requiredEquipment.join(', '));
+      _categoryController = TextEditingController(text: order.category);
       _selectedTier = order.tier;
       _actionDurationSeconds = order.actionDurationSeconds;
       _durationMinutes = order.durationMinutes;
@@ -105,7 +106,6 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
       _verificationType = order.verificationType;
       _rewardTokens = order.rewardTokens;
       _penaltyTokens = order.penaltyTokens;
-      _category = order.category;
       _allowRandomDraw = order.allowRandomDraw;
 
       // Initialize split action timing
@@ -132,6 +132,8 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
       _titleController = TextEditingController();
       _descController = TextEditingController();
       _equipmentController = TextEditingController();
+      _categoryController = TextEditingController(text: 'Director Directive');
+      _selectedTier = 1;
       _actionValue = 2;
       _actionUnit = 'Minutes';
       _deadlineValue = 15;
@@ -144,6 +146,7 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
       _titleController.text = order.title;
       _descController.text = order.description;
       _equipmentController.text = order.requiredEquipment.join(', ');
+      _categoryController.text = order.category;
       _selectedTier = order.tier;
       _actionDurationSeconds = order.actionDurationSeconds;
       _durationMinutes = order.durationMinutes;
@@ -151,7 +154,6 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
       _verificationType = order.verificationType;
       _rewardTokens = order.rewardTokens;
       _penaltyTokens = order.penaltyTokens;
-      _category = order.category;
       _allowRandomDraw = order.allowRandomDraw;
 
       if (order.actionDurationSeconds >= 3600 && order.actionDurationSeconds % 3600 == 0) {
@@ -202,6 +204,7 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
     _titleController.dispose();
     _descController.dispose();
     _equipmentController.dispose();
+    _categoryController.dispose();
     super.dispose();
   }
 
@@ -618,6 +621,87 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
             ),
           ),
           const SizedBox(height: 14),
+          Row(
+            children: [
+              Text(
+                'Difficulty Tier',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface.withOpacity(0.8),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _getTierColor(_selectedTier, theme).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: _getTierColor(_selectedTier, theme).withOpacity(0.4)),
+                ),
+                child: Text(
+                  'Tier $_selectedTier (${_getTierLabel(_selectedTier)})',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: _getTierColor(_selectedTier, theme),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [1, 2, 3, 4, 5].map((t) {
+                final isSelected = _selectedTier == t;
+                final Color tierColor = _getTierColor(t, theme);
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(
+                      'T$t - ${_getTierLabel(t)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                        color: isSelected ? Colors.white : theme.colorScheme.onSurface,
+                      ),
+                    ),
+                    selected: isSelected,
+                    selectedColor: tierColor,
+                    backgroundColor: theme.colorScheme.surfaceVariant.withOpacity(0.35),
+                    avatar: CircleAvatar(
+                      radius: 5,
+                      backgroundColor: isSelected ? Colors.white : tierColor,
+                    ),
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() => _selectedTier = t);
+                      }
+                    },
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Category',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface.withOpacity(0.8),
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _categoryController,
+            decoration: const InputDecoration(
+              hintText: 'e.g. Director Directive, Chore, Sensory, Discipline',
+            ),
+          ),
+          const SizedBox(height: 14),
           Text(
             'Detailed Instructions & Requirements',
             style: TextStyle(
@@ -887,7 +971,9 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
                   penaltyTokens: _penaltyTokens,
                   allowRandomDraw: _allowRandomDraw,
                   requiredEquipment: eqList,
-                  category: _category,
+                  category: _categoryController.text.trim().isEmpty
+                      ? 'Director Directive'
+                      : _categoryController.text.trim(),
                 );
 
                 _dispatchOrder(newOrder);
@@ -897,5 +983,37 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
         ],
       ),
     );
+  }
+
+  Color _getTierColor(int tier, ThemeData theme) {
+    switch (tier) {
+      case 1:
+        return const Color(0xFF10B981); // Emerald / Light
+      case 2:
+        return const Color(0xFF38BDF8); // Sky / Moderate
+      case 3:
+        return const Color(0xFFFBBF24); // Amber / Strict
+      case 4:
+        return const Color(0xFFF97316); // Orange / Intense
+      case 5:
+      default:
+        return const Color(0xFFEF4444); // Red / Extreme
+    }
+  }
+
+  String _getTierLabel(int tier) {
+    switch (tier) {
+      case 1:
+        return 'Light';
+      case 2:
+        return 'Moderate';
+      case 3:
+        return 'Strict';
+      case 4:
+        return 'Intense';
+      case 5:
+      default:
+        return 'Extreme';
+    }
   }
 }

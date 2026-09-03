@@ -259,6 +259,72 @@ void main() {
       engine.dispose();
     });
 
+    testWidgets('OrderDispatchDialog allows selecting custom difficulty tier (e.g. Tier 4) on the spot', (tester) async {
+      tester.view.physicalSize = const Size(1000, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final engine = OrderEngine();
+      await engine.init();
+      final partnerService = PartnerService();
+      await partnerService.init();
+      partnerService.setActivePartner(PartnerContact.selfId);
+      final sync = SyncService(engine, partnerService: partnerService);
+      await sync.init();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: engine),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: partnerService),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: OrderDispatchDialog(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Switch to Custom Directive tab
+      final customTab = find.text('Custom Directive');
+      expect(customTab, findsOneWidget);
+      await tester.tap(customTab);
+      await tester.pumpAndSettle();
+
+      // Enter title
+      final titleField = find.widgetWithText(TextField, 'e.g. 20-Minute Room Cleanse');
+      expect(titleField, findsOneWidget);
+      await tester.enterText(titleField, 'Intense Kneeling Stance');
+
+      // Select Tier 4 choice chip
+      final t4Chip = find.widgetWithText(ChoiceChip, 'T4 - Intense');
+      expect(t4Chip, findsOneWidget);
+      await tester.ensureVisible(t4Chip);
+      await tester.tap(t4Chip);
+      await tester.pumpAndSettle();
+
+      // Tap Dispatch button
+      final dispatchButton = find.widgetWithText(ElevatedButton, 'DISPATCH ORDER');
+      expect(dispatchButton, findsOneWidget);
+      await tester.ensureVisible(dispatchButton);
+      await tester.tap(dispatchButton);
+      await tester.pumpAndSettle();
+
+      // Verify order mounted on engine with tier 4
+      final dispatched = engine.currentRunningOrders.firstWhere((o) => o.order.title == 'Intense Kneeling Stance');
+      expect(dispatched.order.tier, equals(4));
+
+      await tester.pump(const Duration(seconds: 10));
+
+      sync.dispose();
+      partnerService.dispose();
+      engine.dispose();
+    });
+
     testWidgets('DirectorDashboardView only displays commands sent by this director and hides others', (tester) async {
       tester.view.physicalSize = const Size(1000, 1200);
       tester.view.devicePixelRatio = 1.0;
