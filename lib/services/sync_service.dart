@@ -258,12 +258,20 @@ class SyncService extends ChangeNotifier {
             final senderName = data['senderName'] as String? ?? 'Director';
             final senderId = data['senderId'] as String? ?? '';
 
-            final alreadyRunning = _engine.currentRunningOrders.any(
-              (o) => (o.order.id == order.id || o.order.title == order.title) &&
-                     DateTime.now().difference(o.assignedAt).inSeconds < 15,
+            final existingOrder = _engine.activeOrders.cast<ActiveOrder?>().firstWhere(
+              (o) {
+                if (o == null) return false;
+                if (order.id.isNotEmpty && (o.id == order.id || o.order.id == order.id)) return true;
+                final isMatchingTitle = o.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
+                final isLive = o.status == OrderStatus.active ||
+                    o.status == OrderStatus.pending ||
+                    o.status == OrderStatus.underReview;
+                return isMatchingTitle && isLive;
+              },
+              orElse: () => null,
             );
             final isDirectorAssigned = data['assignedByDirector'] as bool? ?? (senderName != 'Self');
-            if (!alreadyRunning) {
+            if (existingOrder == null) {
               final assigned = _engine.assignOrder(
                 order,
                 assignedByDirector: isDirectorAssigned,
@@ -1799,12 +1807,22 @@ class SyncService extends ChangeNotifier {
 
           String assignedId = activeOrderId ?? order.id;
 
-          // Check if already running / assigned within the last 10s to prevent duplicates
-          final alreadyRunning = _engine.currentRunningOrders.any(
-            (o) => (o.order.id == order.id || o.order.title == order.title) &&
-                   DateTime.now().difference(o.assignedAt).inSeconds < 10,
+          // Check if this directive is already active, pending, or under review on this device
+          final existingOrder = _engine.activeOrders.cast<ActiveOrder?>().firstWhere(
+            (o) {
+              if (o == null) return false;
+              if (activeOrderId != null && o.id == activeOrderId) return true;
+              if (order.id.isNotEmpty && (o.id == order.id || o.order.id == order.id)) return true;
+              final isMatchingTitle = o.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
+              final isLive = o.status == OrderStatus.active ||
+                  o.status == OrderStatus.pending ||
+                  o.status == OrderStatus.underReview;
+              return isMatchingTitle && isLive;
+            },
+            orElse: () => null,
           );
-          if (!alreadyRunning) {
+
+          if (existingOrder == null) {
             final assigned = _engine.assignOrder(
               order,
               id: activeOrderId,
@@ -1826,6 +1844,9 @@ class SyncService extends ChangeNotifier {
             try {
               SoundService.playAlarm();
             } catch (_) {}
+          } else {
+            // Already active on device — retain running timer and progress
+            assignedId = existingOrder.id;
           }
 
           // Acknowledge receipt to Director immediately

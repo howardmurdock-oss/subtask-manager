@@ -93,10 +93,15 @@ class _OrdersAppState extends State<OrdersApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      final engine = Provider.of<OrderEngine>(context, listen: false);
+      engine.onAppResumed();
       final sync = Provider.of<SyncService>(context, listen: false);
       sync.onAppResumed();
       final schedule = Provider.of<ScheduleService>(context, listen: false);
       schedule.checkDueRules();
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      final engine = Provider.of<OrderEngine>(context, listen: false);
+      engine.onAppPaused();
     }
   }
 

@@ -279,7 +279,7 @@ class OrderCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _formatSeconds(activeOrder.actionSecondsRemaining),
+                            _formatSeconds(activeOrder.currentActionSecondsRemaining),
                             style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.bold,

@@ -22,6 +22,7 @@ class ActiveOrder {
   final int actionSecondsRemaining;
   final bool isActionTimerRunning;
   final bool isActionTimerFinished;
+  final DateTime? actionTimerEndsAt;
   final String? submissionProof;
   final String? proofImageBase64;
   final String? directorNote;
@@ -41,6 +42,7 @@ class ActiveOrder {
     int? actionSecondsRemaining,
     this.isActionTimerRunning = false,
     this.isActionTimerFinished = false,
+    this.actionTimerEndsAt,
     this.submissionProof,
     this.proofImageBase64,
     this.directorNote,
@@ -51,6 +53,16 @@ class ActiveOrder {
   })  : id = id ?? const Uuid().v4(),
         assignedAt = assignedAt ?? DateTime.now(),
         actionSecondsRemaining = actionSecondsRemaining ?? order.actionDurationSeconds;
+
+  /// Returns the live dynamic seconds remaining on the physical routine timer
+  int get currentActionSecondsRemaining {
+    if (isActionTimerFinished) return 0;
+    if (isActionTimerRunning && actionTimerEndsAt != null) {
+      final diff = actionTimerEndsAt!.difference(DateTime.now()).inSeconds;
+      return diff > 0 ? diff : 0;
+    }
+    return actionSecondsRemaining;
+  }
 
   int get remainingSeconds {
     if (expiresAt == null) return 0;
@@ -77,7 +89,7 @@ class ActiveOrder {
 
   double get actionTimerProgressPercentage {
     if (order.actionDurationSeconds <= 0) return 1.0;
-    final elapsed = order.actionDurationSeconds - actionSecondsRemaining;
+    final elapsed = order.actionDurationSeconds - currentActionSecondsRemaining;
     return (elapsed / order.actionDurationSeconds).clamp(0.0, 1.0);
   }
 
@@ -93,6 +105,7 @@ class ActiveOrder {
       'actionSecondsRemaining': actionSecondsRemaining,
       'isActionTimerRunning': isActionTimerRunning,
       'isActionTimerFinished': isActionTimerFinished,
+      'actionTimerEndsAt': actionTimerEndsAt?.toIso8601String(),
       'submissionProof': submissionProof,
       'proofImageBase64': proofImageBase64,
       'directorNote': directorNote,
@@ -125,6 +138,9 @@ class ActiveOrder {
       actionSecondsRemaining: (json['actionSecondsRemaining'] as num?)?.toInt() ?? order.actionDurationSeconds,
       isActionTimerRunning: json['isActionTimerRunning'] as bool? ?? false,
       isActionTimerFinished: json['isActionTimerFinished'] as bool? ?? false,
+      actionTimerEndsAt: json['actionTimerEndsAt'] != null
+          ? DateTime.parse(json['actionTimerEndsAt'] as String)
+          : null,
       submissionProof: json['submissionProof'] as String?,
       proofImageBase64: json['proofImageBase64'] as String?,
       directorNote: json['directorNote'] as String?,
@@ -146,6 +162,8 @@ class ActiveOrder {
     int? actionSecondsRemaining,
     bool? isActionTimerRunning,
     bool? isActionTimerFinished,
+    DateTime? actionTimerEndsAt,
+    bool clearActionTimerEndsAt = false,
     String? submissionProof,
     String? proofImageBase64,
     String? directorNote,
@@ -165,6 +183,7 @@ class ActiveOrder {
       actionSecondsRemaining: actionSecondsRemaining ?? this.actionSecondsRemaining,
       isActionTimerRunning: isActionTimerRunning ?? this.isActionTimerRunning,
       isActionTimerFinished: isActionTimerFinished ?? this.isActionTimerFinished,
+      actionTimerEndsAt: clearActionTimerEndsAt ? null : (actionTimerEndsAt ?? this.actionTimerEndsAt),
       submissionProof: submissionProof ?? this.submissionProof,
       proofImageBase64: proofImageBase64 ?? this.proofImageBase64,
       directorNote: directorNote ?? this.directorNote,

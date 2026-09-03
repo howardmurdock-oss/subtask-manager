@@ -379,34 +379,34 @@ class PlayerDashboardView extends StatelessWidget {
                         ),
                         const SizedBox(height: 8),
                       ],
-                      OutlinedButton.icon(
-                        onPressed: () async {
-                          try {
-                            final picker = ImagePicker();
-                            final image = await picker.pickImage(
-                              source: ImageSource.gallery,
-                              maxWidth: 1600,
-                              maxHeight: 1600,
-                              imageQuality: 85,
-                            );
-                            if (image != null) {
-                              final bytes = await image.readAsBytes();
-                              final compressedBase64 = ImageCompressor.compressAndEncode(bytes) ?? base64Encode(bytes);
-                              setDialogState(() {
-                                attachedImageBase64 = compressedBase64;
-                                attachedImageName = image.name;
-                              });
-                            }
-                          } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Could not attach image: $e')),
-                            );
-                          }
-                        },
-                        icon: const Icon(Icons.add_a_photo_rounded, size: 16),
-                        label: Text(attachedImageBase64 != null
-                            ? 'Change Photo (${attachedImageName ?? 'Attached'})'
-                            : 'Attach Photo Proof'),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                await _pickProofImage(context, ImageSource.camera, setDialogState, (b64, name) {
+                                  attachedImageBase64 = b64;
+                                  attachedImageName = name;
+                                });
+                              },
+                              icon: const Icon(Icons.camera_alt_rounded, size: 16),
+                              label: const Text('Camera'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                await _pickProofImage(context, ImageSource.gallery, setDialogState, (b64, name) {
+                                  attachedImageBase64 = b64;
+                                  attachedImageName = name;
+                                });
+                              },
+                              icon: const Icon(Icons.photo_library_rounded, size: 16),
+                              label: const Text('Gallery'),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -496,6 +496,34 @@ class PlayerDashboardView extends StatelessWidget {
         );
       },
     );
+  }
+
+  Future<void> _pickProofImage(
+    BuildContext context,
+    ImageSource source,
+    StateSetter setDialogState,
+    void Function(String b64, String name) onPicked,
+  ) async {
+    try {
+      final picker = ImagePicker();
+      final image = await picker.pickImage(
+        source: source,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 85,
+      );
+      if (image != null) {
+        final bytes = await image.readAsBytes();
+        final compressedBase64 = ImageCompressor.compressAndEncode(bytes) ?? base64Encode(bytes);
+        setDialogState(() {
+          onPicked(compressedBase64, image.name);
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not access image: $e')),
+      );
+    }
   }
 
   Future<bool> _confirmIncompleteActionTimerSubmission(

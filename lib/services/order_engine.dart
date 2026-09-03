@@ -98,14 +98,25 @@ class OrderEngine extends ChangeNotifier {
           bool newTimerFinished = active.isActionTimerFinished;
 
           // Process action timer countdown if player started it
-          if (active.isActionTimerRunning && active.actionSecondsRemaining > 0) {
-            newActionSeconds -= 1;
-            if (newActionSeconds <= 0) {
-              newActionSeconds = 0;
-              newTimerRunning = false;
-              newTimerFinished = true;
-              // Play auditory completion chime & alarm
-              SoundService.playCompletionAlarm();
+          if (active.isActionTimerRunning) {
+            if (active.actionTimerEndsAt != null) {
+              final diff = active.actionTimerEndsAt!.difference(now).inSeconds;
+              if (diff <= 0) {
+                newActionSeconds = 0;
+                newTimerRunning = false;
+                newTimerFinished = true;
+                SoundService.playCompletionAlarm();
+              } else {
+                newActionSeconds = diff;
+              }
+            } else if (active.actionSecondsRemaining > 0) {
+              newActionSeconds -= 1;
+              if (newActionSeconds <= 0) {
+                newActionSeconds = 0;
+                newTimerRunning = false;
+                newTimerFinished = true;
+                SoundService.playCompletionAlarm();
+              }
             }
           }
 
@@ -139,9 +150,16 @@ class OrderEngine extends ChangeNotifier {
   void startActionTimer(String activeOrderId) {
     final index = _activeOrders.indexWhere((o) => o.id == activeOrderId);
     if (index == -1) return;
-    _activeOrders[index] = _activeOrders[index].copyWith(
+    final current = _activeOrders[index];
+    final remaining = current.actionSecondsRemaining > 0
+        ? current.actionSecondsRemaining
+        : current.order.actionDurationSeconds;
+    final endsAt = DateTime.now().add(Duration(seconds: remaining));
+    _activeOrders[index] = current.copyWith(
       isActionTimerRunning: true,
       isActionTimerFinished: false,
+      actionTimerEndsAt: endsAt,
+      actionSecondsRemaining: remaining,
     );
     SoundService.playTick();
     _storage.saveActiveOrders(_activeOrders);
@@ -152,8 +170,16 @@ class OrderEngine extends ChangeNotifier {
   void pauseActionTimer(String activeOrderId) {
     final index = _activeOrders.indexWhere((o) => o.id == activeOrderId);
     if (index == -1) return;
-    _activeOrders[index] = _activeOrders[index].copyWith(
+    final current = _activeOrders[index];
+    int remaining = current.actionSecondsRemaining;
+    if (current.actionTimerEndsAt != null) {
+      final diff = current.actionTimerEndsAt!.difference(DateTime.now()).inSeconds;
+      remaining = diff > 0 ? diff : 0;
+    }
+    _activeOrders[index] = current.copyWith(
       isActionTimerRunning: false,
+      clearActionTimerEndsAt: true,
+      actionSecondsRemaining: remaining,
     );
     _storage.saveActiveOrders(_activeOrders);
     notifyListeners();
@@ -163,14 +189,49 @@ class OrderEngine extends ChangeNotifier {
   void resetActionTimer(String activeOrderId) {
     final index = _activeOrders.indexWhere((o) => o.id == activeOrderId);
     if (index == -1) return;
-    final order = _activeOrders[index];
-    _activeOrders[index] = order.copyWith(
-      actionSecondsRemaining: order.order.actionDurationSeconds,
+    final current = _activeOrders[index];
+    _activeOrders[index] = current.copyWith(
+      actionSecondsRemaining: current.order.actionDurationSeconds,
       isActionTimerRunning: false,
       isActionTimerFinished: false,
+      clearActionTimerEndsAt: true,
     );
     _storage.saveActiveOrders(_activeOrders);
     notifyListeners();
+  }
+
+  /// Called when returning to the app (e.g. from camera, background, etc.)
+  void onAppResumed() {
+    final now = DateTime.now();
+    bool changed = false;
+    for (int i = 0; i < _activeOrders.length; i++) {
+      final active = _activeOrders[i];
+      if (active.status == OrderStatus.active && active.isActionTimerRunning && active.actionTimerEndsAt != null) {
+        final diff = active.actionTimerEndsAt!.difference(now).inSeconds;
+        if (diff <= 0) {
+          _activeOrders[i] = active.copyWith(
+            actionSecondsRemaining: 0,
+            isActionTimerRunning: false,
+            isActionTimerFinished: true,
+          );
+          SoundService.playCompletionAlarm();
+        } else {
+          _activeOrders[i] = active.copyWith(
+            actionSecondsRemaining: diff,
+          );
+        }
+        changed = true;
+      }
+    }
+    if (changed) {
+      _storage.saveActiveOrders(_activeOrders);
+      notifyListeners();
+    }
+  }
+
+  /// Called when the app is paused or backgrounded (e.g. navigating to camera)
+  void onAppPaused() {
+    _storage.saveActiveOrders(_activeOrders);
   }
 
   /// Check and maintain daily streak based on date
@@ -407,6 +468,26 @@ class OrderEngine extends ChangeNotifier {
     String? assignedByPartnerId,
     String? assignedByPartnerName,
   }) {
+    // 1. If an active order with this exact ID already exists, return it without resetting timer
+    if (id != null && id.isNotEmpty) {
+      final existingIndex = _activeOrders.indexWhere((o) => o.id == id);
+      if (existingIndex != -1) {
+        return _activeOrders[existingIndex];
+      }
+    }
+
+    // 2. Also check if an identical directive is currently active, pending, or under review
+    for (final existing in _activeOrders) {
+      final matchesOrder = (order.id.isNotEmpty && (existing.id == order.id || existing.order.id == order.id)) ||
+          existing.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
+      final isLive = existing.status == OrderStatus.active ||
+          existing.status == OrderStatus.pending ||
+          existing.status == OrderStatus.underReview;
+      if (matchesOrder && isLive) {
+        return existing;
+      }
+    }
+
     // Intercept and sanitize any placeholder tasks created by stale background handlers
     final isPlaceholder = order.title.startsWith('Surprise Window') ||
         order.description == 'Scheduled directive ready for execution.' ||
