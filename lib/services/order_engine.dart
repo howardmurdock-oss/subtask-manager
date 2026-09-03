@@ -476,7 +476,7 @@ class OrderEngine extends ChangeNotifier {
       }
     }
 
-    // 2. Also check if an identical directive is currently active, pending, or under review
+    // 2. Also check if an identical directive is currently active, pending, under review, or completed
     for (final existing in _activeOrders) {
       final matchesOrder = (order.id.isNotEmpty && (existing.id == order.id || existing.order.id == order.id)) ||
           existing.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
@@ -484,6 +484,10 @@ class OrderEngine extends ChangeNotifier {
           existing.status == OrderStatus.pending ||
           existing.status == OrderStatus.underReview;
       if (matchesOrder && isLive) {
+        return existing;
+      }
+      if (matchesOrder && existing.status == OrderStatus.completed) {
+        // Directive was already completed — prevent duplicate reassignment loop
         return existing;
       }
     }

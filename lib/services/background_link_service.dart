@@ -48,6 +48,8 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   List<String> _partnerSecrets = [];
   List<String> _partnerCodes = [];
   Set<String> _handledPairings = {};
+  Set<String> _handledDirectives = {};
+  Set<String> _pastPairingCodes = {};
   
   int _msgCount = 0;
   String _connectionState = 'Initializing';
@@ -65,6 +67,15 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     if (msg == null) return false;
     if (_deviceId.isNotEmpty && msg.senderId == _deviceId) return true;
     if (_deviceId.isNotEmpty && msg.payload['senderId'] == _deviceId) return true;
+    final senderCode = msg.payload['senderCode'] as String?;
+    if (senderCode != null && senderCode.isNotEmpty) {
+      final clean = _cleanCode(senderCode);
+      if (clean.isNotEmpty) {
+        if (_pastPairingCodes.contains(clean) || clean == _cleanCode(_pairingCode)) {
+          return true;
+        }
+      }
+    }
     return false;
   }
 
@@ -161,9 +172,52 @@ class DirectiveSyncTaskHandler extends TaskHandler {
       _customRelayHost = prefs.getString('pairing_custom_relay') ?? 'ntfy.envs.net';
       if (_customRelayHost.isEmpty) _customRelayHost = 'ntfy.envs.net';
 
+      final savedIdsV2 = prefs.getStringList('processed_sync_message_ids_v2');
+      if (savedIdsV2 != null) {
+        _processedIds.addAll(savedIdsV2);
+      }
+      final savedSyncIds = prefs.getStringList('processed_sync_message_ids');
+      if (savedSyncIds != null) {
+        _processedIds.addAll(savedSyncIds);
+      }
       final savedIds = prefs.getStringList('bg_processed_message_ids');
       if (savedIds != null) {
-        _processedIds = savedIds.toSet();
+        _processedIds.addAll(savedIds);
+      }
+
+      final savedPastCodes = prefs.getStringList('past_pairing_codes_v1');
+      if (savedPastCodes != null) {
+        _pastPairingCodes = savedPastCodes.map((c) => _cleanCode(c)).toSet();
+      }
+      if (_pairingCode.isNotEmpty) {
+        _pastPairingCodes.add(_cleanCode(_pairingCode));
+      }
+
+      final savedHandledDirectives = prefs.getStringList('handled_directive_ids_v1');
+      if (savedHandledDirectives != null) {
+        _handledDirectives = savedHandledDirectives.toSet();
+      }
+
+      final rawActiveOrders = prefs.getString('storage_active_orders');
+      if (rawActiveOrders != null && rawActiveOrders.isNotEmpty) {
+        try {
+          final List list = jsonDecode(rawActiveOrders);
+          for (final item in list) {
+            if (item is Map) {
+              final id = item['id'] as String?;
+              if (id != null && id.isNotEmpty) _handledDirectives.add(id);
+              final order = item['order'] as Map?;
+              if (order != null) {
+                final oid = order['id'] as String?;
+                if (oid != null && oid.isNotEmpty) _handledDirectives.add(oid);
+                final otitle = order['title'] as String?;
+                if (otitle != null && otitle.trim().isNotEmpty) {
+                  _handledDirectives.add('title_${otitle.trim().toLowerCase()}');
+                }
+              }
+            }
+          }
+        } catch (_) {}
       }
 
       final rawContacts = prefs.getString('partner_contacts_list') ?? prefs.getString('partner_contacts_v1');
@@ -329,8 +383,60 @@ class DirectiveSyncTaskHandler extends TaskHandler {
 
   void _persistProcessedIds() {
     SharedPreferences.getInstance().then((prefs) {
+      prefs.setStringList('processed_sync_message_ids_v2', _processedIds.toList());
       prefs.setStringList('bg_processed_message_ids', _processedIds.toList());
+      prefs.setStringList('processed_sync_message_ids', _processedIds.toList());
     }).catchError((_) {});
+  }
+
+  bool _isDirectiveHandled({String? activeOrderId, String? orderId, String? msgId, String? title}) {
+    if (activeOrderId != null && activeOrderId.isNotEmpty && _handledDirectives.contains(activeOrderId)) {
+      return true;
+    }
+    if (orderId != null && orderId.isNotEmpty && _handledDirectives.contains(orderId)) {
+      return true;
+    }
+    if (msgId != null && msgId.isNotEmpty && _handledDirectives.contains(msgId)) {
+      return true;
+    }
+    if (title != null && title.trim().isNotEmpty) {
+      final cleanTitle = 'title_${title.trim().toLowerCase()}';
+      if (_handledDirectives.contains(cleanTitle)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _markDirectiveHandled({String? activeOrderId, String? orderId, String? msgId, String? title}) {
+    bool changed = false;
+    if (activeOrderId != null && activeOrderId.isNotEmpty && !_handledDirectives.contains(activeOrderId)) {
+      _handledDirectives.add(activeOrderId);
+      changed = true;
+    }
+    if (orderId != null && orderId.isNotEmpty && !_handledDirectives.contains(orderId)) {
+      _handledDirectives.add(orderId);
+      changed = true;
+    }
+    if (msgId != null && msgId.isNotEmpty && !_handledDirectives.contains(msgId)) {
+      _handledDirectives.add(msgId);
+      changed = true;
+    }
+    if (title != null && title.trim().isNotEmpty) {
+      final cleanTitle = 'title_${title.trim().toLowerCase()}';
+      if (!_handledDirectives.contains(cleanTitle)) {
+        _handledDirectives.add(cleanTitle);
+        changed = true;
+      }
+    }
+    if (changed) {
+      if (_handledDirectives.length > 500) {
+        _handledDirectives.remove(_handledDirectives.first);
+      }
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setStringList('handled_directive_ids_v1', _handledDirectives.toList());
+      }).catchError((_) {});
+    }
   }
 
   void _queuePendingOrder(Map<String, dynamic> payload) async {
@@ -636,9 +742,20 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           final desc = orderData['description'] as String? ?? 'You have received a new directive.';
           final senderName = msg.payload['senderName'] as String? ?? 'Director';
           final tokens = (orderData['rewardTokens'] as num?)?.toInt();
+          final activeOrderId = msg.payload['activeOrderId'] as String?;
+          final orderId = orderData['id'] as String?;
+
+          // Check if directive was already handled or recorded in active orders / handled IDs
+          if (_isDirectiveHandled(activeOrderId: activeOrderId, orderId: orderId, msgId: msg.id, title: title)) {
+            break;
+          }
+          _markDirectiveHandled(activeOrderId: activeOrderId, orderId: orderId, msgId: msg.id, title: title);
+
+          final queuedPayload = Map<String, dynamic>.from(msg.payload);
+          queuedPayload['messageId'] = msg.id;
 
           // Queue order for main app OrderEngine
-          _queuePendingOrder(msg.payload);
+          _queuePendingOrder(queuedPayload);
 
           // High priority alert with sound, vibration, and banner
           NotificationService.showOrderDispatchedNotification(

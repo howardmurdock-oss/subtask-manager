@@ -77,6 +77,7 @@ class SyncService extends ChangeNotifier {
   final HttpClient _httpClient = HttpClient();
   final Set<String> _processedMessageIds = <String>{};
   final Set<String> _pastPairingCodes = <String>{};
+  final Set<String> _handledDirectiveIds = <String>{};
 
   // Broadcast throttling to prevent relay rate-limiting
   Timer? _broadcastDebounceTimer;
@@ -173,9 +174,36 @@ class SyncService extends ChangeNotifier {
         );
       }
 
+      final savedProcessedIdsV2 = prefs.getStringList('processed_sync_message_ids_v2');
+      if (savedProcessedIdsV2 != null) {
+        _processedMessageIds.addAll(savedProcessedIdsV2);
+      }
       final savedProcessedIds = prefs.getStringList('processed_sync_message_ids');
       if (savedProcessedIds != null) {
         _processedMessageIds.addAll(savedProcessedIds);
+      }
+      final bgProcessedIds = prefs.getStringList('bg_processed_message_ids');
+      if (bgProcessedIds != null) {
+        _processedMessageIds.addAll(bgProcessedIds);
+      }
+
+      final savedHandledDirectives = prefs.getStringList('handled_directive_ids_v1');
+      if (savedHandledDirectives != null) {
+        _handledDirectiveIds.addAll(savedHandledDirectives);
+      }
+      // Pre-seed handled directive IDs with all current engine orders and completed history
+      for (final o in _engine.activeOrders) {
+        if (o.id.isNotEmpty) _handledDirectiveIds.add(o.id);
+        if (o.order.id.isNotEmpty) _handledDirectiveIds.add(o.order.id);
+        if (o.order.title.trim().isNotEmpty) {
+          _handledDirectiveIds.add('title_${o.order.title.trim().toLowerCase()}');
+        }
+      }
+      for (final h in _engine.stats.history) {
+        if (h.id.isNotEmpty) _handledDirectiveIds.add(h.id);
+        if (h.orderTitle.trim().isNotEmpty) {
+          _handledDirectiveIds.add('title_${h.orderTitle.trim().toLowerCase()}');
+        }
       }
 
       final savedPastCodes = prefs.getStringList('past_pairing_codes_v1');
@@ -215,13 +243,15 @@ class SyncService extends ChangeNotifier {
       }
 
       _autoConnect = savedAuto;
+
+      // Drain and apply any directives or messages queued by the background isolate IMMEDIATELY
+      // so active directives appear instantaneously on startup without multi-second delay.
+      await processPendingBackgroundMessages();
+
       notifyListeners();
 
       // Always ensure device is listening to its personal cloud relay inbox topic
       _ensureInboxListener();
-
-      // Drain and apply any directives or messages queued by the background isolate
-      await processPendingBackgroundMessages();
 
       // Start periodic background drain timer while foreground app is active
       _bgDrainTimer?.cancel();
@@ -274,29 +304,59 @@ class SyncService extends ChangeNotifier {
             final senderCode = data['senderCode'] as String? ?? '';
             final senderName = data['senderName'] as String? ?? 'Director';
             final senderId = data['senderId'] as String? ?? '';
+            final activeOrderId = data['activeOrderId'] as String?;
+            final messageId = data['messageId'] as String?;
+
+            if (messageId != null && messageId.isNotEmpty) {
+              _processedMessageIds.add(messageId);
+            }
+
+            final isAlreadyHandled = isDirectiveHandled(
+              activeOrderId: activeOrderId,
+              orderId: order.id,
+              msgId: messageId,
+              title: order.title,
+            );
 
             final existingOrder = _engine.activeOrders.cast<ActiveOrder?>().firstWhere(
               (o) {
                 if (o == null) return false;
+                if (activeOrderId != null && activeOrderId.isNotEmpty && o.id == activeOrderId) return true;
                 if (order.id.isNotEmpty && (o.id == order.id || o.order.id == order.id)) return true;
                 final isMatchingTitle = o.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
-                final isLive = o.status == OrderStatus.active ||
-                    o.status == OrderStatus.pending ||
-                    o.status == OrderStatus.underReview;
-                return isMatchingTitle && isLive;
+                return isMatchingTitle;
               },
               orElse: () => null,
             );
+
+            final alreadyInHistory = _engine.stats.history.any((h) =>
+                (activeOrderId != null && activeOrderId.isNotEmpty && h.id == activeOrderId) ||
+                h.orderTitle.trim().toLowerCase() == order.title.trim().toLowerCase());
+
             final isDirectorAssigned = data['assignedByDirector'] as bool? ?? (senderName != 'Self');
-            if (existingOrder == null) {
+            if (existingOrder == null && !isAlreadyHandled && !alreadyInHistory) {
               final assigned = _engine.assignOrder(
                 order,
+                id: activeOrderId,
                 assignedByDirector: isDirectorAssigned,
                 assignedByPartnerCode: senderCode,
                 assignedByPartnerId: senderId,
                 assignedByPartnerName: senderName,
               );
+              markDirectiveHandled(
+                activeOrderId: assigned.id,
+                orderId: order.id,
+                msgId: messageId,
+                title: order.title,
+              );
               _incomingOrderController.add(assigned);
+            } else {
+              markDirectiveHandled(
+                activeOrderId: existingOrder?.id ?? activeOrderId,
+                orderId: order.id,
+                msgId: messageId,
+                title: order.title,
+              );
             }
           } catch (e) {
             if (kDebugMode) print('Error processing queued background order: $e');
@@ -438,8 +498,65 @@ class SyncService extends ChangeNotifier {
   void _saveProcessedMessageIds() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('processed_sync_message_ids_v2', _processedMessageIds.toList());
       await prefs.setStringList('processed_sync_message_ids', _processedMessageIds.toList());
+      await prefs.setStringList('bg_processed_message_ids', _processedMessageIds.toList());
     } catch (_) {}
+  }
+
+  void _saveHandledDirectiveIds() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('handled_directive_ids_v1', _handledDirectiveIds.toList());
+    } catch (_) {}
+  }
+
+  bool isDirectiveHandled({String? activeOrderId, String? orderId, String? msgId, String? title}) {
+    if (activeOrderId != null && activeOrderId.isNotEmpty && _handledDirectiveIds.contains(activeOrderId)) {
+      return true;
+    }
+    if (orderId != null && orderId.isNotEmpty && _handledDirectiveIds.contains(orderId)) {
+      return true;
+    }
+    if (msgId != null && msgId.isNotEmpty && _handledDirectiveIds.contains(msgId)) {
+      return true;
+    }
+    if (title != null && title.trim().isNotEmpty) {
+      final cleanTitle = 'title_${title.trim().toLowerCase()}';
+      if (_handledDirectiveIds.contains(cleanTitle)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void markDirectiveHandled({String? activeOrderId, String? orderId, String? msgId, String? title}) {
+    bool changed = false;
+    if (activeOrderId != null && activeOrderId.isNotEmpty && !_handledDirectiveIds.contains(activeOrderId)) {
+      _handledDirectiveIds.add(activeOrderId);
+      changed = true;
+    }
+    if (orderId != null && orderId.isNotEmpty && !_handledDirectiveIds.contains(orderId)) {
+      _handledDirectiveIds.add(orderId);
+      changed = true;
+    }
+    if (msgId != null && msgId.isNotEmpty && !_handledDirectiveIds.contains(msgId)) {
+      _handledDirectiveIds.add(msgId);
+      changed = true;
+    }
+    if (title != null && title.trim().isNotEmpty) {
+      final cleanTitle = 'title_${title.trim().toLowerCase()}';
+      if (!_handledDirectiveIds.contains(cleanTitle)) {
+        _handledDirectiveIds.add(cleanTitle);
+        changed = true;
+      }
+    }
+    if (changed) {
+      if (_handledDirectiveIds.length > 500) {
+        _handledDirectiveIds.remove(_handledDirectiveIds.first);
+      }
+      _saveHandledDirectiveIds();
+    }
   }
 
   void _ensureInboxListener() {
@@ -977,8 +1094,10 @@ class SyncService extends ChangeNotifier {
 
     _role = asRole;
     _transport = ConnectionTransport.cloudRelay;
-    _pairingCode = code.trim().toUpperCase();
-    _pairingSecret = password.trim();
+    if (!isAuto || _pairingCode.isEmpty) {
+      if (code.trim().isNotEmpty) _pairingCode = code.trim().toUpperCase();
+      if (password.trim().isNotEmpty) _pairingSecret = password.trim();
+    }
     _autoConnect = true;
     _status = ConnectionStatus.connecting;
     _statusMessage = 'Connecting to Global Cloud Relay (Port 443)...';
@@ -1661,6 +1780,15 @@ class SyncService extends ChangeNotifier {
     if (msg == null) return false;
     if (_deviceId.isNotEmpty && msg.senderId == _deviceId) return true;
     if (_deviceId.isNotEmpty && msg.payload['senderId'] == _deviceId) return true;
+    final senderCode = msg.payload['senderCode'] as String?;
+    if (senderCode != null && senderCode.isNotEmpty) {
+      final clean = PartnerService.normalizeCode(senderCode);
+      if (clean.isNotEmpty) {
+        if (_pastPairingCodes.contains(clean) || clean == PartnerService.normalizeCode(_pairingCode)) {
+          return true;
+        }
+      }
+    }
     return false;
   }
 
@@ -1968,22 +2096,32 @@ class SyncService extends ChangeNotifier {
 
           String assignedId = activeOrderId ?? order.id;
 
-          // Check if this directive is already active, pending, or under review on this device
+          // 1. Check if this directive has already been handled (active, completed, reviewed, or dismissed)
+          final isAlreadyHandled = isDirectiveHandled(
+            activeOrderId: activeOrderId,
+            orderId: order.id,
+            msgId: msg.id,
+            title: order.title,
+          );
+
+          // 2. Check if this directive already exists on this device in any state
           final existingOrder = _engine.activeOrders.cast<ActiveOrder?>().firstWhere(
             (o) {
               if (o == null) return false;
-              if (activeOrderId != null && o.id == activeOrderId) return true;
+              if (activeOrderId != null && activeOrderId.isNotEmpty && o.id == activeOrderId) return true;
               if (order.id.isNotEmpty && (o.id == order.id || o.order.id == order.id)) return true;
               final isMatchingTitle = o.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
-              final isLive = o.status == OrderStatus.active ||
-                  o.status == OrderStatus.pending ||
-                  o.status == OrderStatus.underReview;
-              return isMatchingTitle && isLive;
+              return isMatchingTitle;
             },
             orElse: () => null,
           );
 
-          if (existingOrder == null) {
+          // 3. Check if already recorded in completed discipline history
+          final alreadyInHistory = _engine.stats.history.any((h) =>
+              (activeOrderId != null && activeOrderId.isNotEmpty && h.id == activeOrderId) ||
+              h.orderTitle.trim().toLowerCase() == order.title.trim().toLowerCase());
+
+          if (existingOrder == null && !isAlreadyHandled && !alreadyInHistory) {
             final assigned = _engine.assignOrder(
               order,
               id: activeOrderId,
@@ -1993,6 +2131,12 @@ class SyncService extends ChangeNotifier {
               assignedByPartnerName: senderName,
             );
             assignedId = assigned.id;
+            markDirectiveHandled(
+              activeOrderId: assigned.id,
+              orderId: order.id,
+              msgId: msg.id,
+              title: order.title,
+            );
             _incomingOrderController.add(assigned);
             try {
               NotificationService.showOrderDispatchedNotification(
@@ -2006,8 +2150,14 @@ class SyncService extends ChangeNotifier {
               SoundService.playAlarm();
             } catch (_) {}
           } else {
-            // Already active on device — retain running timer and progress
-            assignedId = existingOrder.id;
+            // Already handled, active, or completed — retain status and suppress re-notification
+            assignedId = existingOrder?.id ?? activeOrderId ?? order.id;
+            markDirectiveHandled(
+              activeOrderId: assignedId,
+              orderId: order.id,
+              msgId: msg.id,
+              title: order.title,
+            );
           }
 
           // Acknowledge receipt to Director immediately
