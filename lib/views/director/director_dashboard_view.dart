@@ -1708,16 +1708,43 @@ class DirectorDashboardView extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Row(
-              mainAxisAlignment: MainAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      sync.isQuestConfirmedOnPlayer(quest.quest.id, quest.quest.title)
+                          ? Icons.check_circle_rounded
+                          : Icons.pending_rounded,
+                      size: 14,
+                      color: sync.isQuestConfirmedOnPlayer(quest.quest.id, quest.quest.title)
+                          ? Colors.greenAccent
+                          : Colors.amberAccent,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      sync.isQuestConfirmedOnPlayer(quest.quest.id, quest.quest.title)
+                          ? 'Delivered & Confirmed'
+                          : 'Delivery Pending',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: sync.isQuestConfirmedOnPlayer(quest.quest.id, quest.quest.title)
+                            ? Colors.greenAccent
+                            : Colors.amberAccent,
+                      ),
+                    ),
+                  ],
+                ),
                 TextButton.icon(
                   icon: const Icon(Icons.send_rounded, size: 14),
-                  label: const Text('Re-dispatch / Push to Submissive', style: TextStyle(fontSize: 11)),
+                  label: const Text('Re-send Quest', style: TextStyle(fontSize: 11)),
                   onPressed: () {
                     sync.dispatchQuestToPlayer(quest.quest, targetPartner: partner);
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Re-dispatched quest "${quest.quest.title}" to submissive!'),
+                        content: Text('Re-sent quest "${quest.quest.title}" to submissive!'),
                         behavior: SnackBarBehavior.floating,
                       ),
                     );

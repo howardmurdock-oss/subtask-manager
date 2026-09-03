@@ -61,6 +61,8 @@ class SyncService extends ChangeNotifier {
   int _remoteStreak = 0;
   /// Set of order IDs and titles confirmed to be actively mounted on submissive's dashboard
   final Set<String> _confirmedOnPlayerOrderIds = <String>{};
+  /// Set of quest IDs and titles confirmed to be received by player
+  final Set<String> _confirmedOnPlayerQuestIds = <String>{};
 
   // Local Wi-Fi / Direct IP socket
   HttpServer? _server;
@@ -196,6 +198,11 @@ class SyncService extends ChangeNotifier {
       final savedConfirmed = prefs.getStringList('confirmed_player_order_ids_v1');
       if (savedConfirmed != null && savedConfirmed.isNotEmpty) {
         _confirmedOnPlayerOrderIds.addAll(savedConfirmed);
+      }
+
+      final savedConfirmedQuests = prefs.getStringList('confirmed_player_quest_ids_v1');
+      if (savedConfirmedQuests != null && savedConfirmedQuests.isNotEmpty) {
+        _confirmedOnPlayerQuestIds.addAll(savedConfirmedQuests);
       }
 
       _autoConnect = savedAuto;
@@ -364,6 +371,35 @@ class SyncService extends ChangeNotifier {
         }
         await prefs.remove('pending_background_pairings_v1');
       }
+
+      // 5. Queued Quests
+      final rawQuests = prefs.getStringList('pending_background_quests_v1');
+      if (rawQuests != null && rawQuests.isNotEmpty) {
+        for (final raw in rawQuests) {
+          try {
+            final data = jsonDecode(raw);
+            if (data is! Map) continue;
+            final rawQuest = data['quest'];
+            final Map<String, dynamic> questData = (rawQuest is Map)
+                ? Map<String, dynamic>.from(rawQuest)
+                : <String, dynamic>{};
+            if (questData.isEmpty) continue;
+            final quest = Quest.fromJson(questData);
+            final senderCode = data['senderCode'] as String? ?? '';
+            final senderName = data['senderName'] as String? ?? 'Director';
+
+            _questService?.assignQuestFromDirector(
+              quest,
+              directorName: senderName,
+              directorCode: senderCode,
+            );
+          } catch (e) {
+            if (kDebugMode) print('Error processing queued background quest: $e');
+          }
+        }
+        await prefs.remove('pending_background_quests_v1');
+        broadcastPlayerState();
+      }
     } catch (e) {
       if (kDebugMode) print('Error processing pending background messages: $e');
     }
@@ -457,6 +493,7 @@ class SyncService extends ChangeNotifier {
   int get remoteTokens => _remoteTokens;
   int get remoteStreak => _remoteStreak;
   Set<String> get confirmedOnPlayerOrderIds => Set.unmodifiable(_confirmedOnPlayerOrderIds);
+  Set<String> get confirmedOnPlayerQuestIds => Set.unmodifiable(_confirmedOnPlayerQuestIds);
 
   bool isOrderConfirmedOnPlayer(ActiveOrder order) {
     if (_confirmedOnPlayerOrderIds.contains(order.id)) return true;
@@ -465,10 +502,25 @@ class SyncService extends ChangeNotifier {
     return false;
   }
 
+  bool isQuestConfirmedOnPlayer(String questId, [String? questTitle]) {
+    if (_confirmedOnPlayerQuestIds.contains(questId)) return true;
+    if (questTitle != null && questTitle.isNotEmpty && _confirmedOnPlayerQuestIds.contains(questTitle.trim().toLowerCase())) {
+      return true;
+    }
+    return false;
+  }
+
   Future<void> _saveConfirmedOrders() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList('confirmed_player_order_ids_v1', _confirmedOnPlayerOrderIds.toList());
+    } catch (_) {}
+  }
+
+  Future<void> _saveConfirmedQuests() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('confirmed_player_quest_ids_v1', _confirmedOnPlayerQuestIds.toList());
     } catch (_) {}
   }
 
@@ -1566,10 +1618,6 @@ class SyncService extends ChangeNotifier {
     if (msg == null) return false;
     if (_deviceId.isNotEmpty && msg.senderId == _deviceId) return true;
     if (_deviceId.isNotEmpty && msg.payload['senderId'] == _deviceId) return true;
-    final senderCode = msg.payload['senderCode'] as String?;
-    if (_pairingCode.isNotEmpty && senderCode != null && senderCode.trim().toUpperCase() == _pairingCode.trim().toUpperCase()) {
-      return true;
-    }
     return false;
   }
 
@@ -2237,6 +2285,28 @@ class SyncService extends ChangeNotifier {
             directorCode: senderCode,
           );
 
+          // Acknowledge receipt to Director immediately
+          if (senderCode.isNotEmpty) {
+            final ackMsg = SyncMessage(
+              type: SyncMessageType.dispatchQuestAck,
+              senderId: _deviceId,
+              payload: {
+                'questId': quest.id,
+                'questTitle': quest.title,
+                'senderCode': _pairingCode,
+                'senderName': _nickname.isNotEmpty ? _nickname : 'Submissive',
+              },
+            );
+            final contact = _partnerService?.findContactByCode(senderCode) ??
+                _partnerService?.findContactById(msg.senderId);
+            sendDirectToTopic(
+              senderCode,
+              contact?.pairingSecret ?? _pairingSecret,
+              ackMsg,
+              relayHost: contact?.customRelayHost.isNotEmpty == true ? contact!.customRelayHost : _customRelayHost,
+            );
+          }
+
           try {
             NotificationService.showOrderDispatchedNotification(
               title: 'Quest: ${quest.title}',
@@ -2251,6 +2321,23 @@ class SyncService extends ChangeNotifier {
           broadcastPlayerState();
         } catch (e) {
           if (kDebugMode) print('Error handling dispatchQuest: $e');
+        }
+        break;
+
+      case SyncMessageType.dispatchQuestAck:
+        try {
+          final questId = msg.payload['questId'] as String? ?? '';
+          if (questId.isNotEmpty) {
+            _confirmedOnPlayerQuestIds.add(questId);
+          }
+          final questTitle = msg.payload['questTitle'] as String?;
+          if (questTitle != null && questTitle.isNotEmpty) {
+            _confirmedOnPlayerQuestIds.add(questTitle.trim().toLowerCase());
+          }
+          _saveConfirmedQuests();
+          notifyListeners();
+        } catch (e) {
+          if (kDebugMode) print('Error processing dispatchQuestAck: $e');
         }
         break;
 
@@ -2749,6 +2836,16 @@ class SyncService extends ChangeNotifier {
       }
     }
 
+    // Re-transmit any unconfirmed active quests
+    if (_questService != null) {
+      for (final entry in _questService!.remotePlayerQuests.entries) {
+        final activeQuest = entry.value;
+        if (!activeQuest.isCompleted && !isQuestConfirmedOnPlayer(activeQuest.quest.id, activeQuest.quest.title)) {
+          resendDispatchedQuest(entry.key, activeQuest.quest, targetPartner: targetPartner);
+        }
+      }
+    }
+
     notifyListeners();
   }
 
@@ -2758,12 +2855,21 @@ class SyncService extends ChangeNotifier {
         : (_role == ConnectionRole.director ? 'Director' : 'Dominant');
 
     // 0. Direct to Self (This Device)
-    if (targetPartner != null && targetPartner.isSelf) {
+    final isDirectToSelf = (targetPartner != null && targetPartner.isSelf) ||
+        (targetPartner == null &&
+            _partnerService?.activePartner == null &&
+            (_partnerService?.unblockedContacts.isEmpty ?? true) &&
+            _pairingCode.isEmpty);
+
+    if (isDirectToSelf) {
       _questService?.assignQuestFromDirector(
         quest,
         directorName: myDisplayName.isNotEmpty ? '$myDisplayName (Self)' : 'Self (Director)',
         directorCode: _pairingCode,
       );
+      _confirmedOnPlayerQuestIds.add(quest.id);
+      _confirmedOnPlayerQuestIds.add(quest.title.trim().toLowerCase());
+      _saveConfirmedQuests();
       try {
         NotificationService.showOrderDispatchedNotification(
           title: 'Quest: ${quest.title}',
@@ -2793,7 +2899,8 @@ class SyncService extends ChangeNotifier {
 
     bool dispatched = false;
 
-    if (targetPartner != null && targetPartner.pairingCode.isNotEmpty) {
+    // 1. Direct to selected partner contact if explicitly targeted
+    if (targetPartner != null && !targetPartner.isSelf && targetPartner.pairingCode.isNotEmpty) {
       sendDirectToTopic(
         targetPartner.pairingCode,
         targetPartner.pairingSecret,
@@ -2801,44 +2908,51 @@ class SyncService extends ChangeNotifier {
         relayHost: targetPartner.customRelayHost.isNotEmpty ? targetPartner.customRelayHost : _customRelayHost,
       );
       dispatched = true;
-    }
-
-    final active = _partnerService?.activePartner;
-    if (active != null && active.id != targetPartner?.id && active.pairingCode.isNotEmpty) {
-      sendDirectToTopic(
-        active.pairingCode,
-        active.pairingSecret,
-        msg,
-        relayHost: active.customRelayHost.isNotEmpty ? active.customRelayHost : _customRelayHost,
-      );
-      dispatched = true;
-    }
-
-    final submissives = _partnerService?.unblockedContacts.where((c) => c.role == PartnerRole.submissive).toList() ?? [];
-    for (final p in submissives) {
-      if (p.id != targetPartner?.id && p.id != active?.id && p.pairingCode.isNotEmpty) {
+    } else {
+      // 2. Direct to active partner contact
+      final active = _partnerService?.activePartner;
+      if (active != null && active.pairingCode.isNotEmpty) {
         sendDirectToTopic(
-          p.pairingCode,
-          p.pairingSecret,
+          active.pairingCode,
+          active.pairingSecret,
           msg,
-          relayHost: p.customRelayHost.isNotEmpty ? p.customRelayHost : _customRelayHost,
+          relayHost: active.customRelayHost.isNotEmpty ? active.customRelayHost : _customRelayHost,
+        );
+        dispatched = true;
+      }
+
+      // 3. Fall back to broadcasting to all unblocked submissive and peer contacts
+      final recipients = _partnerService?.unblockedContacts
+          .where((c) => c.role == PartnerRole.submissive || c.role == PartnerRole.peer)
+          .toList() ?? [];
+      for (final p in recipients) {
+        if (p.id != active?.id && p.pairingCode.isNotEmpty) {
+          sendDirectToTopic(
+            p.pairingCode,
+            p.pairingSecret,
+            msg,
+            relayHost: p.customRelayHost.isNotEmpty ? p.customRelayHost : _customRelayHost,
+          );
+          dispatched = true;
+        }
+      }
+
+      // 4. Send to shared personal pairing code
+      if (_pairingCode.isNotEmpty) {
+        sendDirectToTopic(
+          _pairingCode,
+          _pairingSecret,
+          msg,
+          relayHost: _customRelayHost,
         );
         dispatched = true;
       }
     }
 
-    if (_pairingCode.isNotEmpty) {
-      sendDirectToTopic(
-        _pairingCode,
-        _pairingSecret,
-        msg,
-      );
-      dispatched = true;
-    }
-
     sendMessage(msg);
 
     // Retain dispatched quest copy on Director side for real-time progress monitoring
+    final active = _partnerService?.activePartner;
     final recipientKey = targetPartner?.id ?? targetPartner?.pairingCode ?? active?.id ?? active?.pairingCode ?? 'remote_player';
     _questService?.recordDispatchedQuest(
       recipientKey,
@@ -2849,6 +2963,17 @@ class SyncService extends ChangeNotifier {
 
     notifyListeners();
     return dispatched;
+  }
+
+  /// Re-transmits an unconfirmed quest playlist to a specific recipient
+  bool resendDispatchedQuest(String partnerKey, Quest quest, {PartnerContact? targetPartner}) {
+    PartnerContact? recipient = targetPartner;
+    if (recipient == null && _partnerService != null) {
+      recipient = _partnerService!.findContactById(partnerKey) ??
+          _partnerService!.findContactByCode(partnerKey) ??
+          _partnerService!.activePartner;
+    }
+    return dispatchQuestToPlayer(quest, targetPartner: recipient);
   }
 
   /// Sends quest step progression directly to Director's topic over relay
@@ -2872,11 +2997,24 @@ class SyncService extends ChangeNotifier {
 
     bool sent = false;
 
-    // Send direct to all unblocked dominant partners
-    final dominants = _partnerService?.unblockedContacts
-        .where((c) => c.role == PartnerRole.dominant)
+    // 1. Direct to assigning Director's code if recorded
+    final assignerCode = _questService?.activeQuest?.assignedByPartnerCode;
+    if (assignerCode != null && assignerCode.isNotEmpty) {
+      final assignerContact = _partnerService?.findContactByCode(assignerCode);
+      await sendDirectToTopic(
+        assignerCode,
+        assignerContact?.pairingSecret ?? _pairingSecret,
+        msg,
+        relayHost: assignerContact?.customRelayHost.isNotEmpty == true ? assignerContact!.customRelayHost : _customRelayHost,
+      );
+      sent = true;
+    }
+
+    // 2. Direct to all unblocked dominant and peer partners
+    final recipients = _partnerService?.unblockedContacts
+        .where((c) => (c.role == PartnerRole.dominant || c.role == PartnerRole.peer) && c.pairingCode != assignerCode)
         .toList() ?? [];
-    for (final partner in dominants) {
+    for (final partner in recipients) {
       if (partner.pairingCode.isNotEmpty) {
         await sendDirectToTopic(
           partner.pairingCode,
@@ -2889,7 +3027,7 @@ class SyncService extends ChangeNotifier {
     }
 
     final active = _partnerService?.activePartner;
-    if (active != null && !dominants.any((d) => d.id == active.id) && active.pairingCode.isNotEmpty) {
+    if (active != null && active.pairingCode != assignerCode && !recipients.any((d) => d.id == active.id) && active.pairingCode.isNotEmpty) {
       await sendDirectToTopic(
         active.pairingCode,
         active.pairingSecret,
@@ -2923,10 +3061,24 @@ class SyncService extends ChangeNotifier {
 
     bool sent = false;
 
-    final dominants = _partnerService?.unblockedContacts
-        .where((c) => c.role == PartnerRole.dominant)
+    // 1. Direct to assigning Director's code if recorded
+    final assignerCode = _questService?.activeQuest?.assignedByPartnerCode;
+    if (assignerCode != null && assignerCode.isNotEmpty) {
+      final assignerContact = _partnerService?.findContactByCode(assignerCode);
+      await sendDirectToTopic(
+        assignerCode,
+        assignerContact?.pairingSecret ?? _pairingSecret,
+        msg,
+        relayHost: assignerContact?.customRelayHost.isNotEmpty == true ? assignerContact!.customRelayHost : _customRelayHost,
+      );
+      sent = true;
+    }
+
+    // 2. Direct to all unblocked dominant and peer partners
+    final recipients = _partnerService?.unblockedContacts
+        .where((c) => (c.role == PartnerRole.dominant || c.role == PartnerRole.peer) && c.pairingCode != assignerCode)
         .toList() ?? [];
-    for (final partner in dominants) {
+    for (final partner in recipients) {
       if (partner.pairingCode.isNotEmpty) {
         await sendDirectToTopic(
           partner.pairingCode,
@@ -2939,7 +3091,7 @@ class SyncService extends ChangeNotifier {
     }
 
     final active = _partnerService?.activePartner;
-    if (active != null && !dominants.any((d) => d.id == active.id) && active.pairingCode.isNotEmpty) {
+    if (active != null && active.pairingCode != assignerCode && !recipients.any((d) => d.id == active.id) && active.pairingCode.isNotEmpty) {
       await sendDirectToTopic(
         active.pairingCode,
         active.pairingSecret,

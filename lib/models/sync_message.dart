@@ -23,6 +23,7 @@ enum SyncMessageType {
   chatReadReceipt,
   partnerProfile,
   dispatchQuest,
+  dispatchQuestAck,
   questStepCompleted,
   questCompleted,
   identityMigrated,

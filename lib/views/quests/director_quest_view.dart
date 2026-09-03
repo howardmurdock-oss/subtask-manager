@@ -700,12 +700,19 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
   void _dispatchQuest(Quest quest) {
     final partnerSvc = Provider.of<PartnerService>(context, listen: false);
     final sync = Provider.of<SyncService>(context, listen: false);
-    final contacts = partnerSvc.unblockedContacts;
+    final selfContact = PartnerContact.self();
+    final contacts = <PartnerContact>[
+      selfContact,
+      ...partnerSvc.unblockedContacts,
+    ];
 
     showDialog(
       context: context,
       builder: (ctx) {
-        PartnerContact? selectedPartner = partnerSvc.activePartner;
+        PartnerContact selectedPartner = partnerSvc.activePartner != null &&
+                contacts.any((c) => c.id == partnerSvc.activePartner!.id)
+            ? contacts.firstWhere((c) => c.id == partnerSvc.activePartner!.id)
+            : selfContact;
 
         return StatefulBuilder(
           builder: (dialogCtx, setDialogState) {
@@ -729,18 +736,23 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
                     style: const TextStyle(fontSize: 14),
                   ),
                   const SizedBox(height: 16),
-                  if (contacts.isEmpty)
-                    const Text('No paired partners found. Will broadcast to paired channel.')
-                  else
-                    DropdownButtonFormField<PartnerContact>(
-                      value: selectedPartner,
-                      decoration: const InputDecoration(labelText: 'Select Recipient', border: OutlineInputBorder()),
-                      items: contacts.map((c) => DropdownMenuItem(
-                        value: c,
-                        child: Text('${c.displayName} (${c.pairingCode})'),
-                      )).toList(),
-                      onChanged: (val) => setDialogState(() => selectedPartner = val),
-                    ),
+                  DropdownButtonFormField<PartnerContact>(
+                    value: selectedPartner,
+                    decoration: const InputDecoration(labelText: 'Select Recipient', border: OutlineInputBorder()),
+                    items: contacts.map((c) => DropdownMenuItem(
+                      value: c,
+                      child: Text(
+                        c.isSelf
+                            ? 'Myself (This Device)'
+                            : '${c.displayName} (${c.pairingCode})',
+                      ),
+                    )).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        setDialogState(() => selectedPartner = val);
+                      }
+                    },
+                  ),
                 ],
               ),
               actions: [
@@ -757,7 +769,11 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
                     Navigator.pop(ctx);
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Dispatched quest "${quest.title}" to ${selectedPartner?.displayName ?? "Player"}!'),
+                        content: Text(
+                          selectedPartner.isSelf
+                              ? 'Assigned quest "${quest.title}" to this device!'
+                              : 'Dispatched quest "${quest.title}" to ${selectedPartner.displayName}!',
+                        ),
                         behavior: SnackBarBehavior.floating,
                       ),
                     );
@@ -787,7 +803,10 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
       return;
     }
 
-    PartnerContact? selectedPartner = partnerSvc.activePartner ?? contacts.first;
+    PartnerContact selectedPartner = partnerSvc.activePartner != null &&
+            contacts.any((c) => c.id == partnerSvc.activePartner!.id)
+        ? contacts.firstWhere((c) => c.id == partnerSvc.activePartner!.id)
+        : contacts.first;
 
     showDialog(
       context: context,
@@ -810,7 +829,9 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
                 value: selectedPartner,
                 decoration: const InputDecoration(labelText: 'Recipient', border: OutlineInputBorder()),
                 items: contacts.map((c) => DropdownMenuItem(value: c, child: Text('${c.displayName} (${c.pairingCode})'))).toList(),
-                onChanged: (val) => setDialogState(() => selectedPartner = val),
+                onChanged: (val) {
+                  if (val != null) setDialogState(() => selectedPartner = val);
+                },
               ),
             ],
           ),
@@ -819,11 +840,11 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
             ElevatedButton.icon(
               icon: const Icon(Icons.send_rounded, size: 16),
               label: const Text('Send Quest'),
-              onPressed: selectedPartner == null ? null : () async {
+              onPressed: () async {
                 Navigator.pop(ctx);
                 final rawJson = jsonEncode(quest.toJson());
                 await sync.sendChatMessage(
-                  selectedPartner!,
+                  selectedPartner,
                   'Shared Quest: "${quest.title}" (${quest.steps.length} steps)',
                   packType: 'quest',
                   packTitle: quest.title,
@@ -831,7 +852,7 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
                   packData: rawJson,
                 );
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Sent quest "${quest.title}" to ${selectedPartner!.displayName}!'), behavior: SnackBarBehavior.floating),
+                  SnackBar(content: Text('Sent quest "${quest.title}" to ${selectedPartner.displayName}!'), behavior: SnackBarBehavior.floating),
                 );
               },
             ),
@@ -853,7 +874,10 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
       return;
     }
 
-    PartnerContact? selectedPartner = partnerSvc.activePartner ?? contacts.first;
+    PartnerContact selectedPartner = partnerSvc.activePartner != null &&
+            contacts.any((c) => c.id == partnerSvc.activePartner!.id)
+        ? contacts.firstWhere((c) => c.id == partnerSvc.activePartner!.id)
+        : contacts.first;
 
     showDialog(
       context: context,
@@ -876,7 +900,9 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
                 value: selectedPartner,
                 decoration: const InputDecoration(labelText: 'Recipient', border: OutlineInputBorder()),
                 items: contacts.map((c) => DropdownMenuItem(value: c, child: Text('${c.displayName} (${c.pairingCode})'))).toList(),
-                onChanged: (val) => setDialogState(() => selectedPartner = val),
+                onChanged: (val) {
+                  if (val != null) setDialogState(() => selectedPartner = val);
+                },
               ),
             ],
           ),
@@ -885,7 +911,7 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
             ElevatedButton.icon(
               icon: const Icon(Icons.send_rounded, size: 16),
               label: const Text('Send Pack'),
-              onPressed: selectedPartner == null ? null : () async {
+              onPressed: () async {
                 Navigator.pop(ctx);
                 final rawJson = jsonEncode(pack.toJson());
                 await sync.sendChatMessage(

@@ -446,6 +446,18 @@ class QuestService extends ChangeNotifier {
 
   void assignQuestFromDirector(Quest quest, {String? directorName, String? directorCode}) {
     _isUnlocked = true; // Auto-unlock assigned quest access on player device
+
+    // Deduplication & Progress Preservation:
+    // If this quest is already actively running and not completed, preserve current step progress!
+    if (_activeQuest != null &&
+        !_activeQuest!.isCompleted &&
+        (_activeQuest!.quest.id == quest.id ||
+         _activeQuest!.quest.title.trim().toLowerCase() == quest.title.trim().toLowerCase())) {
+      _saveToStorage();
+      notifyListeners();
+      return;
+    }
+
     _saveToStorage();
     startQuest(quest, assignerName: directorName, assignerCode: directorCode);
   }

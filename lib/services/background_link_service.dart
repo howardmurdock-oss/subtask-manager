@@ -61,10 +61,6 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     if (msg == null) return false;
     if (_deviceId.isNotEmpty && msg.senderId == _deviceId) return true;
     if (_deviceId.isNotEmpty && msg.payload['senderId'] == _deviceId) return true;
-    final senderCode = msg.payload['senderCode'] as String?;
-    if (_pairingCode.isNotEmpty && senderCode != null && senderCode.trim().toUpperCase() == _pairingCode.trim().toUpperCase()) {
-      return true;
-    }
     return false;
   }
 
@@ -115,6 +111,14 @@ class DirectiveSyncTaskHandler extends TaskHandler {
             try {
               final parsed = jsonDecode(line);
               if (parsed is Map && parsed['event'] == 'message') {
+                if (parsed['attachment'] is Map && parsed['attachment']['url'] != null) {
+                  final fileUrl = parsed['attachment']['url'] as String;
+                  final aReq = await _httpClient.getUrl(Uri.parse(fileUrl));
+                  final aRes = await aReq.close();
+                  final raw = await utf8.decodeStream(aRes);
+                  _processIncomingRaw(raw);
+                  continue;
+                }
                 final raw = parsed['message'] as String?;
                 if (raw != null) {
                   _processIncomingRaw(raw);
@@ -357,6 +361,16 @@ class DirectiveSyncTaskHandler extends TaskHandler {
       final list = prefs.getStringList('pending_background_pairings_v1') ?? [];
       list.add(jsonEncode(payload));
       await prefs.setStringList('pending_background_pairings_v1', list);
+    } catch (_) {}
+  }
+
+  void _queuePendingQuest(Map<String, dynamic> payload) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final list = prefs.getStringList('pending_background_quests_v1') ?? [];
+      list.add(jsonEncode(payload));
+      await prefs.setStringList('pending_background_quests_v1', list);
     } catch (_) {}
   }
 
@@ -694,6 +708,57 @@ class DirectiveSyncTaskHandler extends TaskHandler {
             senderName: senderName,
             isIncompleteTimer: isIncomplete,
             secondsRemaining: secRemaining,
+          );
+          break;
+
+        case SyncMessageType.dispatchQuest:
+          final rawQuest = msg.payload['quest'];
+          final Map<String, dynamic> questData = (rawQuest is Map)
+              ? Map<String, dynamic>.from(rawQuest)
+              : <String, dynamic>{};
+          final questTitle = questData['title'] as String? ?? 'New Quest Playlist';
+          final senderName = msg.payload['senderName'] as String? ?? 'Director';
+          final rawSteps = questData['steps'] as List? ?? [];
+          final bonusTokens = (questData['bonusTokensOnComplete'] as num?)?.toInt() ?? 25;
+
+          // Queue quest for main app QuestService
+          _queuePendingQuest(msg.payload);
+
+          // High priority alert with sound, vibration, and banner
+          NotificationService.showOrderDispatchedNotification(
+            title: 'Quest: $questTitle',
+            description: '${rawSteps.length} chained directives assigned by $senderName. (+$bonusTokens bonus tokens)',
+            assignerName: senderName,
+            rewardTokens: bonusTokens,
+          );
+          break;
+
+        case SyncMessageType.questStepCompleted:
+          final senderName = msg.payload['senderName'] as String? ?? 'Player';
+          final questTitle = msg.payload['questTitle'] as String? ?? 'Quest';
+          final stepIndex = (msg.payload['stepIndex'] as num?)?.toInt() ?? 0;
+          final stepTitle = msg.payload['stepTitle'] as String? ?? 'Step';
+          final totalSteps = (msg.payload['totalSteps'] as num?)?.toInt() ?? 1;
+          final tokens = (msg.payload['tokensAwarded'] as num?)?.toInt() ?? 0;
+
+          NotificationService.showProofReviewedNotification(
+            title: 'Step Completed: $stepTitle',
+            approved: true,
+            tokensAwarded: tokens,
+            reviewerName: '$senderName (Step ${stepIndex + 1} of $totalSteps in "$questTitle")',
+          );
+          break;
+
+        case SyncMessageType.questCompleted:
+          final senderName = msg.payload['senderName'] as String? ?? 'Player';
+          final questTitle = msg.payload['questTitle'] as String? ?? 'Quest';
+          final bonusTokens = (msg.payload['bonusTokens'] as num?)?.toInt() ?? 0;
+
+          NotificationService.showProofReviewedNotification(
+            title: '🏆 Quest Conquered: "$questTitle"',
+            approved: true,
+            tokensAwarded: bonusTokens,
+            reviewerName: '$senderName conquered all directives in the quest chain!',
           );
           break;
 
