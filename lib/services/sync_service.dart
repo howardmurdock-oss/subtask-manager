@@ -34,6 +34,7 @@ class SyncService extends ChangeNotifier {
   final StreamController<ActiveOrder> _incomingOrderController = StreamController<ActiveOrder>.broadcast();
 
   Stream<ActiveOrder> get onOrderReceived => _incomingOrderController.stream;
+  QuestService? get questService => _questService;
 
   ConnectionRole _role = ConnectionRole.none;
   ConnectionStatus _status = ConnectionStatus.disconnected;
@@ -1495,6 +1496,31 @@ class SyncService extends ChangeNotifier {
         priorityHeader = '4';
         tagsHeader = 'link';
         break;
+      case SyncMessageType.dispatchQuest:
+        final rawQuest = msg.payload['quest'];
+        final questTitle = (rawQuest is Map ? rawQuest['title'] : null) as String? ?? 'New Quest';
+        final senderName = msg.payload['senderName'] as String? ?? 'Director';
+        titleHeader = 'Quest from $senderName: $questTitle';
+        priorityHeader = '5';
+        tagsHeader = 'sparkles,bell';
+        break;
+      case SyncMessageType.questStepCompleted:
+        final questTitle = msg.payload['questTitle'] as String? ?? 'Quest';
+        final senderName = msg.payload['senderName'] as String? ?? 'Player';
+        final stepIndex = (msg.payload['stepIndex'] as num?)?.toInt() ?? 0;
+        final stepTitle = msg.payload['stepTitle'] as String? ?? 'Step';
+        titleHeader = '$senderName completed step ${stepIndex + 1}: $stepTitle';
+        priorityHeader = '4';
+        tagsHeader = 'white_check_mark';
+        break;
+      case SyncMessageType.questCompleted:
+        final questTitle = msg.payload['questTitle'] as String? ?? 'Quest';
+        final senderName = msg.payload['senderName'] as String? ?? 'Player';
+        final bonusTokens = (msg.payload['bonusTokens'] as num?)?.toInt() ?? 0;
+        titleHeader = '🏆 $senderName Conquered Quest: $questTitle (+$bonusTokens tokens)';
+        priorityHeader = '5';
+        tagsHeader = 'trophy,star2';
+        break;
       default:
         titleHeader = 'OrdersApp Sync Update';
         priorityHeader = '3';
@@ -1508,11 +1534,18 @@ class SyncService extends ChangeNotifier {
       try {
         final url = Uri.parse('https://$host/$topic');
         final req = await _httpClient.postUrl(url).timeout(const Duration(seconds: 6));
-        req.headers.contentType = ContentType.text;
         req.headers.set('X-Title', safeTitle.isNotEmpty ? safeTitle : 'OrdersApp');
         req.headers.set('X-Priority', priorityHeader);
         req.headers.set('X-Tags', tagsHeader);
-        req.write(payload);
+
+        if (payload.length > 3500) {
+          req.headers.set('X-Filename', 'payload.bin');
+          req.headers.contentType = ContentType.binary;
+          req.add(utf8.encode(payload));
+        } else {
+          req.headers.contentType = ContentType.text;
+          req.write(payload);
+        }
 
         final res = await req.close().timeout(const Duration(seconds: 6));
         await res.drain();
@@ -2163,6 +2196,16 @@ class SyncService extends ChangeNotifier {
                 .toList();
           }
 
+          if (msg.payload['activeQuest'] is Map) {
+            try {
+              final activeQuestMap = Map<String, dynamic>.from(msg.payload['activeQuest'] as Map);
+              final activeQuest = ActiveQuest.fromJson(activeQuestMap);
+              _questService?.updateRemotePlayerQuestFromState(msg.senderId, activeQuest);
+            } catch (e) {
+              if (kDebugMode) print('Error parsing activeQuest from remote state: $e');
+            }
+          }
+
           _saveDirectorDispatchedOrders();
           notifyListeners();
         } catch (e) {
@@ -2242,6 +2285,11 @@ class SyncService extends ChangeNotifier {
           final senderName = msg.payload['senderName'] as String? ?? 'Player';
           final questTitle = msg.payload['questTitle'] as String? ?? 'Quest';
           final bonusTokens = (msg.payload['bonusTokens'] as num?)?.toInt() ?? 0;
+
+          _questService?.markRemotePlayerQuestCompleted(
+            msg.senderId,
+            msg.payload['questId'] as String? ?? '',
+          );
 
           NotificationService.showProofReviewedNotification(
             title: 'CONQUERED: $questTitle',
@@ -2362,6 +2410,8 @@ class SyncService extends ChangeNotifier {
         'activeOrders': _engine.currentRunningOrders.map((o) => o.toJson()).toList(),
         'underReviewOrders': _engine.underReviewOrders.map((o) => o.toJson()).toList(),
         'pendingRedemptions': _engine.pendingRedemptions.map((r) => r.toJson()).toList(),
+        if (_questService?.activeQuest != null)
+          'activeQuest': _questService!.activeQuest!.toJson(),
       },
     );
 
@@ -2787,7 +2837,121 @@ class SyncService extends ChangeNotifier {
     }
 
     sendMessage(msg);
+
+    // Retain dispatched quest copy on Director side for real-time progress monitoring
+    final recipientKey = targetPartner?.id ?? targetPartner?.pairingCode ?? active?.id ?? active?.pairingCode ?? 'remote_player';
+    _questService?.recordDispatchedQuest(
+      recipientKey,
+      quest,
+      partnerName: targetPartner?.displayName ?? active?.displayName ?? 'Submissive',
+      partnerCode: targetPartner?.pairingCode ?? active?.pairingCode ?? '',
+    );
+
+    notifyListeners();
     return dispatched;
+  }
+
+  /// Sends quest step progression directly to Director's topic over relay
+  Future<bool> notifyQuestStepCompleted(Quest quest, QuestStep step, int stepIndex, int totalSteps, {int tokensAwarded = 0}) async {
+    final senderName = _nickname.isNotEmpty ? _nickname : 'Player';
+    final msg = SyncMessage(
+      id: const Uuid().v4(),
+      type: SyncMessageType.questStepCompleted,
+      senderId: _deviceId,
+      payload: {
+        'questId': quest.id,
+        'questTitle': quest.title,
+        'stepIndex': stepIndex,
+        'stepTitle': step.title,
+        'totalSteps': totalSteps,
+        'tokensAwarded': tokensAwarded,
+        'senderName': senderName,
+        'senderCode': _pairingCode,
+      },
+    );
+
+    bool sent = false;
+
+    // Send direct to all unblocked dominant partners
+    final dominants = _partnerService?.unblockedContacts
+        .where((c) => c.role == PartnerRole.dominant)
+        .toList() ?? [];
+    for (final partner in dominants) {
+      if (partner.pairingCode.isNotEmpty) {
+        await sendDirectToTopic(
+          partner.pairingCode,
+          partner.pairingSecret,
+          msg,
+          relayHost: partner.customRelayHost.isNotEmpty ? partner.customRelayHost : _customRelayHost,
+        );
+        sent = true;
+      }
+    }
+
+    final active = _partnerService?.activePartner;
+    if (active != null && !dominants.any((d) => d.id == active.id) && active.pairingCode.isNotEmpty) {
+      await sendDirectToTopic(
+        active.pairingCode,
+        active.pairingSecret,
+        msg,
+        relayHost: active.customRelayHost.isNotEmpty ? active.customRelayHost : _customRelayHost,
+      );
+      sent = true;
+    }
+
+    sendMessage(msg);
+    broadcastPlayerState();
+    return sent;
+  }
+
+  /// Sends grand quest completion directly to Director's topic over relay
+  Future<bool> notifyQuestCompleted(Quest quest, {int bonusTokens = 0}) async {
+    final senderName = _nickname.isNotEmpty ? _nickname : 'Player';
+    final msg = SyncMessage(
+      id: const Uuid().v4(),
+      type: SyncMessageType.questCompleted,
+      senderId: _deviceId,
+      payload: {
+        'questId': quest.id,
+        'questTitle': quest.title,
+        'totalSteps': quest.steps.length,
+        'bonusTokens': bonusTokens,
+        'senderName': senderName,
+        'senderCode': _pairingCode,
+      },
+    );
+
+    bool sent = false;
+
+    final dominants = _partnerService?.unblockedContacts
+        .where((c) => c.role == PartnerRole.dominant)
+        .toList() ?? [];
+    for (final partner in dominants) {
+      if (partner.pairingCode.isNotEmpty) {
+        await sendDirectToTopic(
+          partner.pairingCode,
+          partner.pairingSecret,
+          msg,
+          relayHost: partner.customRelayHost.isNotEmpty ? partner.customRelayHost : _customRelayHost,
+        );
+        sent = true;
+      }
+    }
+
+    final active = _partnerService?.activePartner;
+    if (active != null && !dominants.any((d) => d.id == active.id) && active.pairingCode.isNotEmpty) {
+      await sendDirectToTopic(
+        active.pairingCode,
+        active.pairingSecret,
+        msg,
+        relayHost: active.customRelayHost.isNotEmpty ? active.customRelayHost : _customRelayHost,
+      );
+      sent = true;
+    }
+
+    sendMessage(msg);
+    broadcastPlayerState();
+    return sent;
   }
 
   bool sendPackToPlayer(OrderPack pack, {PartnerContact? targetPartner}) {

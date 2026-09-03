@@ -16,6 +16,9 @@ import '../../widgets/token_badge.dart';
 import '../../widgets/draggable_dialog.dart';
 import '../../core/utils/image_compressor.dart';
 import '../scheduling/schedule_order_dialog.dart';
+import '../../services/quest_service.dart';
+import '../../models/quest_item.dart';
+import '../quests/player_quest_view.dart';
 
 class PlayerDashboardView extends StatelessWidget {
   const PlayerDashboardView({super.key});
@@ -754,9 +757,15 @@ class PlayerDashboardView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final engine = Provider.of<OrderEngine>(context);
+    QuestService? questSvc;
+    try {
+      questSvc = Provider.of<QuestService>(context);
+    } catch (_) {}
     final theme = Theme.of(context);
     final runningOrders = engine.currentRunningOrders;
     final reviewOrders = engine.underReviewOrders;
+    final activeQuest = questSvc?.activeQuest;
+    final hasActiveQuest = activeQuest != null && !activeQuest.isCompleted;
 
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -781,7 +790,7 @@ class PlayerDashboardView extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      runningOrders.isEmpty ? 'Ready for Assignment' : '${runningOrders.length} In Progress',
+                      runningOrders.isEmpty && !hasActiveQuest ? 'Ready for Assignment' : (hasActiveQuest ? 'Quest & ${runningOrders.length} Directives In Progress' : '${runningOrders.length} In Progress'),
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -836,6 +845,12 @@ class PlayerDashboardView extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 20),
+
+        // Active Quest Protocol Card
+        if (hasActiveQuest) ...[
+          _buildActiveQuestCard(context, activeQuest, theme),
+          const SizedBox(height: 16),
+        ],
 
         // Active Orders List
         if (runningOrders.isNotEmpty) ...[
@@ -1051,6 +1066,155 @@ class PlayerDashboardView extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+
+  Widget _buildActiveQuestCard(BuildContext context, ActiveQuest activeQuest, ThemeData theme) {
+    final currentStep = activeQuest.currentStep;
+    final stepNum = activeQuest.currentStepIndex + 1;
+    final totalSteps = activeQuest.totalSteps;
+    final progress = activeQuest.progressFraction;
+
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.purpleAccent.withOpacity(0.5), width: 1.5),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            colors: [
+              Colors.purple.withOpacity(0.12),
+              theme.colorScheme.surface,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.purpleAccent.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.auto_stories_rounded, size: 14, color: Colors.purpleAccent),
+                      SizedBox(width: 5),
+                      Text(
+                        'ACTIVE QUEST PROTOCOL',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                          color: Colors.purpleAccent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                if (activeQuest.assignedByPartnerName != null)
+                  Text(
+                    'Assigned by ${activeQuest.assignedByPartnerName}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurface.withOpacity(0.7),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              activeQuest.quest.title,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            if (activeQuest.quest.description.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                activeQuest.quest.description,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurface.withOpacity(0.7),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            // Step Progress
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Step $stepNum of $totalSteps: ${currentStep?.title ?? "Complete"}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.cyanAccent,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '+${activeQuest.quest.bonusTokensOnComplete} Token Bounty',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.amber,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 7,
+                backgroundColor: theme.colorScheme.onSurface.withOpacity(0.1),
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.purpleAccent),
+              ),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                label: const Text('OPEN QUEST & EXECUTE STEP'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.purpleAccent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (ctx) => const PlayerQuestView(),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

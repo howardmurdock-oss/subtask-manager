@@ -116,6 +116,18 @@ class QuestService extends ChangeNotifier {
         );
       }
 
+      // 6. Load remote player quests (Director monitoring)
+      final remoteQuestsJson = prefs.getString('director_remote_player_quests_v1');
+      if (remoteQuestsJson != null && remoteQuestsJson.isNotEmpty) {
+        final Map<String, dynamic> decoded = jsonDecode(remoteQuestsJson);
+        _remotePlayerQuests.clear();
+        decoded.forEach((key, val) {
+          try {
+            _remotePlayerQuests[key] = ActiveQuest.fromJson(Map<String, dynamic>.from(val as Map));
+          } catch (_) {}
+        });
+      }
+
       notifyListeners();
     } catch (e) {
       if (kDebugMode) print('Error loading QuestService storage: $e');
@@ -146,6 +158,9 @@ class QuestService extends ChangeNotifier {
 
       final encodedHistory = jsonEncode(_completedQuestsHistory.map((q) => q.toJson()).toList());
       await prefs.setString('player_completed_quests_v1', encodedHistory);
+
+      final encodedRemote = jsonEncode(_remotePlayerQuests.map((k, v) => MapEntry(k, v.toJson())));
+      await prefs.setString('director_remote_player_quests_v1', encodedRemote);
     } catch (e) {
       if (kDebugMode) print('Error saving QuestService storage: $e');
     }
@@ -430,6 +445,8 @@ class QuestService extends ChangeNotifier {
   }
 
   void assignQuestFromDirector(Quest quest, {String? directorName, String? directorCode}) {
+    _isUnlocked = true; // Auto-unlock assigned quest access on player device
+    _saveToStorage();
     startQuest(quest, assignerName: directorName, assignerCode: directorCode);
   }
 
@@ -478,22 +495,14 @@ class QuestService extends ChangeNotifier {
       engine.notifyListeners();
     }
 
-    // 3. Notify Director via sync if paired
-    if (sync != null && _activeQuest!.assignedByPartnerCode != null) {
-      sync.sendMessage(
-        SyncMessage(
-          type: SyncMessageType.questStepCompleted,
-          senderId: sync.deviceId,
-          payload: {
-            'questId': quest.id,
-            'questTitle': quest.title,
-            'stepIndex': currentIdx,
-            'stepTitle': currentStep.title,
-            'totalSteps': quest.steps.length,
-            'tokensAwarded': currentStep.rewardTokens,
-            'senderName': sync.nickname.isNotEmpty ? sync.nickname : 'Player',
-          },
-        ),
+    // 3. Notify Director directly over relay topic if paired
+    if (sync != null) {
+      sync.notifyQuestStepCompleted(
+        quest,
+        currentStep,
+        currentIdx,
+        quest.steps.length,
+        tokensAwarded: currentStep.rewardTokens,
       );
     }
 
@@ -527,19 +536,10 @@ class QuestService extends ChangeNotifier {
 
       _completedQuestsHistory.insert(0, _activeQuest!);
 
-      if (sync != null && _activeQuest!.assignedByPartnerCode != null) {
-        sync.sendMessage(
-          SyncMessage(
-            type: SyncMessageType.questCompleted,
-            senderId: sync.deviceId,
-            payload: {
-              'questId': quest.id,
-              'questTitle': quest.title,
-              'totalSteps': quest.steps.length,
-              'bonusTokens': quest.bonusTokensOnComplete,
-              'senderName': sync.nickname.isNotEmpty ? sync.nickname : 'Player',
-            },
-          ),
+      if (sync != null) {
+        sync.notifyQuestCompleted(
+          quest,
+          bonusTokens: quest.bonusTokensOnComplete,
         );
       }
     }
@@ -556,6 +556,26 @@ class QuestService extends ChangeNotifier {
 
   // ---- Director Remote Telemetry Updates ----
 
+  void recordDispatchedQuest(
+    String partnerKey,
+    Quest quest, {
+    String? partnerName,
+    String? partnerCode,
+  }) {
+    if (partnerKey.isEmpty) return;
+    final active = ActiveQuest(
+      quest: quest,
+      assignedByPartnerName: partnerName,
+      assignedByPartnerCode: partnerCode,
+    );
+    _remotePlayerQuests[partnerKey] = active;
+    if (partnerCode != null && partnerCode.isNotEmpty) {
+      _remotePlayerQuests[partnerCode] = active;
+    }
+    _saveToStorage();
+    notifyListeners();
+  }
+
   void updateRemotePlayerQuestProgress({
     required String senderId,
     required String questId,
@@ -565,7 +585,66 @@ class QuestService extends ChangeNotifier {
     required int totalSteps,
     bool isCompleted = false,
   }) {
-    // Keep live track of partner's progress
+    ActiveQuest? existing = _remotePlayerQuests[senderId];
+    if (existing == null) {
+      for (final entry in _remotePlayerQuests.entries) {
+        if (entry.value.quest.id == questId || entry.value.assignedByPartnerCode == senderId) {
+          existing = entry.value;
+          break;
+        }
+      }
+    }
+
+    if (existing != null) {
+      existing.currentStepIndex = stepIndex;
+      existing.isCompleted = isCompleted;
+      if (isCompleted) existing.completedAt = DateTime.now();
+      if (stepIndex < existing.stepProgress.length) {
+        existing.stepProgress[stepIndex] = ActiveQuestStepProgress(
+          stepId: existing.stepProgress[stepIndex].stepId,
+          isCompleted: true,
+          completedAt: DateTime.now(),
+        );
+      }
+    } else {
+      final q = allQuests.firstWhere(
+        (q) => q.id == questId,
+        orElse: () => Quest(id: questId, title: questTitle),
+      );
+      final newActive = ActiveQuest(
+        quest: q,
+        currentStepIndex: stepIndex,
+        isCompleted: isCompleted,
+      );
+      _remotePlayerQuests[senderId] = newActive;
+    }
+
+    _saveToStorage();
+    notifyListeners();
+  }
+
+  void updateRemotePlayerQuestFromState(String senderId, ActiveQuest quest) {
+    _remotePlayerQuests[senderId] = quest;
+    if (quest.assignedByPartnerCode != null && quest.assignedByPartnerCode!.isNotEmpty) {
+      _remotePlayerQuests[quest.assignedByPartnerCode!] = quest;
+    }
+    _saveToStorage();
+    notifyListeners();
+  }
+
+  void markRemotePlayerQuestCompleted(String senderId, String questId) {
+    final existing = _remotePlayerQuests[senderId];
+    if (existing != null) {
+      existing.isCompleted = true;
+      existing.completedAt = DateTime.now();
+    }
+    _saveToStorage();
+    notifyListeners();
+  }
+
+  void clearRemotePlayerQuest(String senderId) {
+    _remotePlayerQuests.remove(senderId);
+    _saveToStorage();
     notifyListeners();
   }
 }

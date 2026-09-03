@@ -18,7 +18,10 @@ class QuestsHubView extends StatelessWidget {
   Widget build(BuildContext context) {
     final questSvc = Provider.of<QuestService>(context);
 
-    if (!questSvc.isUnlocked) {
+    // If player has an active assigned quest, grant direct access to their assigned duties
+    final hasActiveAssignedQuest = questSvc.activeQuest != null && !questSvc.activeQuest!.isCompleted;
+
+    if (!questSvc.isUnlocked && !hasActiveAssignedQuest) {
       return const QuestGateView();
     }
 

@@ -13,6 +13,8 @@ import '../contacts/partner_directory_view.dart';
 import 'order_dispatch_dialog.dart';
 import 'reward_manager_view.dart';
 import '../scheduling/schedule_order_dialog.dart';
+import '../../services/quest_service.dart';
+import '../../models/quest_item.dart';
 
 class DirectorDashboardView extends StatelessWidget {
   const DirectorDashboardView({super.key});
@@ -600,6 +602,24 @@ class DirectorDashboardView extends StatelessWidget {
     final playerTokens = sync.remoteTokens > 0 ? sync.remoteTokens : engine.stats.tokens;
     final playerStreak = sync.remoteStreak > 0 ? sync.remoteStreak : engine.stats.currentStreakDays;
 
+    QuestService? questSvc;
+    try {
+      questSvc = Provider.of<QuestService>(context);
+    } catch (_) {
+      questSvc = sync.questService;
+    }
+    ActiveQuest? submissiveQuest;
+    if (questSvc != null) {
+      if (activePartner != null) {
+        submissiveQuest = questSvc.remotePlayerQuests[activePartner.id] ??
+            questSvc.remotePlayerQuests[activePartner.pairingCode];
+      }
+      submissiveQuest ??= questSvc.remotePlayerQuests.values.cast<ActiveQuest?>().firstWhere(
+        (q) => q != null && !q.isCompleted,
+        orElse: () => null,
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -967,6 +987,12 @@ class DirectorDashboardView extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(height: 24),
+        ],
+
+        // Active Submissive Quest Protocol Section
+        if (submissiveQuest != null && !submissiveQuest.isCompleted) ...[
+          _buildSubmissiveQuestCard(context, submissiveQuest, activePartner, sync, theme),
           const SizedBox(height: 24),
         ],
 
@@ -1545,6 +1571,163 @@ class DirectorDashboardView extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildSubmissiveQuestCard(
+    BuildContext context,
+    ActiveQuest quest,
+    PartnerContact? partner,
+    SyncService sync,
+    ThemeData theme,
+  ) {
+    final currentStep = quest.currentStep;
+    final stepNum = quest.currentStepIndex + 1;
+    final totalSteps = quest.totalSteps;
+    final progress = quest.progressFraction;
+
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.purpleAccent.withOpacity(0.4), width: 1.5),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            colors: [
+              Colors.purple.withOpacity(0.12),
+              theme.colorScheme.surface,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.purpleAccent.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.auto_stories_rounded, size: 14, color: Colors.purpleAccent),
+                      SizedBox(width: 5),
+                      Text(
+                        'ACTIVE SUBMISSIVE QUEST',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                          color: Colors.purpleAccent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.cyanAccent.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Step $stepNum of $totalSteps',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.cyanAccent,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              quest.quest.title,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            if (quest.quest.description.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                quest.quest.description,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurface.withOpacity(0.7),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Current Directive: ${currentStep?.title ?? "In Progress"}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.cyanAccent,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  '+${quest.quest.bonusTokensOnComplete} Tokens Bounty',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.amber,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 7,
+                backgroundColor: theme.colorScheme.onSurface.withOpacity(0.1),
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.purpleAccent),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  icon: const Icon(Icons.send_rounded, size: 14),
+                  label: const Text('Re-dispatch / Push to Submissive', style: TextStyle(fontSize: 11)),
+                  onPressed: () {
+                    sync.dispatchQuestToPlayer(quest.quest, targetPartner: partner);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Re-dispatched quest "${quest.quest.title}" to submissive!'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
