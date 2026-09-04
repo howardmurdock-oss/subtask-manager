@@ -19,20 +19,44 @@ class NotificationService {
   static const String _alarmChannelName = 'Scheduled Orders & Alarms';
   static const String _alarmChannelDesc = 'High-priority alerts for scheduled orders, directives, and window triggers';
 
+  static Future<void> _initTimeZone() async {
+    try {
+      tz.initializeTimeZones();
+      if (!kIsWeb && !Platform.isWindows) {
+        String? timeZoneName;
+        try {
+          final timeZoneInfo = await FlutterTimezone.getLocalTimezone();
+          timeZoneName = timeZoneInfo.identifier;
+        } catch (_) {}
+
+        if (timeZoneName != null && timeZoneName.isNotEmpty) {
+          try {
+            tz.setLocalLocation(tz.getLocation(timeZoneName));
+            return;
+          } catch (_) {}
+        }
+
+        // Fallback: match device UTC offset against known timezone locations
+        final offset = DateTime.now().timeZoneOffset;
+        for (final loc in tz.timeZoneDatabase.locations.values) {
+          final nowInLoc = tz.TZDateTime.now(loc);
+          if (nowInLoc.timeZoneOffset == offset) {
+            tz.setLocalLocation(loc);
+            return;
+          }
+        }
+      }
+    } catch (tzErr) {
+      if (kDebugMode) print('Timezone initialization fallback: $tzErr');
+    }
+  }
+
   static Future<void> init() async {
     if (_initialized) return;
 
     try {
-      // 1. Initialize timezone database for exact background alarms
-      try {
-        tz.initializeTimeZones();
-        if (!kIsWeb && !Platform.isWindows) {
-          final timeZoneInfo = await FlutterTimezone.getLocalTimezone();
-          tz.setLocalLocation(tz.getLocation(timeZoneInfo.identifier));
-        }
-      } catch (tzErr) {
-        if (kDebugMode) print('Timezone initialization fallback: $tzErr');
-      }
+      // 1. Initialize timezone database for exact background alarms with robust fallback
+      await _initTimeZone();
 
       const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
       const darwinSettings = DarwinInitializationSettings(
@@ -59,17 +83,45 @@ class NotificationService {
 
         if (Platform.isAndroid) {
           final androidImpl = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-          // Run permission verification asynchronously so Android system prompts or channel IPC
-          // never block the startup execution flow or postpone runApp()
-          Future.microtask(() async {
+          if (androidImpl != null) {
+            // Explicitly register notification channels with Android NotificationManager
             try {
-              await androidImpl?.requestNotificationsPermission();
-              final canExact = await androidImpl?.canScheduleExactNotifications() ?? false;
-              if (!canExact) {
-                await androidImpl?.requestExactAlarmsPermission();
-              }
-            } catch (_) {}
-          });
+              const alarmChannel = AndroidNotificationChannel(
+                _alarmChannelId,
+                _alarmChannelName,
+                description: _alarmChannelDesc,
+                importance: Importance.max,
+                playSound: true,
+                enableVibration: true,
+                showBadge: true,
+              );
+              const dispatchChannel = AndroidNotificationChannel(
+                _channelId,
+                _channelName,
+                description: _channelDesc,
+                importance: Importance.max,
+                playSound: true,
+                enableVibration: true,
+                showBadge: true,
+              );
+              await androidImpl.createNotificationChannel(alarmChannel);
+              await androidImpl.createNotificationChannel(dispatchChannel);
+            } catch (e) {
+              if (kDebugMode) print('Error creating notification channels: $e');
+            }
+
+            // Run permission verification asynchronously so Android system prompts or channel IPC
+            // never block the startup execution flow or postpone runApp()
+            Future.microtask(() async {
+              try {
+                await androidImpl.requestNotificationsPermission();
+                final canExact = await androidImpl.canScheduleExactNotifications() ?? false;
+                if (!canExact) {
+                  await androidImpl.requestExactAlarmsPermission();
+                }
+              } catch (_) {}
+            });
+          }
         }
       }
 
@@ -514,31 +566,47 @@ class NotificationService {
 
       final tzScheduled = tz.TZDateTime.from(scheduledDate, tz.local);
 
-      AndroidScheduleMode scheduleMode = AndroidScheduleMode.exactAllowWhileIdle;
       if (Platform.isAndroid) {
-        try {
-          final androidImpl = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-          final canExact = await androidImpl?.canScheduleExactNotifications() ?? false;
-          if (!canExact) {
-            scheduleMode = AndroidScheduleMode.inexactAllowWhileIdle;
-          }
-        } catch (_) {}
-      }
+        bool scheduled = false;
 
-      try {
-        await _plugin.zonedSchedule(
-          id,
-          title,
-          body,
-          tzScheduled,
-          details,
-          androidScheduleMode: scheduleMode,
-          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-          payload: payload,
-        );
-      } catch (innerErr) {
-        // Fallback to inexact if exact schedule fails
-        if (scheduleMode != AndroidScheduleMode.inexactAllowWhileIdle) {
+        // 1. Try alarmClock mode (highest priority, wakes phone from deep Doze mode, backed by AlarmManager.setAlarmClock)
+        try {
+          await _plugin.zonedSchedule(
+            id,
+            title,
+            body,
+            tzScheduled,
+            details,
+            androidScheduleMode: AndroidScheduleMode.alarmClock,
+            uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+            payload: payload,
+          );
+          scheduled = true;
+        } catch (clockErr) {
+          if (kDebugMode) print('alarmClock schedule attempt: $clockErr - falling back to exactAllowWhileIdle');
+        }
+
+        // 2. Try exactAllowWhileIdle if alarmClock failed
+        if (!scheduled) {
+          try {
+            await _plugin.zonedSchedule(
+              id,
+              title,
+              body,
+              tzScheduled,
+              details,
+              androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+              uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+              payload: payload,
+            );
+            scheduled = true;
+          } catch (exactErr) {
+            if (kDebugMode) print('exactAllowWhileIdle schedule attempt: $exactErr - falling back to inexactAllowWhileIdle');
+          }
+        }
+
+        // 3. Fallback to inexactAllowWhileIdle if exact modes failed
+        if (!scheduled) {
           await _plugin.zonedSchedule(
             id,
             title,
@@ -549,9 +617,18 @@ class NotificationService {
             uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
             payload: payload,
           );
-        } else {
-          rethrow;
         }
+      } else {
+        await _plugin.zonedSchedule(
+          id,
+          title,
+          body,
+          tzScheduled,
+          details,
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          payload: payload,
+        );
       }
     } catch (e) {
       if (kDebugMode) print('Failed to schedule exact notification: $e');

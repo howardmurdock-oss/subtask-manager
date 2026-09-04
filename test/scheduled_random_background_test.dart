@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:orders_app/models/order_item.dart';
-import 'package:orders_app/models/active_order.dart';
 import 'package:orders_app/models/scheduled_order_rule.dart';
 import 'package:orders_app/services/schedule_service.dart';
 import 'package:orders_app/services/order_engine.dart';
@@ -184,6 +183,57 @@ void main() {
       expect(assigned.id, equals('bg_queued_101'));
       expect(assigned.order.title, equals('Clean Desk'));
       expect(assigned.assignedAt.toIso8601String(), equals(triggerTime.toIso8601String()));
+    });
+
+    test('attachDependencies immediately executes overdue rules on app launch', () async {
+      final engine = OrderEngine();
+      await engine.init();
+      final partnerService = PartnerService();
+      await partnerService.init();
+      final sync = SyncService(engine, partnerService: partnerService);
+      await sync.init();
+
+      final prefs = await SharedPreferences.getInstance();
+      final triggerTime = DateTime.now().subtract(const Duration(hours: 3));
+
+      final overdueRule = ScheduledOrderRule(
+        id: 'rule_overdue_launch',
+        title: 'Morning Task',
+        targetType: ScheduleTargetType.playerSelfDraw,
+        timingMode: ScheduleTimingMode.randomWindow,
+        frequency: RepeatFrequency.daily,
+        nextTriggerTime: triggerTime,
+        windowStartHour: triggerTime.hour,
+        windowStartMinute: 0,
+        windowEndHour: (triggerTime.hour + 1) % 24,
+        windowEndMinute: 0,
+        stagedOrder: OrderItem(
+          id: 'ord_morning_task',
+          title: 'Morning Pushups',
+          description: 'Do 20 pushups',
+          rewardTokens: 10,
+          tier: 1,
+        ),
+      );
+
+      // Save rule into storage as if it was created in a previous session
+      await prefs.setString('saved_scheduled_rules_v1', jsonEncode([overdueRule.toJson()]));
+
+      final schedule = ScheduleService();
+      // Wait for async storage load in constructor
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // Attaching dependencies should trigger checkDueRules() immediately
+      schedule.attachDependencies(
+        orderEngine: engine,
+        syncService: sync,
+        partnerService: partnerService,
+      );
+
+      // Engine should immediately have the active order assigned without waiting for ticker
+      expect(engine.activeOrders.length, equals(1));
+      expect(engine.activeOrders.first.order.title, equals('Morning Pushups'));
+      expect(engine.activeOrders.first.assignedAt, equals(triggerTime));
     });
   });
 }

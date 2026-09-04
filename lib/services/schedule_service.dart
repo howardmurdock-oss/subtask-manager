@@ -65,6 +65,35 @@ class ScheduleService extends ChangeNotifier {
     _orderEngine = orderEngine;
     _syncService = syncService;
     _partnerService = partnerService;
+
+    // Ensure all enabled rules have staged orders drawn and exact alarms armed
+    _ensureRulesStagedAndArmed();
+
+    // Check due rules immediately upon app startup/resume
+    checkDueRules();
+  }
+
+  Future<void> _ensureRulesStagedAndArmed() async {
+    bool needsSave = false;
+    for (int i = 0; i < _rules.length; i++) {
+      final r = _rules[i];
+      if (r.isEnabled) {
+        if (r.stagedOrder == null) {
+          final staged = _drawStagedOrderForRule(r);
+          if (staged != null) {
+            _rules[i] = r.copyWith(stagedOrder: staged);
+            needsSave = true;
+          }
+        }
+        if (r.nextTriggerTime.isAfter(DateTime.now())) {
+          NotificationService.scheduleOrderNotification(_rules[i]);
+        }
+      }
+    }
+    if (needsSave) {
+      await _saveToStorage();
+      notifyListeners();
+    }
   }
 
   Future<void> _initStorage() async {
@@ -336,19 +365,18 @@ class ScheduleService extends ChangeNotifier {
       assignedAt: rule.nextTriggerTime,
     );
 
-    final now = DateTime.now();
-    final wasJustDue = now.difference(rule.nextTriggerTime).inMinutes.abs() <= 5;
-    if (wasJustDue) {
-      NotificationService.showOrderDispatchedNotification(
-        title: orderToDispatch.title,
-        description: orderToDispatch.description.isNotEmpty
-            ? orderToDispatch.description
-            : (targetPartner.isSelf
-                ? 'Automated scheduled directive assigned to yourself.'
-                : 'Automated dispatch sent to ${targetPartner.displayName}'),
-        assignerName: targetPartner.isSelf ? 'Scheduled Directive' : 'Director Dispatch',
-        rewardTokens: orderToDispatch.rewardTokens,
-      );
+    NotificationService.showOrderDispatchedNotification(
+      title: orderToDispatch.title,
+      description: orderToDispatch.description.isNotEmpty
+          ? orderToDispatch.description
+          : (targetPartner.isSelf
+              ? 'Automated scheduled directive assigned to yourself.'
+              : 'Automated dispatch sent to ${targetPartner.displayName}'),
+      assignerName: targetPartner.isSelf ? 'Scheduled Directive' : 'Director Dispatch',
+      rewardTokens: orderToDispatch.rewardTokens,
+    );
+    if (targetPartner.isSelf) {
+      SoundService.playAlertSound();
     }
   }
 
@@ -371,19 +399,15 @@ class ScheduleService extends ChangeNotifier {
       assignedAt: rule.nextTriggerTime,
     );
 
-    final now = DateTime.now();
-    final wasJustDue = now.difference(rule.nextTriggerTime).inMinutes.abs() <= 5;
-    if (wasJustDue) {
-      SoundService.playAlertSound();
-      NotificationService.showOrderDispatchedNotification(
-        title: order.title,
-        description: order.description.isNotEmpty
-            ? order.description
-            : 'Scheduled order drawn and active on your dashboard.',
-        assignerName: 'Scheduled Task',
-        rewardTokens: order.rewardTokens,
-      );
-    }
+    SoundService.playAlertSound();
+    NotificationService.showOrderDispatchedNotification(
+      title: order.title,
+      description: order.description.isNotEmpty
+          ? order.description
+          : 'Scheduled order drawn and active on your dashboard.',
+      assignerName: 'Scheduled Task',
+      rewardTokens: order.rewardTokens,
+    );
 
     _syncService?.broadcastPlayerState();
   }
