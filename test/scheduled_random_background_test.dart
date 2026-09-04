@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:orders_app/models/order_item.dart';
@@ -107,9 +107,9 @@ void main() {
       );
 
       // Scheduled window was 10:45 AM - 12:00 PM today.
-      // Trigger was at 11:15 AM today.
-      final today = DateTime.now();
-      final scheduledTrigger = DateTime(today.year, today.month, today.day, 11, 15);
+      // Scheduled trigger was 2 hours ago (guaranteed past trigger regardless of test execution time)
+      final now = DateTime.now();
+      final scheduledTrigger = now.subtract(const Duration(hours: 2));
 
       final rule = ScheduledOrderRule(
         id: 'rule_core_drill',
@@ -118,9 +118,9 @@ void main() {
         timingMode: ScheduleTimingMode.randomWindow,
         frequency: RepeatFrequency.daily,
         nextTriggerTime: scheduledTrigger,
-        windowStartHour: 10,
-        windowStartMinute: 45,
-        windowEndHour: 12,
+        windowStartHour: scheduledTrigger.hour,
+        windowStartMinute: scheduledTrigger.minute > 5 ? scheduledTrigger.minute - 5 : 0,
+        windowEndHour: (scheduledTrigger.hour + 1) % 24,
         windowEndMinute: 0,
         stagedOrder: staged,
       );

@@ -482,7 +482,7 @@ class PlayerDashboardView extends StatelessWidget {
                         ),
                       );
 
-                      syncService.sendProofForReview(updated);
+                      syncService.sendProofForReview(updated, targetPartner: partner);
                       Navigator.pop(ctx);
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -511,9 +511,9 @@ class PlayerDashboardView extends StatelessWidget {
       final picker = ImagePicker();
       final image = await picker.pickImage(
         source: source,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 85,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 60,
       );
       if (image != null) {
         final bytes = await image.readAsBytes();

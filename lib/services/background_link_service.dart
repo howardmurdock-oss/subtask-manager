@@ -44,6 +44,7 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   String _pairingCode = '';
   String _pairingSecret = '';
   String _customRelayHost = 'ntfy.envs.net';
+  String _role = '';
   Set<String> _processedIds = {};
   List<String> _partnerSecrets = [];
   List<String> _partnerCodes = [];
@@ -171,6 +172,7 @@ class DirectiveSyncTaskHandler extends TaskHandler {
       _pairingSecret = prefs.getString('pairing_secret') ?? '';
       _customRelayHost = prefs.getString('pairing_custom_relay') ?? 'ntfy.envs.net';
       if (_customRelayHost.isEmpty) _customRelayHost = 'ntfy.envs.net';
+      _role = prefs.getString('pairing_role') ?? '';
 
       final savedIdsV2 = prefs.getStringList('processed_sync_message_ids_v2');
       if (savedIdsV2 != null) {
@@ -859,11 +861,17 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           break;
 
         case SyncMessageType.submitProof:
-          final rawOrder = msg.payload['order'];
+          if (_role != 'director') {
+            break;
+          }
+          final rawOrder = msg.payload['activeOrder'] ?? msg.payload['order'];
           final Map<String, dynamic> orderData = (rawOrder is Map)
               ? Map<String, dynamic>.from(rawOrder)
               : <String, dynamic>{};
-          final title = orderData['title'] as String? ?? 'Directive';
+          final innerOrder = (orderData['order'] is Map)
+              ? Map<String, dynamic>.from(orderData['order'] as Map)
+              : orderData;
+          final title = innerOrder['title'] as String? ?? 'Directive';
           final senderName = msg.payload['senderName'] as String? ?? 'Player';
           final isIncomplete = msg.payload['isIncompleteTimer'] as bool? ?? false;
           final secRemaining = (msg.payload['secondsRemaining'] as num?)?.toInt();

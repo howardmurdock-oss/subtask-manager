@@ -139,6 +139,14 @@ class ActiveOrder {
     };
   }
 
+  /// Serializes ActiveOrder for periodic telemetry and state synchronization.
+  /// Omits heavy raw proof images to keep network payloads ultra-lightweight (< 1KB).
+  Map<String, dynamic> toStateJson() {
+    final map = toJson();
+    map['proofImageBase64'] = null;
+    return map;
+  }
+
   factory ActiveOrder.fromJson(Map<String, dynamic> json) {
     final order = OrderItem.fromJson(json['order'] as Map<String, dynamic>);
     return ActiveOrder(
