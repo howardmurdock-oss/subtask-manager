@@ -42,7 +42,8 @@ void main() async {
 
   final syncService = SyncService(orderEngine);
   syncService.attachServices(partnerService, chatService, questService: questService);
-  await syncService.init();
+  final isPinLocked = securityService.isPinRequired && !securityService.isUnlocked;
+  await syncService.init(deferNetwork: isPinLocked);
 
   final scheduleService = ScheduleService();
   scheduleService.attachDependencies(
@@ -51,7 +52,11 @@ void main() async {
     partnerService: partnerService,
   );
 
-  await BackgroundLinkService.init();
+  // Initialize background foreground task service asynchronously after the first frame,
+  // preventing Android IPC platform channel calls from blocking app launch.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    BackgroundLinkService.init();
+  });
 
   runApp(
     MultiProvider(
@@ -78,10 +83,14 @@ class OrdersApp extends StatefulWidget {
 }
 
 class _OrdersAppState extends State<OrdersApp> with WidgetsBindingObserver {
+  bool _wasLocked = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    final security = Provider.of<SecurityService>(context, listen: false);
+    _wasLocked = security.isPinRequired && !security.isUnlocked;
   }
 
   @override
@@ -93,12 +102,19 @@ class _OrdersAppState extends State<OrdersApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      final security = Provider.of<SecurityService>(context, listen: false);
+      final isLocked = security.isPinRequired && !security.isUnlocked;
       final engine = Provider.of<OrderEngine>(context, listen: false);
       engine.onAppResumed();
-      final sync = Provider.of<SyncService>(context, listen: false);
-      sync.onAppResumed();
-      final schedule = Provider.of<ScheduleService>(context, listen: false);
-      schedule.checkDueRules();
+
+      // If user is currently looking at PIN lock screen, do NOT choke the event queue
+      // with network requests and SharedPreferences decodes.
+      if (!isLocked) {
+        final sync = Provider.of<SyncService>(context, listen: false);
+        sync.onAppResumed();
+        final schedule = Provider.of<ScheduleService>(context, listen: false);
+        schedule.checkDueRules();
+      }
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       final engine = Provider.of<OrderEngine>(context, listen: false);
       engine.onAppPaused();
@@ -110,10 +126,27 @@ class _OrdersAppState extends State<OrdersApp> with WidgetsBindingObserver {
     final themeProvider = Provider.of<ThemeProvider>(context);
     final security = Provider.of<SecurityService>(context);
 
+    final isLocked = security.isPinRequired && !security.isUnlocked;
+    if (_wasLocked && !isLocked) {
+      _wasLocked = false;
+      // Post-unlock deferred sync: give the UI 300ms to smoothly complete the
+      // transition from PIN pad to HomeScreen before starting network sync
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          final sync = Provider.of<SyncService>(context, listen: false);
+          sync.startForegroundSync();
+          final schedule = Provider.of<ScheduleService>(context, listen: false);
+          schedule.checkDueRules();
+        }
+      });
+    } else if (isLocked) {
+      _wasLocked = true;
+    }
+
     Widget rootScreen;
     if (security.isPanicModeActive) {
       rootScreen = const PanicDecoyView();
-    } else if (security.isPinRequired && !security.isUnlocked) {
+    } else if (isLocked) {
       rootScreen = const PinLockScreen();
     } else {
       rootScreen = const HomeScreen();

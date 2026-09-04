@@ -44,10 +44,6 @@ class _PinLockScreenState extends State<PinLockScreen> with SingleTickerProvider
   void _onDigit(String digit) {
     if (_pin.length >= 8) return;
 
-    try {
-      HapticFeedback.lightImpact();
-    } catch (_) {}
-
     _errorResetTimer?.cancel();
 
     setState(() {

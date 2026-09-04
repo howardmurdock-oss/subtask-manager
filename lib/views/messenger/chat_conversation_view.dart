@@ -99,9 +99,8 @@ class _ChatConversationViewState extends State<ChatConversationView> {
 
   Future<void> _sendMessage() async {
     final text = _textController.text.trim();
-    if (text.isEmpty && _pendingImageBase64 == null) return;
-
-    setState(() => _isSending = true);
+    final image = _pendingImageBase64;
+    if (text.isEmpty && image == null) return;
 
     final sync = Provider.of<SyncService>(context, listen: false);
     final partnerSvc = Provider.of<PartnerService>(context, listen: false);
@@ -113,35 +112,34 @@ class _ChatConversationViewState extends State<ChatConversationView> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Cannot send messages to a blocked contact.')),
       );
-      setState(() => _isSending = false);
       return;
     }
 
-    final sent = await sync.sendChatMessage(
+    // Optimistic clear: immediately clear input bar and image so user can continue interacting
+    _textController.clear();
+    setState(() {
+      _pendingImageBase64 = null;
+      _isSending = false;
+    });
+
+    // Scroll to bottom immediately
+    Future.delayed(const Duration(milliseconds: 50), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+
+    // Dispatch message over relay in background without blocking UI
+    sync.sendChatMessage(
       currentPartner,
       text,
-      imageBase64: _pendingImageBase64,
-    );
-
-    if (mounted) {
-      _textController.clear();
-      setState(() {
-        _pendingImageBase64 = null;
-        _isSending = false;
-      });
-
-      // Scroll to bottom
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-
-      if (!sent) {
+      imageBase64: image,
+    ).then((sent) {
+      if (!sent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Saved locally. Message will sync once partner is online.'),
@@ -149,7 +147,7 @@ class _ChatConversationViewState extends State<ChatConversationView> {
           ),
         );
       }
-    }
+    }).catchError((_) {});
   }
 
   void _showExpandedImage(String base64Image) {

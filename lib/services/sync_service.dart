@@ -157,7 +157,7 @@ class SyncService extends ChangeNotifier {
     });
   }
 
-  Future<void> init() async {
+  Future<void> init({bool deferNetwork = false}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedAuto = prefs.getBool('pairing_auto_connect') ?? false;
@@ -303,20 +303,30 @@ class SyncService extends ChangeNotifier {
         processPendingBackgroundMessages();
       });
 
-      // Defer network connection and topic synchronization past the initial UI frame (300ms)
-      // so PIN lock screen, navigation, and input controls paint and respond instantly with zero frame drops.
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (_pairingCode.isNotEmpty) {
-          if (_autoConnect && _pairingSecret.isNotEmpty && _role != ConnectionRole.none) {
-            _startReconnectWatchdog();
-            _performAutoConnect();
-          } else {
-            _ensureInboxListener();
-          }
-        }
-      });
+      // Defer network connection and topic synchronization past the initial UI frame (1200ms)
+      // if PIN is not required, so UI renders cleanly with zero dropped frames.
+      // If PIN is required, network connection is deferred until PIN unlock.
+      if (!deferNetwork) {
+        Future.delayed(const Duration(milliseconds: 1200), () {
+          startForegroundSync();
+        });
+      }
     } catch (e) {
       if (kDebugMode) print('Error initializing SyncService: $e');
+    }
+  }
+
+  /// Connects cloud relay / inbox listener and triggers pollMissedMessages cleanly.
+  /// Called once PIN is entered or when unthrottling foreground sync.
+  void startForegroundSync() {
+    if (_pairingCode.isNotEmpty) {
+      if (_autoConnect && _pairingSecret.isNotEmpty && _role != ConnectionRole.none) {
+        _startReconnectWatchdog();
+        _performAutoConnect();
+      } else {
+        _ensureInboxListener();
+      }
+      pollMissedMessages();
     }
   }
 
@@ -1201,7 +1211,8 @@ class SyncService extends ChangeNotifier {
           }
         }
         final combinedTopics = topics.join(',');
-        final wsUrl = 'wss://$_customRelayHost/$combinedTopics/ws?since=24h';
+        final sinceParam = getDynamicSinceParam();
+        final wsUrl = 'wss://$_customRelayHost/$combinedTopics/ws?since=$sinceParam';
 
         await _cloudSubscription?.cancel();
         _cloudSubscription = null;
@@ -1855,48 +1866,47 @@ class SyncService extends ChangeNotifier {
 
       final host = _customRelayHost.isNotEmpty ? _customRelayHost : 'ntfy.envs.net';
       final sinceParam = getDynamicSinceParam();
+      final combinedTopics = topics.join(',');
 
-      for (final topic in topics) {
-        try {
-          final url = Uri.parse('https://$host/$topic/json?poll=1&since=$sinceParam');
-          final req = await _httpClient.getUrl(url).timeout(const Duration(seconds: 6));
-          final res = await req.close().timeout(const Duration(seconds: 6));
-          if (res.statusCode == 200) {
-            final lines = await res.transform(utf8.decoder).transform(const LineSplitter()).toList();
-            for (final line in lines) {
-              if (line.trim().isEmpty) continue;
-              try {
-                final parsed = jsonDecode(line);
-                if (parsed is Map && parsed['event'] == 'message') {
-                  final ntfyId = parsed['id'] as String?;
-                  if (ntfyId != null && ntfyId.isNotEmpty) {
-                    if (_processedNtfyIds.contains(ntfyId)) continue;
-                    _processedNtfyIds.add(ntfyId);
-                    if (_processedNtfyIds.length > 500) {
-                      _processedNtfyIds.remove(_processedNtfyIds.first);
-                    }
-                  }
-                  updateLastSyncTimestamp();
-
-                  if (parsed['attachment'] is Map && parsed['attachment']['url'] != null) {
-                    final fileUrl = parsed['attachment']['url'] as String;
-                    final aReq = await _httpClient.getUrl(Uri.parse(fileUrl));
-                    final aRes = await aReq.close();
-                    final raw = await utf8.decodeStream(aRes);
-                    _processIncomingRaw(raw);
-                    continue;
-                  }
-                  final raw = parsed['message'] as String?;
-                  if (raw != null) {
-                    _processIncomingRaw(raw);
+      try {
+        final url = Uri.parse('https://$host/$combinedTopics/json?poll=1&since=$sinceParam');
+        final req = await _httpClient.getUrl(url).timeout(const Duration(seconds: 8));
+        final res = await req.close().timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200) {
+          final lines = await res.transform(utf8.decoder).transform(const LineSplitter()).toList();
+          for (final line in lines) {
+            if (line.trim().isEmpty) continue;
+            try {
+              final parsed = jsonDecode(line);
+              if (parsed is Map && parsed['event'] == 'message') {
+                final ntfyId = parsed['id'] as String?;
+                if (ntfyId != null && ntfyId.isNotEmpty) {
+                  if (_processedNtfyIds.contains(ntfyId)) continue;
+                  _processedNtfyIds.add(ntfyId);
+                  if (_processedNtfyIds.length > 500) {
+                    _processedNtfyIds.remove(_processedNtfyIds.first);
                   }
                 }
-              } catch (_) {}
-            }
+                updateLastSyncTimestamp();
+
+                if (parsed['attachment'] is Map && parsed['attachment']['url'] != null) {
+                  final fileUrl = parsed['attachment']['url'] as String;
+                  final aReq = await _httpClient.getUrl(Uri.parse(fileUrl));
+                  final aRes = await aReq.close();
+                  final raw = await utf8.decodeStream(aRes);
+                  _processIncomingRaw(raw);
+                  continue;
+                }
+                final raw = parsed['message'] as String?;
+                if (raw != null) {
+                  _processIncomingRaw(raw);
+                }
+              }
+            } catch (_) {}
           }
-        } catch (e) {
-          if (kDebugMode) print('Error polling missed messages on $host for topic $topic: $e');
         }
+      } catch (e) {
+        if (kDebugMode) print('Error polling missed messages on $host for topics $combinedTopics: $e');
       }
     } finally {
       _isPolling = false;
@@ -3349,8 +3359,8 @@ class SyncService extends ChangeNotifier {
 
     bool dispatched = false;
 
-    // 1. Direct to selected partner contact
-    if (targetPartner != null && targetPartner.pairingCode.isNotEmpty) {
+    // 1. Direct to selected partner contact if explicitly targeted
+    if (targetPartner != null && !targetPartner.isSelf && targetPartner.pairingCode.isNotEmpty) {
       sendDirectToTopic(
         targetPartner.pairingCode,
         targetPartner.pairingSecret,
@@ -3358,43 +3368,43 @@ class SyncService extends ChangeNotifier {
         relayHost: targetPartner.customRelayHost.isNotEmpty ? targetPartner.customRelayHost : _customRelayHost,
       );
       dispatched = true;
-    }
-
-    // 2. Direct to active partner contact
-    final active = _partnerService?.activePartner;
-    if (active != null && active.id != targetPartner?.id && active.pairingCode.isNotEmpty) {
-      sendDirectToTopic(
-        active.pairingCode,
-        active.pairingSecret,
-        msg,
-        relayHost: active.customRelayHost.isNotEmpty ? active.customRelayHost : _customRelayHost,
-      );
-      dispatched = true;
-    }
-
-    // 3. Direct to all submissive contacts
-    final submissives = _partnerService?.unblockedContacts.where((c) => c.role == PartnerRole.submissive).toList() ?? [];
-    for (final p in submissives) {
-      if (p.id != targetPartner?.id && p.id != active?.id && p.pairingCode.isNotEmpty) {
+    } else {
+      // 2. Direct to active partner contact
+      final active = _partnerService?.activePartner;
+      if (active != null && active.pairingCode.isNotEmpty) {
         sendDirectToTopic(
-          p.pairingCode,
-          p.pairingSecret,
+          active.pairingCode,
+          active.pairingSecret,
           msg,
-          relayHost: p.customRelayHost.isNotEmpty ? p.customRelayHost : _customRelayHost,
+          relayHost: active.customRelayHost.isNotEmpty ? active.customRelayHost : _customRelayHost,
         );
         dispatched = true;
       }
-    }
 
-    // 4. Send to shared personal pairing code (PairingView pairing channel)
-    if (_pairingCode.isNotEmpty) {
-      sendDirectToTopic(
-        _pairingCode,
-        _pairingSecret,
-        msg,
-        relayHost: _customRelayHost,
-      );
-      dispatched = true;
+      // 3. Direct to all submissive contacts if no specific partner
+      final submissives = _partnerService?.unblockedContacts.where((c) => c.role == PartnerRole.submissive).toList() ?? [];
+      for (final p in submissives) {
+        if (p.id != active?.id && p.pairingCode.isNotEmpty) {
+          sendDirectToTopic(
+            p.pairingCode,
+            p.pairingSecret,
+            msg,
+            relayHost: p.customRelayHost.isNotEmpty ? p.customRelayHost : _customRelayHost,
+          );
+          dispatched = true;
+        }
+      }
+
+      // 4. Send to shared personal pairing code if no contacts exist
+      if (!dispatched && _pairingCode.isNotEmpty) {
+        sendDirectToTopic(
+          _pairingCode,
+          _pairingSecret,
+          msg,
+          relayHost: _customRelayHost,
+        );
+        dispatched = true;
+      }
     }
 
     // 5. Send via active local socket if available

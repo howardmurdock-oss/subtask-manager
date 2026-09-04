@@ -1023,16 +1023,12 @@ class BackgroundLinkService {
   static Future<bool> startService() async {
     if (!Platform.isAndroid) return false;
     try {
+      // If service is already active in background, do not stop or sleep! Keep it running.
       if (await FlutterForegroundTask.isRunningService) {
-        await FlutterForegroundTask.stopService();
-        await Future.delayed(const Duration(milliseconds: 400));
+        return true;
       }
 
       await FlutterForegroundTask.requestNotificationPermission();
-
-      if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
-        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
-      }
 
       final result = await FlutterForegroundTask.startService(
         serviceId: 256,
@@ -1044,6 +1040,15 @@ class BackgroundLinkService {
         notificationText: 'Listening for incoming directives & sync messages',
         callback: startBackgroundSyncCallback,
       );
+
+      // Check battery optimization asynchronously in background without blocking startup
+      Future.delayed(const Duration(seconds: 3), () async {
+        try {
+          if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+            await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+          }
+        } catch (_) {}
+      });
 
       return result is ServiceRequestSuccess;
     } catch (e) {
