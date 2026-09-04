@@ -369,6 +369,12 @@ class SyncService extends ChangeNotifier {
               _processedMessageIds.add(messageId);
             }
 
+            final isScheduled = data['isScheduled'] == true ||
+                senderName == 'Scheduled Task' ||
+                senderId == '__self__' ||
+                senderName == 'Myself (Director)' ||
+                data['assignedByDirector'] == false;
+
             final isAlreadyHandled = isDirectiveHandled(
               activeOrderId: activeOrderId,
               orderId: order.id,
@@ -376,9 +382,13 @@ class SyncService extends ChangeNotifier {
               title: order.title,
             );
 
-            final existingOrder = _engine.activeOrders.cast<ActiveOrder?>().firstWhere(
+            final existingLiveOrder = _engine.activeOrders.cast<ActiveOrder?>().firstWhere(
               (o) {
                 if (o == null) return false;
+                final isLive = o.status == OrderStatus.active ||
+                    o.status == OrderStatus.pending ||
+                    o.status == OrderStatus.underReview;
+                if (!isLive) return false;
                 if (activeOrderId != null && activeOrderId.isNotEmpty && o.id == activeOrderId) return true;
                 if (order.id.isNotEmpty && (o.id == order.id || o.order.id == order.id)) return true;
                 final isMatchingTitle = o.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
@@ -396,7 +406,12 @@ class SyncService extends ChangeNotifier {
             if (data['assignedAt'] is String) {
               parsedAssignedAt = DateTime.tryParse(data['assignedAt'] as String);
             }
-            if (existingOrder == null && !isAlreadyHandled && !alreadyInHistory) {
+
+            final shouldMount = isScheduled
+                ? (existingLiveOrder == null)
+                : (existingLiveOrder == null && !isAlreadyHandled && !alreadyInHistory);
+
+            if (shouldMount) {
               final assigned = _engine.assignOrder(
                 order,
                 id: activeOrderId,
@@ -415,7 +430,7 @@ class SyncService extends ChangeNotifier {
               _incomingOrderController.add(assigned);
             } else {
               markDirectiveHandled(
-                activeOrderId: existingOrder?.id ?? activeOrderId,
+                activeOrderId: existingLiveOrder?.id ?? activeOrderId,
                 orderId: order.id,
                 msgId: messageId,
                 title: order.title,

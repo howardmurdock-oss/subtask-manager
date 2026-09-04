@@ -46,6 +46,7 @@ void main() async {
   await syncService.init(deferNetwork: isPinLocked);
 
   final scheduleService = ScheduleService();
+  await scheduleService.init();
   scheduleService.attachDependencies(
     orderEngine: orderEngine,
     syncService: syncService,

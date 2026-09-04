@@ -51,10 +51,33 @@ class ScheduleService extends ChangeNotifier {
   PartnerService? _partnerService;
 
   Timer? _tickerTimer;
+  StreamSubscription? _notificationClickSub;
+  bool _isDisposed = false;
+  bool get isDisposed => _isDisposed;
 
   ScheduleService() {
     _initStorage();
     _startTicker();
+    _listenToNotifications();
+  }
+
+  Future<void> init() async {
+    await _initStorage();
+  }
+
+  @override
+  void notifyListeners() {
+    if (_isDisposed) return;
+    super.notifyListeners();
+  }
+
+  void _listenToNotifications() {
+    _notificationClickSub?.cancel();
+    _notificationClickSub = NotificationService.onNotificationClicked.listen((payload) {
+      if (payload.startsWith('rule:')) {
+        checkDueRules();
+      }
+    });
   }
 
   void attachDependencies({
@@ -99,6 +122,7 @@ class ScheduleService extends ChangeNotifier {
   Future<void> _initStorage() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (_isDisposed) return;
 
       // Check Patreon unlock status (unified with quest unlock)
       final unlockedVersion = prefs.getString('quests_unlocked_build_version');
@@ -132,7 +156,11 @@ class ScheduleService extends ChangeNotifier {
           await _saveToStorage();
         }
       }
+      if (_isDisposed) return;
       notifyListeners();
+      if (_orderEngine != null) {
+        checkDueRules();
+      }
     } catch (e) {
       if (kDebugMode) print('Error loading ScheduleService storage: $e');
     }
@@ -152,13 +180,16 @@ class ScheduleService extends ChangeNotifier {
   void _startTicker() {
     _tickerTimer?.cancel();
     _tickerTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (_isDisposed) return;
       checkDueRules();
     });
   }
 
   @override
   void dispose() {
+    _isDisposed = true;
     _tickerTimer?.cancel();
+    _notificationClickSub?.cancel();
     super.dispose();
   }
 

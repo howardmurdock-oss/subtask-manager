@@ -477,7 +477,7 @@ class OrderEngine extends ChangeNotifier {
       }
     }
 
-    // 2. Also check if an identical directive is currently active, pending, under review, or completed
+    // 2. Also check if an identical directive is currently active, pending, or under review
     for (final existing in _activeOrders) {
       final matchesOrder = (order.id.isNotEmpty && (existing.id == order.id || existing.order.id == order.id)) ||
           existing.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
@@ -487,11 +487,18 @@ class OrderEngine extends ChangeNotifier {
       if (matchesOrder && isLive) {
         return existing;
       }
-      if (matchesOrder && existing.status == OrderStatus.completed) {
-        // Directive was already completed — prevent duplicate reassignment loop
+      if (id != null && id.isNotEmpty && existing.id == id && existing.status == OrderStatus.completed) {
+        // This exact active order ID was already completed — prevent duplicate reassignment loop
         return existing;
       }
     }
+
+    // Remove any previously completed instance with matching title/id from active orders list
+    // so the new active order replaces it cleanly on the dashboard
+    _activeOrders.removeWhere((o) =>
+        o.status == OrderStatus.completed &&
+        ((order.id.isNotEmpty && (o.id == order.id || o.order.id == order.id)) ||
+         o.order.title.trim().toLowerCase() == order.title.trim().toLowerCase()));
 
     // Intercept and sanitize any placeholder tasks created by stale background handlers
     final isPlaceholder = order.title.startsWith('Surprise Window') ||

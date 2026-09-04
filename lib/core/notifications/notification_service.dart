@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -10,6 +11,8 @@ import '../../models/scheduled_order_rule.dart';
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
+  static final StreamController<String> _notificationClickController = StreamController<String>.broadcast();
+  static Stream<String> get onNotificationClicked => _notificationClickController.stream;
 
   static const String _channelId = 'orders_dispatch_channel_v3';
   static const String _channelName = 'Directives & Orders Alert';
@@ -78,6 +81,9 @@ class NotificationService {
           initSettings,
           onDidReceiveNotificationResponse: (details) {
             if (kDebugMode) print('Notification clicked: ${details.payload}');
+            if (details.payload != null && details.payload!.isNotEmpty) {
+              _notificationClickController.add(details.payload!);
+            }
           },
         );
 

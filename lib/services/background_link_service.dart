@@ -11,6 +11,7 @@ import '../core/security/encryption_helper.dart';
 import '../core/notifications/notification_service.dart';
 import '../models/sync_message.dart';
 import '../models/order_item.dart';
+import '../models/active_order.dart';
 import '../models/order_pack.dart';
 import '../models/scheduled_order_rule.dart';
 import 'storage_service.dart';
@@ -649,47 +650,80 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     final finalOrder = rule.stagedOrder ?? rule.specificOrder ?? _drawBackgroundCandidateOrder(rule, prefs);
     if (finalOrder == null) return;
 
-    if (rule.targetType == ScheduleTargetType.playerSelfDraw) {
-      // Queue order for main app OrderEngine with scheduled window arrival timestamp
+    final activeOrderId = 'sched_${DateTime.now().millisecondsSinceEpoch}';
+    final isDirector = rule.targetType == ScheduleTargetType.directorDispatch;
+
+    if (rule.targetType == ScheduleTargetType.playerSelfDraw ||
+        (isDirector && (rule.targetPartnerId == '__self__' || rule.targetPartnerName == 'Myself (This Device)'))) {
+      final senderName = isDirector ? 'Myself (Director)' : 'Scheduled Task';
       final payload = {
         'type': 'dispatchOrder',
+        'isScheduled': true,
+        'activeOrderId': activeOrderId,
         'order': finalOrder.toJson(),
-        'senderName': 'Scheduled Task',
+        'senderName': senderName,
         'senderId': '__self__',
         'senderCode': '',
-        'assignedByDirector': false,
+        'assignedByDirector': isDirector,
         'assignedAt': rule.nextTriggerTime.toIso8601String(),
       };
       _queuePendingOrder(payload);
+
+      // Directly persist into storage_active_orders so OrderEngine loads it immediately on launch
+      try {
+        DateTime? expires;
+        if ((finalOrder.durationType == DurationType.deadlineCountdown || finalOrder.durationType == DurationType.actionWithDeadline) &&
+            finalOrder.durationMinutes > 0) {
+          expires = DateTime.now().add(Duration(minutes: finalOrder.durationMinutes));
+        } else if (finalOrder.durationType == DurationType.dailyWindow) {
+          final now = DateTime.now();
+          expires = DateTime(now.year, now.month, now.day, 23, 59, 59);
+        }
+
+        final newActiveOrder = ActiveOrder(
+          id: activeOrderId,
+          order: finalOrder,
+          assignedAt: rule.nextTriggerTime,
+          expiresAt: expires,
+          status: OrderStatus.active,
+          assignedByDirector: isDirector,
+          assignedByPartnerCode: '',
+          assignedByPartnerId: '__self__',
+          assignedByPartnerName: senderName,
+          actionSecondsRemaining: finalOrder.actionDurationSeconds,
+        );
+
+        final rawActive = prefs.getString('storage_active_orders');
+        List<dynamic> activeList = [];
+        if (rawActive != null && rawActive.isNotEmpty) {
+          try {
+            activeList = jsonDecode(rawActive) as List<dynamic>;
+          } catch (_) {}
+        }
+        activeList.removeWhere((item) {
+          if (item is Map) {
+            final status = item['status'];
+            final o = item['order'] as Map?;
+            final title = o?['title'] as String?;
+            final oid = o?['id'] as String?;
+            if (status == 'completed' && (oid == finalOrder.id || title?.trim().toLowerCase() == finalOrder.title.trim().toLowerCase())) {
+              return true;
+            }
+          }
+          return false;
+        });
+        activeList.insert(0, newActiveOrder.toJson());
+        await prefs.setString('storage_active_orders', jsonEncode(activeList));
+      } catch (_) {}
 
       // High priority alert with sound, vibration, and banner
       NotificationService.showOrderDispatchedNotification(
         title: finalOrder.title,
         description: finalOrder.description,
-        assignerName: 'Scheduled Task',
+        assignerName: senderName,
         rewardTokens: finalOrder.rewardTokens,
       );
-    } else if (rule.targetType == ScheduleTargetType.directorDispatch) {
-      final isSelf = rule.targetPartnerId == '__self__' || rule.targetPartnerName == 'Myself (This Device)';
-      if (isSelf) {
-        final payload = {
-          'type': 'dispatchOrder',
-          'order': finalOrder.toJson(),
-          'senderName': 'Myself (Director)',
-          'senderId': '__self__',
-          'senderCode': '',
-          'assignedByDirector': true,
-          'assignedAt': rule.nextTriggerTime.toIso8601String(),
-        };
-        _queuePendingOrder(payload);
-
-        NotificationService.showOrderDispatchedNotification(
-          title: finalOrder.title,
-          description: finalOrder.description,
-          assignerName: 'Director Schedule (Self)',
-          rewardTokens: finalOrder.rewardTokens,
-        );
-      } else if (rule.targetPartnerCode != null && rule.targetPartnerCode!.isNotEmpty) {
+    } else if (rule.targetPartnerCode != null && rule.targetPartnerCode!.isNotEmpty) {
         // Dispatch over HTTP relay to submissive partner
         try {
           final targetTopic = _hashTopic(rule.targetPartnerCode!);
@@ -729,7 +763,6 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           if (kDebugMode) print('Background dispatch error: $e');
         }
       }
-    }
   }
 
   void _handleBackgroundMessage(SyncMessage msg) {

@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:orders_app/models/order_item.dart';
+import 'package:orders_app/models/active_order.dart';
+import 'package:orders_app/models/user_stats.dart';
 import 'package:orders_app/models/scheduled_order_rule.dart';
 import 'package:orders_app/services/schedule_service.dart';
 import 'package:orders_app/services/order_engine.dart';
@@ -234,6 +236,84 @@ void main() {
       expect(engine.activeOrders.length, equals(1));
       expect(engine.activeOrders.first.order.title, equals('Morning Pushups'));
       expect(engine.activeOrders.first.assignedAt, equals(triggerTime));
+    });
+
+    test('Scheduled task is successfully assigned even if the order was previously completed in history', () async {
+      final engine = OrderEngine();
+      await engine.init();
+
+      // Pre-populate completed directive in history
+      engine.stats.history.add(DisciplineLogEntry(
+        id: 'rec_completed_past',
+        orderTitle: 'Daily Pushups',
+        category: 'Fitness',
+        tier: 1,
+        tokenDelta: 10,
+        isSuccess: true,
+        reason: 'Completed yesterday',
+        timestamp: DateTime.now().subtract(const Duration(days: 1)),
+      ));
+
+      final partnerService = PartnerService();
+      await partnerService.init();
+      final sync = SyncService(engine, partnerService: partnerService);
+      await sync.init();
+
+      final prefs = await SharedPreferences.getInstance();
+      final triggerTime = DateTime.now().subtract(const Duration(minutes: 10));
+
+      final queuedOrder = {
+        'type': 'dispatchOrder',
+        'isScheduled': true,
+        'activeOrderId': 'sched_bg_pushups_today',
+        'order': {
+          'id': 'ord_pushups_template',
+          'title': 'Daily Pushups',
+          'description': 'Do 25 pushups',
+          'tier': 1,
+          'rewardTokens': 15,
+        },
+        'senderName': 'Scheduled Task',
+        'senderId': '__self__',
+        'senderCode': '',
+        'assignedByDirector': false,
+        'assignedAt': triggerTime.toIso8601String(),
+      };
+
+      await prefs.setStringList('pending_background_orders_v1', [jsonEncode(queuedOrder)]);
+
+      // Draining pending background orders must mount the new active order and NOT drop it
+      await sync.processPendingBackgroundMessages();
+
+      expect(engine.activeOrders.length, equals(1));
+      expect(engine.activeOrders.first.order.title, equals('Daily Pushups'));
+      expect(engine.activeOrders.first.id, equals('sched_bg_pushups_today'));
+      expect(engine.activeOrders.first.status, equals(OrderStatus.active));
+    });
+
+    test('OrderEngine assignOrder assigns fresh active order when previous instance was completed', () async {
+      final engine = OrderEngine();
+      await engine.init();
+
+      final orderItem = OrderItem(
+        id: 'ord_water_500ml',
+        title: 'Drink Water',
+        description: 'Drink 500ml of water',
+        rewardTokens: 5,
+        tier: 1,
+      );
+
+      // 1. Assign and complete morning instance
+      final firstActive = engine.assignOrder(orderItem);
+      expect(engine.activeOrders.length, equals(1));
+      engine.completeOrder(firstActive.id);
+      expect(engine.activeOrders.first.status, equals(OrderStatus.completed));
+
+      // 2. Afternoon scheduled trigger assigns same task
+      final secondActive = engine.assignOrder(orderItem);
+      expect(secondActive.status, equals(OrderStatus.active));
+      expect(engine.activeOrders.length, equals(1));
+      expect(engine.activeOrders.first.status, equals(OrderStatus.active));
     });
   });
 }
