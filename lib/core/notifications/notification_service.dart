@@ -36,6 +36,17 @@ class NotificationService {
   static const String diagLastErrorKey = 'alarm_diag_last_error_v1';
   static const String diagCanExactKey = 'alarm_diag_can_exact_v1';
 
+  /// Whether [e] is the plugin's own persistence failing rather than the OS
+  /// refusing the alarm.
+  ///
+  /// flutter_local_notifications registers the alarm with AlarmManager and only
+  /// then writes its scheduled-notification cache, so this exception arrives
+  /// *after* the alarm is live. Retrying in a weaker mode would replace a real
+  /// exact alarm with an inexact one that Doze can defer for hours — turning a
+  /// harmless bookkeeping error into a missed notification.
+  static bool _isCacheWriteFailure(Object e) =>
+      e.toString().contains('Missing type parameter');
+
   static Future<void> _recordArmResult(String result, {String? error}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -65,6 +76,7 @@ class NotificationService {
       'nextArmed': 'None',
       'lastResult': 'Never',
       'lastError': '',
+      'pendingError': '',
       'canScheduleExact': 'unknown',
     };
     try {
@@ -78,11 +90,19 @@ class NotificationService {
       out['canScheduleExact'] = prefs.getString(diagCanExactKey) ?? 'unknown';
 
       if (!kIsWeb && !Platform.isWindows) {
-        final pending = await _plugin.pendingNotificationRequests();
-        out['pending'] = pending.length.toString();
+        // Reading pending requests goes through the same store that R8 can
+        // break, so a failure here says nothing about whether alarms are armed.
+        // Report it separately instead of overwriting the real arming result.
+        try {
+          final pending = await _plugin.pendingNotificationRequests();
+          out['pending'] = pending.length.toString();
+        } catch (e) {
+          out['pending'] = 'unavailable';
+          out['pendingError'] = e.toString().split('\n').first;
+        }
       }
     } catch (e) {
-      out['lastError'] = 'diagnostics read failed: $e';
+      out['pendingError'] = 'diagnostics read failed: $e';
     }
     return out;
   }
@@ -713,8 +733,16 @@ class NotificationService {
           scheduled = true;
           await _recordArmResult('armed via alarmClock');
         } catch (clockErr) {
-          lastError = 'alarmClock: $clockErr';
-          if (kDebugMode) print('alarmClock schedule attempt: $clockErr - falling back to exactAllowWhileIdle');
+          if (_isCacheWriteFailure(clockErr)) {
+            // The alarm is already registered; only the cache write failed.
+            scheduled = true;
+            await _recordArmResult(
+                'armed via alarmClock (plugin cache write failed)',
+                error: clockErr.toString());
+          } else {
+            lastError = 'alarmClock: $clockErr';
+            if (kDebugMode) print('alarmClock schedule attempt: $clockErr - falling back to exactAllowWhileIdle');
+          }
         }
 
         // 2. Try exactAllowWhileIdle if alarmClock failed
@@ -734,8 +762,15 @@ class NotificationService {
             await _recordArmResult('armed via exactAllowWhileIdle',
                 error: lastError);
           } catch (exactErr) {
-            lastError = '$lastError; exactAllowWhileIdle: $exactErr';
-            if (kDebugMode) print('exactAllowWhileIdle schedule attempt: $exactErr - falling back to inexactAllowWhileIdle');
+            if (_isCacheWriteFailure(exactErr)) {
+              scheduled = true;
+              await _recordArmResult(
+                  'armed via exactAllowWhileIdle (plugin cache write failed)',
+                  error: exactErr.toString());
+            } else {
+              lastError = '$lastError; exactAllowWhileIdle: $exactErr';
+              if (kDebugMode) print('exactAllowWhileIdle schedule attempt: $exactErr - falling back to inexactAllowWhileIdle');
+            }
           }
         }
 

@@ -733,14 +733,16 @@ class _SettingsViewState extends State<SettingsView> {
                                     }
                                     final a = asnap.data!;
                                     final armed = int.tryParse(a['armed'] ?? '0') ?? 0;
-                                    final pending = int.tryParse(a['pending'] ?? '0') ?? 0;
+                                    final pendingRaw = a['pending'] ?? '0';
+                                    final pending = int.tryParse(pendingRaw);
+                                    final pendingError = a['pendingError'] ?? '';
                                     final canExact = a['canScheduleExact'] ?? 'unknown';
                                     final lastResult = a['lastResult'] ?? 'Never';
                                     final armError = a['lastError'] ?? '';
 
-                                    // The app asked for alarms and the OS is
-                                    // holding none: the request is being
-                                    // rejected rather than never made.
+                                    // Only a genuine zero counts as a mismatch:
+                                    // an unreadable store tells us nothing about
+                                    // what the OS actually holds.
                                     final mismatch = armed > 0 && pending == 0;
 
                                     return Column(
@@ -763,12 +765,21 @@ class _SettingsViewState extends State<SettingsView> {
                                               fontFamily: 'monospace',
                                               color: canExact == 'false' ? Colors.red : null,
                                             )),
-                                        Text('Armed by app: $armed   Held by OS: $pending',
+                                        Text('Armed by app: $armed   Held by OS: $pendingRaw',
                                             style: TextStyle(
                                               fontSize: 12,
                                               fontFamily: 'monospace',
                                               color: mismatch ? Colors.red : null,
                                             )),
+                                        if (pendingError.isNotEmpty)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 4),
+                                            child: Text(
+                                              'Alarm store unreadable: $pendingError',
+                                              style: const TextStyle(
+                                                  fontSize: 11, fontFamily: 'monospace', color: Colors.orange),
+                                            ),
+                                          ),
                                         Text('Next armed: ${a['nextArmed'] ?? 'None'}',
                                             style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
                                         Text('Last arm attempt: $lastResult',
@@ -792,9 +803,9 @@ class _SettingsViewState extends State<SettingsView> {
                                           const Padding(
                                             padding: EdgeInsets.only(top: 4),
                                             child: Text(
-                                              'The system is not holding these alarms. Check Android '
-                                              'Settings > Apps > (sub)Task Manager > Alarms & reminders, '
-                                              'and that battery optimisation is disabled.',
+                                              'The system is not holding these alarms. If this device shows '
+                                              'an "Alarms & reminders" entry under its app settings, make sure it '
+                                              'is allowed, and turn off battery optimisation for this app.',
                                               style: TextStyle(
                                                   fontSize: 11, fontFamily: 'monospace', color: Colors.red),
                                             ),
