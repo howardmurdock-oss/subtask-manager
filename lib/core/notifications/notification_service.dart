@@ -31,6 +31,74 @@ class NotificationService {
   // kDebugMode is false, so those failures used to vanish entirely: no
   // notification fired and nothing recorded why. These keys let the in-app
   // diagnostics panel report what was actually armed and what the OS said.
+  /// Occurrences a pre-armed OS alarm will announce on its own.
+  ///
+  /// The alarm fires at the trigger time whether or not any Dart is running.
+  /// When the service *is* running it also executes the rule and posts its own
+  /// "new directive" notification, so the same occurrence got announced twice
+  /// for a single task. Recording what the alarm covers lets the executor mount
+  /// the order silently instead.
+  static const String announcedKey = 'announced_occurrence_keys_v1';
+  static const int _maxAnnouncedKeys = 200;
+
+  /// Whether this platform can pre-arm OS alarms. Windows and web cannot, and
+  /// must keep notifying at execution time or they would go silent entirely.
+  static bool get supportsScheduledAlarms => !kIsWeb && !Platform.isWindows;
+
+  /// Identity for one firing of a rule, truncated to the minute so a trigger
+  /// time that has round-tripped through JSON still matches.
+  ///
+  /// Mirrors `ScheduleCoordinator.occurrenceKey`, duplicated deliberately so
+  /// this core service does not depend on the services layer.
+  static String announceKey(String ruleId, DateTime triggerTime) {
+    final t = triggerTime.toUtc();
+    final stamp = '${t.year.toString().padLeft(4, '0')}'
+        '${t.month.toString().padLeft(2, '0')}'
+        '${t.day.toString().padLeft(2, '0')}'
+        'T${t.hour.toString().padLeft(2, '0')}'
+        '${t.minute.toString().padLeft(2, '0')}';
+    return '$ruleId@$stamp';
+  }
+
+  static Future<void> _recordAnnounced(Iterable<String> keys) async {
+    if (keys.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final list = List<String>.from(prefs.getStringList(announcedKey) ?? const <String>[]);
+      var changed = false;
+      for (final k in keys) {
+        if (!list.contains(k)) {
+          list.add(k);
+          changed = true;
+        }
+      }
+      if (!changed) return;
+      if (list.length > _maxAnnouncedKeys) {
+        list.removeRange(0, list.length - _maxAnnouncedKeys);
+      }
+      await prefs.setStringList(announcedKey, list);
+    } catch (_) {}
+  }
+
+  /// Whether a pre-armed alarm is covering this occurrence, so the executor
+  /// should not announce it a second time.
+  ///
+  /// Deliberately a pure data question with no platform check: keys are only
+  /// ever recorded where alarms actually arm, so a platform that cannot arm
+  /// them has an empty set and keeps announcing at execution time by itself.
+  static Future<bool> wasOccurrenceAnnounced(String ruleId, DateTime triggerTime) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final list = prefs.getStringList(announcedKey) ?? const <String>[];
+      return list.contains(announceKey(ruleId, triggerTime));
+    } catch (_) {
+      // Fail open: a duplicate notification beats a silent one.
+      return false;
+    }
+  }
+
   static const String diagArmedKey = 'alarm_diag_armed_v1';
   static const String diagLastResultKey = 'alarm_diag_last_result_v1';
   static const String diagLastErrorKey = 'alarm_diag_last_error_v1';
@@ -634,6 +702,11 @@ class NotificationService {
         scheduledDate: triggers[slot],
         payload: 'rule:${rule.id}',
       );
+    }
+
+    if (supportsScheduledAlarms) {
+      await _recordAnnounced(
+          [for (final t in triggers) announceKey(rule.id, t)]);
     }
 
     // Drop slots left armed by a previous, longer run — a rule switched to

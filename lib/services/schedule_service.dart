@@ -14,7 +14,7 @@ import 'sync_service.dart';
 import 'partner_service.dart';
 
 class ScheduleService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.1.4';
+  static const String appCurrentBuildVersion = '1.1.5';
 
   // Valid Patreon Unlock Code hashes
   static final Set<String> _validCodeHashes = {
@@ -544,18 +544,26 @@ class ScheduleService extends ChangeNotifier {
       assignedAt: rule.nextTriggerTime,
     );
 
-    NotificationService.showOrderDispatchedNotification(
-      title: orderToDispatch.title,
-      description: orderToDispatch.description.isNotEmpty
-          ? orderToDispatch.description
-          : (targetPartner.isSelf
-              ? 'Automated scheduled directive assigned to yourself.'
-              : 'Automated dispatch sent to ${targetPartner.displayName}'),
-      assignerName: targetPartner.isSelf ? 'Scheduled Directive' : 'Director Dispatch',
-      rewardTokens: orderToDispatch.rewardTokens,
-    );
-    if (targetPartner.isSelf) {
-      SoundService.playAlertSound();
+    // The pre-armed OS alarm announces this occurrence at its trigger time on
+    // its own. Announcing again here is what produced two notifications for a
+    // single scheduled task whenever the service was awake to run the rule.
+    final alreadyAnnounced = await NotificationService.wasOccurrenceAnnounced(
+        rule.id, rule.nextTriggerTime);
+
+    if (!alreadyAnnounced) {
+      NotificationService.showOrderDispatchedNotification(
+        title: orderToDispatch.title,
+        description: orderToDispatch.description.isNotEmpty
+            ? orderToDispatch.description
+            : (targetPartner.isSelf
+                ? 'Automated scheduled directive assigned to yourself.'
+                : 'Automated dispatch sent to ${targetPartner.displayName}'),
+        assignerName: targetPartner.isSelf ? 'Scheduled Directive' : 'Director Dispatch',
+        rewardTokens: orderToDispatch.rewardTokens,
+      );
+      if (targetPartner.isSelf) {
+        SoundService.playAlertSound();
+      }
     }
   }
 
@@ -582,15 +590,22 @@ class ScheduleService extends ChangeNotifier {
       assignedAt: rule.nextTriggerTime,
     );
 
-    SoundService.playAlertSound();
-    NotificationService.showOrderDispatchedNotification(
-      title: order.title,
-      description: order.description.isNotEmpty
-          ? order.description
-          : 'Scheduled order drawn and active on your dashboard.',
-      assignerName: 'Scheduled Task',
-      rewardTokens: order.rewardTokens,
-    );
+    // Checked after assignOrder so the order is still mounted synchronously —
+    // startup catch-up depends on that.
+    final alreadyAnnounced = await NotificationService.wasOccurrenceAnnounced(
+        rule.id, rule.nextTriggerTime);
+
+    if (!alreadyAnnounced) {
+      SoundService.playAlertSound();
+      NotificationService.showOrderDispatchedNotification(
+        title: order.title,
+        description: order.description.isNotEmpty
+            ? order.description
+            : 'Scheduled order drawn and active on your dashboard.',
+        assignerName: 'Scheduled Task',
+        rewardTokens: order.rewardTokens,
+      );
+    }
 
     _syncService?.broadcastPlayerState();
   }

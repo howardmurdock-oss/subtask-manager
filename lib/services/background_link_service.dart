@@ -671,6 +671,11 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     // recognises this as the same order if it also catches up on this firing.
     final activeOrderId =
         ScheduleCoordinator.activeOrderIdFor(rule.id, rule.nextTriggerTime);
+
+    // A pre-armed alarm announces this occurrence by itself; this isolate is
+    // usually woken *by* that alarm, so notifying again double-announces one task.
+    final alreadyAnnounced = await NotificationService.wasOccurrenceAnnounced(
+        rule.id, rule.nextTriggerTime);
     final isDirector = rule.targetType == ScheduleTargetType.directorDispatch;
 
     if (rule.targetType == ScheduleTargetType.playerSelfDraw ||
@@ -695,12 +700,14 @@ class DirectiveSyncTaskHandler extends TaskHandler {
       await _queuePendingOrder(payload);
 
       // High priority alert with sound, vibration, and banner
-      NotificationService.showOrderDispatchedNotification(
-        title: finalOrder.title,
-        description: finalOrder.description,
-        assignerName: senderName,
-        rewardTokens: finalOrder.rewardTokens,
-      );
+      if (!alreadyAnnounced) {
+        NotificationService.showOrderDispatchedNotification(
+          title: finalOrder.title,
+          description: finalOrder.description,
+          assignerName: senderName,
+          rewardTokens: finalOrder.rewardTokens,
+        );
+      }
     } else if (rule.targetPartnerCode != null && rule.targetPartnerCode!.isNotEmpty) {
         // Dispatch over HTTP relay to submissive partner
         try {
@@ -733,10 +740,12 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           req.write(outPayload);
           await req.close();
 
-          NotificationService.showGenericNotification(
-            title: '⚡ Scheduled Directive Dispatched',
-            body: 'Dispatched "${finalOrder.title}" to ${rule.targetPartnerName ?? "Partner"}.',
-          );
+          if (!alreadyAnnounced) {
+            NotificationService.showGenericNotification(
+              title: '⚡ Scheduled Directive Dispatched',
+              body: 'Dispatched "${finalOrder.title}" to ${rule.targetPartnerName ?? "Partner"}.',
+            );
+          }
         } catch (e) {
           if (kDebugMode) print('Background dispatch error: $e');
         }
