@@ -720,6 +720,90 @@ class _SettingsViewState extends State<SettingsView> {
                                     ),
                                   ),
                                 const SizedBox(height: 10),
+                                // Scheduled alarm arming. A scheduled task that
+                                // never notified leaves no trace otherwise: the
+                                // OS holds the alarm, and every failure to arm
+                                // one is a caught exception.
+                                FutureBuilder<Map<String, String>>(
+                                  future: NotificationService.getAlarmDiagnostics(),
+                                  builder: (actx, asnap) {
+                                    if (!asnap.hasData) {
+                                      return const Text('Scheduled alarms: loading…',
+                                          style: TextStyle(fontSize: 12, fontFamily: 'monospace'));
+                                    }
+                                    final a = asnap.data!;
+                                    final armed = int.tryParse(a['armed'] ?? '0') ?? 0;
+                                    final pending = int.tryParse(a['pending'] ?? '0') ?? 0;
+                                    final canExact = a['canScheduleExact'] ?? 'unknown';
+                                    final lastResult = a['lastResult'] ?? 'Never';
+                                    final armError = a['lastError'] ?? '';
+
+                                    // The app asked for alarms and the OS is
+                                    // holding none: the request is being
+                                    // rejected rather than never made.
+                                    final mismatch = armed > 0 && pending == 0;
+
+                                    return Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Divider(height: 14),
+                                        Text(
+                                          'SCHEDULED ALARMS',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            letterSpacing: 1.0,
+                                            color: theme.colorScheme.primary,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text('Exact alarms allowed: $canExact',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontFamily: 'monospace',
+                                              color: canExact == 'false' ? Colors.red : null,
+                                            )),
+                                        Text('Armed by app: $armed   Held by OS: $pending',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontFamily: 'monospace',
+                                              color: mismatch ? Colors.red : null,
+                                            )),
+                                        Text('Next armed: ${a['nextArmed'] ?? 'None'}',
+                                            style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+                                        Text('Last arm attempt: $lastResult',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontFamily: 'monospace',
+                                              color: lastResult.contains('FAILED') || lastResult.contains('DEGRADED')
+                                                  ? Colors.orange
+                                                  : null,
+                                            )),
+                                        if (armError.isNotEmpty)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 4),
+                                            child: Text(
+                                              'Arm error: $armError',
+                                              style: const TextStyle(
+                                                  fontSize: 11, fontFamily: 'monospace', color: Colors.orange),
+                                            ),
+                                          ),
+                                        if (mismatch)
+                                          const Padding(
+                                            padding: EdgeInsets.only(top: 4),
+                                            child: Text(
+                                              'The system is not holding these alarms. Check Android '
+                                              'Settings > Apps > (sub)Task Manager > Alarms & reminders, '
+                                              'and that battery optimisation is disabled.',
+                                              style: TextStyle(
+                                                  fontSize: 11, fontFamily: 'monospace', color: Colors.red),
+                                            ),
+                                          ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                                const SizedBox(height: 10),
                                 Wrap(
                                   spacing: 8,
                                   runSpacing: 8,
@@ -728,6 +812,34 @@ class _SettingsViewState extends State<SettingsView> {
                                       icon: const Icon(Icons.refresh_rounded, size: 16),
                                       label: const Text('Refresh'),
                                       onPressed: () => setState(() {}),
+                                    ),
+                                    OutlinedButton.icon(
+                                      icon: const Icon(Icons.alarm_add_rounded, size: 16),
+                                      label: const Text('Test Alarm (2 min)'),
+                                      onPressed: () async {
+                                        // Goes through the same arming path as a
+                                        // scheduled rule, so the result proves
+                                        // whether alarms work on this device.
+                                        final when = DateTime.now().add(const Duration(minutes: 2));
+                                        await NotificationService.scheduleExactNotification(
+                                          id: 987654321,
+                                          title: '⏰ Alarm Test',
+                                          body: 'If you are seeing this, scheduled alarms fire correctly '
+                                              'on this device. Close the app and wait 2 minutes to test '
+                                              'the background case.',
+                                          scheduledDate: when,
+                                        );
+                                        if (!ctx.mounted) return;
+                                        setState(() {});
+                                        ScaffoldMessenger.of(ctx).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                                'Alarm armed for ${when.hour.toString().padLeft(2, '0')}:'
+                                                '${when.minute.toString().padLeft(2, '0')}. '
+                                                'Close the app fully and wait.'),
+                                          ),
+                                        );
+                                      },
                                     ),
                                     OutlinedButton.icon(
                                       icon: const Icon(Icons.notifications_active_rounded, size: 16),

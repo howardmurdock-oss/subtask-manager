@@ -5,6 +5,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/order_item.dart';
 import '../../models/scheduled_order_rule.dart';
 
@@ -21,6 +22,70 @@ class NotificationService {
   static const String _alarmChannelId = 'scheduled_orders_alarm_channel_v1';
   static const String _alarmChannelName = 'Scheduled Orders & Alarms';
   static const String _alarmChannelDesc = 'High-priority alerts for scheduled orders, directives, and window triggers';
+
+  // ---- Alarm diagnostics -------------------------------------------------
+  //
+  // Arming an exact alarm can fail for reasons only the device knows about
+  // (exact-alarm permission withdrawn, OEM restriction, channel disabled), and
+  // every failure path here is a caught exception. In a release build
+  // kDebugMode is false, so those failures used to vanish entirely: no
+  // notification fired and nothing recorded why. These keys let the in-app
+  // diagnostics panel report what was actually armed and what the OS said.
+  static const String diagArmedKey = 'alarm_diag_armed_v1';
+  static const String diagLastResultKey = 'alarm_diag_last_result_v1';
+  static const String diagLastErrorKey = 'alarm_diag_last_error_v1';
+  static const String diagCanExactKey = 'alarm_diag_can_exact_v1';
+
+  static Future<void> _recordArmResult(String result, {String? error}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(diagLastResultKey,
+          '${DateTime.now().toIso8601String()} | $result');
+      await prefs.setString(diagLastErrorKey, error ?? '');
+    } catch (_) {}
+  }
+
+  /// Alarms this app believes it has armed, as `<iso time> | <title>`.
+  static Future<void> _recordArmedAlarms(List<String> entries) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(diagArmedKey, entries);
+    } catch (_) {}
+  }
+
+  /// What the OS actually holds, versus what this app thinks it armed.
+  ///
+  /// A non-empty `armed` with a `pending` of zero is the signal that the OS is
+  /// rejecting or dropping the alarms rather than the app failing to request
+  /// them.
+  static Future<Map<String, String>> getAlarmDiagnostics() async {
+    final out = <String, String>{
+      'pending': '0',
+      'armed': '0',
+      'nextArmed': 'None',
+      'lastResult': 'Never',
+      'lastError': '',
+      'canScheduleExact': 'unknown',
+    };
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final armed = prefs.getStringList(diagArmedKey) ?? const <String>[];
+      out['armed'] = armed.length.toString();
+      if (armed.isNotEmpty) out['nextArmed'] = armed.first;
+      out['lastResult'] = prefs.getString(diagLastResultKey) ?? 'Never';
+      out['lastError'] = prefs.getString(diagLastErrorKey) ?? '';
+      out['canScheduleExact'] = prefs.getString(diagCanExactKey) ?? 'unknown';
+
+      if (!kIsWeb && !Platform.isWindows) {
+        final pending = await _plugin.pendingNotificationRequests();
+        out['pending'] = pending.length.toString();
+      }
+    } catch (e) {
+      out['lastError'] = 'diagnostics read failed: $e';
+    }
+    return out;
+  }
 
   static Future<void> _initTimeZone() async {
     try {
@@ -121,10 +186,16 @@ class NotificationService {
             Future.microtask(() async {
               try {
                 await androidImpl.requestNotificationsPermission();
-                final canExact = await androidImpl.canScheduleExactNotifications() ?? false;
+                var canExact = await androidImpl.canScheduleExactNotifications() ?? false;
                 if (!canExact) {
                   await androidImpl.requestExactAlarmsPermission();
+                  // Re-read: the user may have granted it just now.
+                  canExact = await androidImpl.canScheduleExactNotifications() ?? false;
                 }
+                try {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setString(diagCanExactKey, canExact.toString());
+                } catch (_) {}
               } catch (_) {}
             });
           }
@@ -530,6 +601,9 @@ class NotificationService {
         : 'A surprise order is ready for you to complete! Open (sub)Task Manager now.';
 
     final triggers = rule.upcomingTriggers(preArmedOccurrences);
+    await _recordArmedAlarms([
+      for (final t in triggers) '${t.toIso8601String()} | ${rule.title}',
+    ]);
 
     for (var slot = 0; slot < triggers.length; slot++) {
       final isImminent = slot == 0 || laterKeepsTask;
@@ -622,6 +696,7 @@ class NotificationService {
 
       if (Platform.isAndroid) {
         bool scheduled = false;
+        String lastError = '';
 
         // 1. Try alarmClock mode (highest priority, wakes phone from deep Doze mode, backed by AlarmManager.setAlarmClock)
         try {
@@ -636,7 +711,9 @@ class NotificationService {
             payload: payload,
           );
           scheduled = true;
+          await _recordArmResult('armed via alarmClock');
         } catch (clockErr) {
+          lastError = 'alarmClock: $clockErr';
           if (kDebugMode) print('alarmClock schedule attempt: $clockErr - falling back to exactAllowWhileIdle');
         }
 
@@ -654,12 +731,17 @@ class NotificationService {
               payload: payload,
             );
             scheduled = true;
+            await _recordArmResult('armed via exactAllowWhileIdle',
+                error: lastError);
           } catch (exactErr) {
+            lastError = '$lastError; exactAllowWhileIdle: $exactErr';
             if (kDebugMode) print('exactAllowWhileIdle schedule attempt: $exactErr - falling back to inexactAllowWhileIdle');
           }
         }
 
-        // 3. Fallback to inexactAllowWhileIdle if exact modes failed
+        // 3. Fallback to inexactAllowWhileIdle if exact modes failed.
+        //    Under Doze this can be deferred to the next maintenance window,
+        //    so landing here at all is worth reporting rather than hiding.
         if (!scheduled) {
           await _plugin.zonedSchedule(
             id,
@@ -671,6 +753,9 @@ class NotificationService {
             uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
             payload: payload,
           );
+          await _recordArmResult(
+              'DEGRADED: inexact only (may be delayed by Doze)',
+              error: lastError);
         }
       } else {
         await _plugin.zonedSchedule(
@@ -685,6 +770,9 @@ class NotificationService {
         );
       }
     } catch (e) {
+      // Previously silent in release builds, which is how an alarm that never
+      // armed produced no notification and no explanation.
+      await _recordArmResult('FAILED to arm', error: e.toString());
       if (kDebugMode) print('Failed to schedule exact notification: $e');
     }
   }
