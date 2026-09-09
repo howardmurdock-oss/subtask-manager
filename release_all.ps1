@@ -263,9 +263,20 @@ if ($macDmg) { $releaseAssets += $macDmg.FullName }
 if ($macZip) { $releaseAssets += $macZip.FullName }
 if ($linuxTar) { $releaseAssets += $linuxTar.FullName }
 
-# Check if release tag already exists, update or create
-$existingRelease = gh release view $releaseTag 2>$null
-if ($LASTEXITCODE -eq 0) {
+# Check if release tag already exists, update or create.
+# `gh release view` writes to stderr when the tag does not exist yet, and under
+# PowerShell 5.1 redirecting a native command's stderr while
+# $ErrorActionPreference is "Stop" raises a terminating NativeCommandError. That
+# killed the pipeline on every brand-new version tag, after the push and the R2
+# upload had already happened. Probe with the preference relaxed and read the
+# real exit code instead.
+$previousEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+gh release view $releaseTag > $null 2>&1
+$releaseAlreadyExists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $previousEap
+
+if ($releaseAlreadyExists) {
     Write-Host "  Release $releaseTag exists. Uploading updated assets..." -ForegroundColor Yellow
     gh release upload $releaseTag $releaseAssets --clobber
 } else {
