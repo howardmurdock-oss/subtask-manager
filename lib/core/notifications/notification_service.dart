@@ -481,7 +481,19 @@ class NotificationService {
     required String body,
   }) => showGenericNotification(title: title, body: body);
 
-  /// Pre-arms an exact OS alarm notification for a scheduled rule.
+  /// How many future occurrences of a rule are armed with the OS at once.
+  ///
+  /// An armed alarm is the only part of the scheduling pipeline that survives
+  /// the app process being killed. The alarm chain is normally advanced by
+  /// whichever isolate executes the rule — but if Android has killed both the
+  /// app and the foreground service, arming only the next occurrence means a
+  /// recurring rule announces itself once and then goes silent until the user
+  /// happens to open the app. Arming a run of them keeps a daily rule notifying
+  /// through five days of total inactivity, and every app open tops the window
+  /// back up.
+  static const int preArmedOccurrences = 5;
+
+  /// Pre-arms exact OS alarm notifications for a scheduled rule.
   /// Fires even when the app is in deep background, closed, or Doze mode.
   static Future<void> scheduleOrderNotification(ScheduledOrderRule rule) async {
     if (!rule.isEnabled) {
@@ -489,39 +501,75 @@ class NotificationService {
       return;
     }
 
-    final scheduledDate = rule.nextTriggerTime;
-    if (scheduledDate.isBefore(DateTime.now())) {
-      return;
-    }
-
-    final id = rule.id.hashCode & 0x7FFFFFFF;
+    final baseId = notificationIdForRule(rule.id);
     final isDirector = rule.targetType == ScheduleTargetType.directorDispatch;
     final staged = rule.stagedOrder ?? rule.specificOrder;
     final orderTitle = staged != null ? staged.title : rule.title;
     final tokenInfo = (staged != null && staged.rewardTokens > 0) ? ' (+${staged.rewardTokens} tokens)' : '';
 
-    final title = isDirector
+    final specificTitle = isDirector
         ? '⚡ Scheduled Directive: $orderTitle$tokenInfo'
         : '⚡ Scheduled Task: $orderTitle$tokenInfo';
-    final body = (staged != null && staged.description.isNotEmpty)
+    final specificBody = (staged != null && staged.description.isNotEmpty)
         ? staged.description
         : (isDirector
             ? 'Directive "${rule.title}" has been dispatched. Open (sub)Task Manager to view.'
             : 'A surprise order is ready for you to complete! Open (sub)Task Manager now.');
 
-    await scheduleExactNotification(
-      id: id,
-      title: title,
-      body: body,
-      scheduledDate: scheduledDate,
-      payload: 'rule:${rule.id}',
-    );
+    // Only the imminent occurrence knows which task it will deliver: a random
+    // draw is re-staged each time the rule executes. Naming this task on a
+    // notification days out would promise something the dashboard then
+    // contradicts, so later occurrences stay deliberately generic — unless the
+    // rule always dispatches one fixed order, where the task cannot change.
+    final laterKeepsTask = rule.isSpecificOrder && rule.specificOrder != null;
+    final laterTitle = isDirector
+        ? '⚡ Scheduled Directive: ${rule.title}'
+        : '⚡ Scheduled Task Ready';
+    final laterBody = isDirector
+        ? 'Directive "${rule.title}" has been dispatched. Open (sub)Task Manager to view.'
+        : 'A surprise order is ready for you to complete! Open (sub)Task Manager now.';
+
+    final triggers = rule.upcomingTriggers(preArmedOccurrences);
+
+    for (var slot = 0; slot < triggers.length; slot++) {
+      final isImminent = slot == 0 || laterKeepsTask;
+      await scheduleExactNotification(
+        id: (baseId + slot) & 0x7FFFFFFF,
+        title: isImminent ? specificTitle : laterTitle,
+        body: isImminent ? specificBody : laterBody,
+        scheduledDate: triggers[slot],
+        payload: 'rule:${rule.id}',
+      );
+    }
+
+    // Drop slots left armed by a previous, longer run — a rule switched to
+    // one-shot, or edited to stop recurring, must not keep firing.
+    for (var stale = triggers.length; stale < preArmedOccurrences; stale++) {
+      await cancelNotification((baseId + stale) & 0x7FFFFFFF);
+    }
   }
 
-  /// Cancels an armed OS alarm notification for a rule
+  /// Stable notification id for a rule.
+  ///
+  /// Uses an explicit FNV-1a hash rather than `String.hashCode`, whose value is
+  /// only guaranteed within a single run. An id that shifted between launches
+  /// would leave the previous alarm uncancellable, so re-arming a rule would
+  /// stack a duplicate alarm instead of replacing the old one.
+  static int notificationIdForRule(String ruleId) {
+    var hash = 0x811c9dc5;
+    for (final unit in ruleId.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    return hash & 0x7FFFFFFF;
+  }
+
+  /// Cancels every armed OS alarm for a rule, across the whole pre-armed window.
   static Future<void> cancelOrderNotification(String ruleId) async {
-    final id = ruleId.hashCode & 0x7FFFFFFF;
-    await cancelNotification(id);
+    final baseId = notificationIdForRule(ruleId);
+    for (var slot = 0; slot < preArmedOccurrences; slot++) {
+      await cancelNotification((baseId + slot) & 0x7FFFFFFF);
+    }
   }
 
   /// Schedules an exact OS alarm notification using flutter_local_notifications

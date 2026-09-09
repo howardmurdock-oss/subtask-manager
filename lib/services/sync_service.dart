@@ -337,8 +337,37 @@ class SyncService extends ChangeNotifier {
     pollMissedMessages();
   }
 
+  /// Removes exactly the entries this pass handled, leaving anything the
+  /// background isolate appended while the drain was running still queued.
+  /// Clearing the whole key instead would discard those orders outright.
+  @visibleForTesting
+  Future<void> consumeQueuedEntries(String key, List<String> handled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final current = prefs.getStringList(key) ?? const <String>[];
+      final remaining = List<String>.from(current);
+      for (final entry in handled) {
+        remaining.remove(entry);
+      }
+      if (remaining.isEmpty) {
+        await prefs.remove(key);
+      } else {
+        await prefs.setStringList(key, remaining);
+      }
+    } catch (e) {
+      if (kDebugMode) print('Error consuming queued entries for $key: $e');
+    }
+  }
+
+  /// Guards against the drain being entered twice (startup, resume, the 30s
+  /// timer and the relay listener all call it) and mounting an order twice.
+  bool _isDrainingPendingMessages = false;
+
   /// Ingests orders, chats, reviews, and pairings collected while the app was backgrounded
   Future<void> processPendingBackgroundMessages() async {
+    if (_isDrainingPendingMessages) return;
+    _isDrainingPendingMessages = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
@@ -382,6 +411,7 @@ class SyncService extends ChangeNotifier {
               title: order.title,
             );
 
+            final hasExplicitActiveId = activeOrderId != null && activeOrderId.isNotEmpty;
             final existingLiveOrder = _engine.activeOrders.cast<ActiveOrder?>().firstWhere(
               (o) {
                 if (o == null) return false;
@@ -389,10 +419,13 @@ class SyncService extends ChangeNotifier {
                     o.status == OrderStatus.pending ||
                     o.status == OrderStatus.underReview;
                 if (!isLive) return false;
-                if (activeOrderId != null && activeOrderId.isNotEmpty && o.id == activeOrderId) return true;
+                // When the sender named an active-order id, that id alone
+                // decides identity. Two scheduled rules hand over the same
+                // underlying task under different ids and both must mount;
+                // matching on the shared template or title dropped one.
+                if (hasExplicitActiveId) return o.id == activeOrderId;
                 if (order.id.isNotEmpty && (o.id == order.id || o.order.id == order.id)) return true;
-                final isMatchingTitle = o.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
-                return isMatchingTitle;
+                return o.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
               },
               orElse: () => null,
             );
@@ -440,7 +473,7 @@ class SyncService extends ChangeNotifier {
             if (kDebugMode) print('Error processing queued background order: $e');
           }
         }
-        await prefs.remove('pending_background_orders_v1');
+        await consumeQueuedEntries('pending_background_orders_v1', rawOrders);
         broadcastPlayerState();
       }
 
@@ -570,6 +603,8 @@ class SyncService extends ChangeNotifier {
       }
     } catch (e) {
       if (kDebugMode) print('Error processing pending background messages: $e');
+    } finally {
+      _isDrainingPendingMessages = false;
     }
   }
 

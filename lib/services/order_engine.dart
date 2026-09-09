@@ -477,19 +477,27 @@ class OrderEngine extends ChangeNotifier {
       }
     }
 
-    // 2. Also check if an identical directive is currently active, pending, or under review
-    for (final existing in _activeOrders) {
-      final matchesOrder = (order.id.isNotEmpty && (existing.id == order.id || existing.order.id == order.id)) ||
-          existing.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
-      final isLive = existing.status == OrderStatus.active ||
-          existing.status == OrderStatus.pending ||
-          existing.status == OrderStatus.underReview;
-      if (matchesOrder && isLive) {
-        return existing;
-      }
-      if (id != null && id.isNotEmpty && existing.id == id && existing.status == OrderStatus.completed) {
-        // This exact active order ID was already completed — prevent duplicate reassignment loop
-        return existing;
+    // 2. Otherwise fall back to matching an identical directive that is
+    //    currently active, pending, or under review.
+    //
+    //    This only applies when the caller has no explicit active-order id.
+    //    Scheduled rules and relayed dispatches always supply one, and step 1
+    //    has already deduped on it — matching those again on the shared task
+    //    template or title would collapse two rules that legitimately drew the
+    //    same task into a single order, which is how the second scheduled order
+    //    went missing.
+    final hasExplicitId = id != null && id.isNotEmpty;
+    if (!hasExplicitId) {
+      for (final existing in _activeOrders) {
+        final matchesOrder =
+            (order.id.isNotEmpty && (existing.id == order.id || existing.order.id == order.id)) ||
+                existing.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
+        final isLive = existing.status == OrderStatus.active ||
+            existing.status == OrderStatus.pending ||
+            existing.status == OrderStatus.underReview;
+        if (matchesOrder && isLive) {
+          return existing;
+        }
       }
     }
 

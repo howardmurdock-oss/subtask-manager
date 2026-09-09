@@ -38,6 +38,11 @@ class StorageService {
 
   Future<List<ActiveOrder>> loadActiveOrders() async {
     final prefs = await SharedPreferences.getInstance();
+    // The background isolate keeps its own SharedPreferences cache, so read
+    // through to disk rather than trusting this isolate's snapshot.
+    try {
+      await prefs.reload();
+    } catch (_) {}
     final raw = prefs.getString(_keyActiveOrders);
     if (raw == null || raw.isEmpty) return [];
     try {

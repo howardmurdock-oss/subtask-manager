@@ -11,10 +11,10 @@ import '../core/security/encryption_helper.dart';
 import '../core/notifications/notification_service.dart';
 import '../models/sync_message.dart';
 import '../models/order_item.dart';
-import '../models/active_order.dart';
 import '../models/order_pack.dart';
 import '../models/scheduled_order_rule.dart';
 import 'storage_service.dart';
+import 'schedule_coordinator.dart';
 
 // ---------------------------------------------------------------------------
 // Background isolate entry point — must be top-level & annotated
@@ -41,6 +41,10 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   StreamSubscription? _socketSub;
   Timer? _reconnectTimer;
   
+  /// Guards the scheduled-rule pass so a slow repeat event cannot overlap the
+  /// next one and process the same due rule twice.
+  bool _isCheckingScheduledRules = false;
+
   String _deviceId = '';
   String _pairingCode = '';
   String _pairingSecret = '';
@@ -442,55 +446,46 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     }
   }
 
-  void _queuePendingOrder(Map<String, dynamic> payload) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload();
-      final list = prefs.getStringList('pending_background_orders_v1') ?? [];
-      list.add(jsonEncode(payload));
-      await prefs.setStringList('pending_background_orders_v1', list);
-    } catch (_) {}
+  /// Serializes every append to a pending-* queue.
+  ///
+  /// Each append is a read-modify-write over a whole StringList. Two of them
+  /// running concurrently — which happens whenever a single repeat event has
+  /// more than one directive or due rule to hand off — both read the same list
+  /// and the later write silently discards the earlier entry. Chaining them
+  /// makes each append see the previous one's result.
+  Future<void> _prefsWriteLock = Future<void>.value();
+
+  Future<void> _appendToQueue(String key, Map<String, dynamic> payload) {
+    final completer = Completer<void>();
+    _prefsWriteLock = _prefsWriteLock.then((_) async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.reload();
+        final list = prefs.getStringList(key) ?? <String>[];
+        list.add(jsonEncode(payload));
+        await prefs.setStringList(key, list);
+      } catch (e) {
+        if (kDebugMode) print('BackgroundLinkService: queue append error ($key): $e');
+      }
+      if (!completer.isCompleted) completer.complete();
+    });
+    return completer.future;
   }
 
-  void _queuePendingChat(Map<String, dynamic> payload) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload();
-      final list = prefs.getStringList('pending_background_chats_v1') ?? [];
-      list.add(jsonEncode(payload));
-      await prefs.setStringList('pending_background_chats_v1', list);
-    } catch (_) {}
-  }
+  Future<void> _queuePendingOrder(Map<String, dynamic> payload) =>
+      _appendToQueue('pending_background_orders_v1', payload);
 
-  void _queuePendingReview(Map<String, dynamic> payload) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload();
-      final list = prefs.getStringList('pending_background_reviews_v1') ?? [];
-      list.add(jsonEncode(payload));
-      await prefs.setStringList('pending_background_reviews_v1', list);
-    } catch (_) {}
-  }
+  Future<void> _queuePendingChat(Map<String, dynamic> payload) =>
+      _appendToQueue('pending_background_chats_v1', payload);
 
-  void _queuePendingPairing(Map<String, dynamic> payload) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload();
-      final list = prefs.getStringList('pending_background_pairings_v1') ?? [];
-      list.add(jsonEncode(payload));
-      await prefs.setStringList('pending_background_pairings_v1', list);
-    } catch (_) {}
-  }
+  Future<void> _queuePendingReview(Map<String, dynamic> payload) =>
+      _appendToQueue('pending_background_reviews_v1', payload);
 
-  void _queuePendingQuest(Map<String, dynamic> payload) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload();
-      final list = prefs.getStringList('pending_background_quests_v1') ?? [];
-      list.add(jsonEncode(payload));
-      await prefs.setStringList('pending_background_quests_v1', list);
-    } catch (_) {}
-  }
+  Future<void> _queuePendingPairing(Map<String, dynamic> payload) =>
+      _appendToQueue('pending_background_pairings_v1', payload);
+
+  Future<void> _queuePendingQuest(Map<String, dynamic> payload) =>
+      _appendToQueue('pending_background_quests_v1', payload);
 
   void _updateServiceNotification(String text) {
     try {
@@ -502,9 +497,17 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   }
 
   Future<void> _checkScheduledRules() async {
+    if (_isCheckingScheduledRules) return;
+    _isCheckingScheduledRules = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
+
+      // The UI isolate runs due rules itself while it is awake. Stepping aside
+      // keeps the two from racing over the same occurrence, and keeps the rule
+      // list from being written by both at once.
+      if (await ScheduleCoordinator.isForegroundAlive(prefs)) return;
+
       final savedRulesJson = prefs.getString('saved_scheduled_rules_v1');
       if (savedRulesJson == null || savedRulesJson.isEmpty) return;
 
@@ -518,43 +521,57 @@ class DirectiveSyncTaskHandler extends TaskHandler {
       for (int i = 0; i < rules.length; i++) {
         final rule = rules[i];
         if (!rule.isEnabled) continue;
+        if (now.isBefore(rule.nextTriggerTime)) continue;
 
-        if (now.isAfter(rule.nextTriggerTime) || now.isAtSameMomentAs(rule.nextTriggerTime)) {
-          // Prevent rapid duplicate triggers if checked in consecutive repeat events
-          if (rule.lastTriggeredAt != null && now.difference(rule.lastTriggeredAt!).inSeconds < 45) {
-            continue;
-          }
-
-          await _executeBackgroundScheduledRule(rule, prefs);
-
-          final nextRecurrence = rule.computeNextRecurrence(now);
-          if (nextRecurrence != null) {
-            final nextStaged = _drawBackgroundCandidateOrder(rule, prefs);
-            rules[i] = rule.copyWith(
-              lastTriggeredAt: now,
-              nextTriggerTime: nextRecurrence,
-              stagedOrder: nextStaged,
-            );
-            // Arm native OS exact alarm for next recurrence
-            NotificationService.scheduleOrderNotification(rules[i]);
-          } else {
-            rules[i] = rule.copyWith(
-              lastTriggeredAt: now,
-              isEnabled: false,
-              clearStagedOrder: true,
-            );
-            NotificationService.cancelOrderNotification(rule.id);
-          }
-          hasUpdates = true;
+        // Cheap guard against firing twice across consecutive 15s repeat events.
+        if (rule.lastTriggeredAt != null &&
+            now.difference(rule.lastTriggeredAt!).inSeconds < 45) {
+          continue;
         }
+
+        // Authoritative guard: claim this exact firing before doing any work so
+        // the UI isolate cannot also deliver it after the device wakes.
+        final claimed = await ScheduleCoordinator.claimOccurrence(
+          prefs,
+          ScheduleCoordinator.occurrenceKey(rule.id, rule.nextTriggerTime),
+        );
+
+        if (claimed) {
+          await _executeBackgroundScheduledRule(rule, prefs);
+        }
+
+        // Anchor on the rule's own schedule rather than on `now`, so a rule
+        // caught up late does not also skip its next legitimate occurrence.
+        final nextRecurrence = rule.computeNextRecurrenceAfter(now);
+        if (nextRecurrence != null) {
+          final nextStaged = _drawBackgroundCandidateOrder(rule, prefs);
+          rules[i] = rule.copyWith(
+            lastTriggeredAt: now,
+            nextTriggerTime: nextRecurrence,
+            stagedOrder: nextStaged,
+          );
+          // Arm native OS exact alarm for next recurrence
+          NotificationService.scheduleOrderNotification(rules[i]);
+        } else {
+          rules[i] = rule.copyWith(
+            lastTriggeredAt: now,
+            isEnabled: false,
+            clearStagedOrder: true,
+          );
+          NotificationService.cancelOrderNotification(rule.id);
+        }
+        hasUpdates = true;
       }
 
+      // One write for the whole pass, after every due rule has been handled.
       if (hasUpdates) {
         final encoded = jsonEncode(rules.map((r) => r.toJson()).toList());
         await prefs.setString('saved_scheduled_rules_v1', encoded);
       }
     } catch (e) {
       if (kDebugMode) print('BackgroundLinkService: scheduled rule check error: $e');
+    } finally {
+      _isCheckingScheduledRules = false;
     }
   }
 
@@ -650,7 +667,10 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     final finalOrder = rule.stagedOrder ?? rule.specificOrder ?? _drawBackgroundCandidateOrder(rule, prefs);
     if (finalOrder == null) return;
 
-    final activeOrderId = 'sched_${DateTime.now().millisecondsSinceEpoch}';
+    // Derived from the rule + trigger rather than the clock, so the UI isolate
+    // recognises this as the same order if it also catches up on this firing.
+    final activeOrderId =
+        ScheduleCoordinator.activeOrderIdFor(rule.id, rule.nextTriggerTime);
     final isDirector = rule.targetType == ScheduleTargetType.directorDispatch;
 
     if (rule.targetType == ScheduleTargetType.playerSelfDraw ||
@@ -667,54 +687,12 @@ class DirectiveSyncTaskHandler extends TaskHandler {
         'assignedByDirector': isDirector,
         'assignedAt': rule.nextTriggerTime.toIso8601String(),
       };
-      _queuePendingOrder(payload);
-
-      // Directly persist into storage_active_orders so OrderEngine loads it immediately on launch
-      try {
-        DateTime? expires;
-        if ((finalOrder.durationType == DurationType.deadlineCountdown || finalOrder.durationType == DurationType.actionWithDeadline) &&
-            finalOrder.durationMinutes > 0) {
-          expires = DateTime.now().add(Duration(minutes: finalOrder.durationMinutes));
-        } else if (finalOrder.durationType == DurationType.dailyWindow) {
-          final now = DateTime.now();
-          expires = DateTime(now.year, now.month, now.day, 23, 59, 59);
-        }
-
-        final newActiveOrder = ActiveOrder(
-          id: activeOrderId,
-          order: finalOrder,
-          assignedAt: rule.nextTriggerTime,
-          expiresAt: expires,
-          status: OrderStatus.active,
-          assignedByDirector: isDirector,
-          assignedByPartnerCode: '',
-          assignedByPartnerId: '__self__',
-          assignedByPartnerName: senderName,
-          actionSecondsRemaining: finalOrder.actionDurationSeconds,
-        );
-
-        final rawActive = prefs.getString('storage_active_orders');
-        List<dynamic> activeList = [];
-        if (rawActive != null && rawActive.isNotEmpty) {
-          try {
-            activeList = jsonDecode(rawActive) as List<dynamic>;
-          } catch (_) {}
-        }
-        activeList.removeWhere((item) {
-          if (item is Map) {
-            final status = item['status'];
-            final o = item['order'] as Map?;
-            final title = o?['title'] as String?;
-            final oid = o?['id'] as String?;
-            if (status == 'completed' && (oid == finalOrder.id || title?.trim().toLowerCase() == finalOrder.title.trim().toLowerCase())) {
-              return true;
-            }
-          }
-          return false;
-        });
-        activeList.insert(0, newActiveOrder.toJson());
-        await prefs.setString('storage_active_orders', jsonEncode(activeList));
-      } catch (_) {}
+      // `storage_active_orders` is owned solely by the UI isolate's OrderEngine.
+      // This isolate hands orders over through the append-only pending queue
+      // instead: writing the active-order blob from both isolates meant
+      // whichever one saved last silently erased the other's orders, which is
+      // how a second due rule went missing.
+      await _queuePendingOrder(payload);
 
       // High priority alert with sound, vibration, and banner
       NotificationService.showOrderDispatchedNotification(

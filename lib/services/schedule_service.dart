@@ -9,11 +9,12 @@ import '../models/partner_contact.dart';
 import '../core/notifications/notification_service.dart';
 import '../core/sound/sound_service.dart';
 import 'order_engine.dart';
+import 'schedule_coordinator.dart';
 import 'sync_service.dart';
 import 'partner_service.dart';
 
 class ScheduleService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.1.0';
+  static const String appCurrentBuildVersion = '1.1.1';
 
   // Valid Patreon Unlock Code hashes
   static final Set<String> _validCodeHashes = {
@@ -55,6 +56,18 @@ class ScheduleService extends ChangeNotifier {
   bool _isDisposed = false;
   bool get isDisposed => _isDisposed;
 
+  /// Occurrences (`<ruleId>@<trigger>`) this device has already executed.
+  /// Mirrors [ScheduleCoordinator.ledgerKey] so a due rule can be claimed
+  /// synchronously, which keeps `checkDueRules` usable without an await gap.
+  final Set<String> _firedOccurrences = <String>{};
+
+  /// Guards against the several callers of [checkDueRules] (10s ticker, app
+  /// resume, notification tap, startup) overlapping across its await points and
+  /// executing the same rule twice or clobbering each other's rule updates.
+  bool _isCheckingRules = false;
+
+  int _tickCount = 0;
+
   ScheduleService() {
     _initStorage();
     _startTicker();
@@ -63,6 +76,56 @@ class ScheduleService extends ChangeNotifier {
 
   Future<void> init() async {
     await _initStorage();
+  }
+
+  /// Pulls rule state and the occurrence ledger back off disk before checking
+  /// what is due.
+  ///
+  /// The background isolate has its own SharedPreferences cache and advances
+  /// rules while the UI isolate is frozen. Without this the UI isolate would
+  /// act on — and then persist — a stale snapshot, re-firing rules the
+  /// background already ran and rolling back its progress.
+  Future<void> resyncFromStorage() async {
+    await _loadRulesFromDisk();
+    await checkDueRules();
+  }
+
+  Future<void> _loadRulesFromDisk() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      if (_isDisposed) return;
+
+      _firedOccurrences.addAll(await ScheduleCoordinator.loadLedger(prefs));
+
+      final savedRulesJson = prefs.getString('saved_scheduled_rules_v1');
+      if (savedRulesJson == null || savedRulesJson.isEmpty) return;
+      final List list = jsonDecode(savedRulesJson);
+      final diskRules = list
+          .map((r) => ScheduledOrderRule.fromJson(Map<String, dynamic>.from(r as Map)))
+          .toList();
+      _rules
+        ..clear()
+        ..addAll(diskRules);
+      notifyListeners();
+    } catch (e) {
+      if (kDebugMode) print('ScheduleService: rule resync error: $e');
+    }
+  }
+
+  /// Claims [rule]'s current occurrence for this isolate. Returns false when it
+  /// has already been executed (by an earlier pass, or by the background
+  /// isolate while the app was asleep).
+  bool _claimOccurrence(ScheduledOrderRule rule) {
+    final key = ScheduleCoordinator.occurrenceKey(rule.id, rule.nextTriggerTime);
+    if (_firedOccurrences.contains(key)) return false;
+    _firedOccurrences.add(key);
+    // Persist opportunistically; the in-memory mirror is what makes the claim
+    // synchronous, and a lost write only risks a duplicate, never a drop.
+    SharedPreferences.getInstance()
+        .then((prefs) => ScheduleCoordinator.recordOccurrences(prefs, [key]))
+        .catchError((_) {});
+    return true;
   }
 
   @override
@@ -97,7 +160,7 @@ class ScheduleService extends ChangeNotifier {
   }
 
   Future<void> _ensureRulesStagedAndArmed() async {
-    bool needsSave = false;
+    final changed = <String>{};
     for (int i = 0; i < _rules.length; i++) {
       final r = _rules[i];
       if (r.isEnabled) {
@@ -105,7 +168,7 @@ class ScheduleService extends ChangeNotifier {
           final staged = _drawStagedOrderForRule(r);
           if (staged != null) {
             _rules[i] = r.copyWith(stagedOrder: staged);
-            needsSave = true;
+            changed.add(r.id);
           }
         }
         if (r.nextTriggerTime.isAfter(DateTime.now())) {
@@ -113,8 +176,8 @@ class ScheduleService extends ChangeNotifier {
         }
       }
     }
-    if (needsSave) {
-      await _saveToStorage();
+    if (changed.isNotEmpty) {
+      await _saveToStorage(changedRuleIds: changed);
       notifyListeners();
     }
   }
@@ -122,7 +185,12 @@ class ScheduleService extends ChangeNotifier {
   Future<void> _initStorage() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // Another isolate may have advanced rules since this isolate last read
+      // prefs, so always come off disk rather than the in-memory cache.
+      await prefs.reload();
       if (_isDisposed) return;
+
+      _firedOccurrences.addAll(await ScheduleCoordinator.loadLedger(prefs));
 
       // Check Patreon unlock status (unified with quest unlock)
       final unlockedVersion = prefs.getString('quests_unlocked_build_version');
@@ -138,7 +206,7 @@ class ScheduleService extends ChangeNotifier {
           list.map((r) => ScheduledOrderRule.fromJson(Map<String, dynamic>.from(r as Map))),
         );
         // Pre-arm native OS exact alarms for all enabled future rules with staged orders
-        bool needsSave = false;
+        final changed = <String>{};
         for (int i = 0; i < _rules.length; i++) {
           final r = _rules[i];
           if (r.isEnabled) {
@@ -146,14 +214,14 @@ class ScheduleService extends ChangeNotifier {
               final staged = _drawStagedOrderForRule(r);
               if (staged != null) {
                 _rules[i] = r.copyWith(stagedOrder: staged);
-                needsSave = true;
+                changed.add(r.id);
               }
             }
             NotificationService.scheduleOrderNotification(_rules[i]);
           }
         }
-        if (needsSave) {
-          await _saveToStorage();
+        if (changed.isNotEmpty) {
+          await _saveToStorage(changedRuleIds: changed);
         }
       }
       if (_isDisposed) return;
@@ -166,10 +234,45 @@ class ScheduleService extends ChangeNotifier {
     }
   }
 
-  Future<void> _saveToStorage() async {
+  /// Persists rules.
+  ///
+  /// With [changedRuleIds] the write is merged onto the current on-disk
+  /// snapshot and only those rules are overwritten, so progress the background
+  /// isolate made on *other* rules survives. Passing nothing performs an
+  /// authoritative full replace, which is what user-driven CRUD wants.
+  Future<void> _saveToStorage({Set<String>? changedRuleIds}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final encoded = jsonEncode(_rules.map((r) => r.toJson()).toList());
+      List<ScheduledOrderRule> toWrite = _rules;
+
+      if (changedRuleIds != null) {
+        await prefs.reload();
+        final raw = prefs.getString('saved_scheduled_rules_v1');
+        final disk = <ScheduledOrderRule>[];
+        if (raw != null && raw.isNotEmpty) {
+          try {
+            disk.addAll((jsonDecode(raw) as List).map((r) =>
+                ScheduledOrderRule.fromJson(Map<String, dynamic>.from(r as Map))));
+          } catch (_) {}
+        }
+        if (disk.isNotEmpty) {
+          final mine = {for (final r in _rules) r.id: r};
+          final merged = <ScheduledOrderRule>[
+            for (final d in disk)
+              (changedRuleIds.contains(d.id) && mine.containsKey(d.id)) ? mine[d.id]! : d,
+          ];
+          final diskIds = disk.map((d) => d.id).toSet();
+          for (final r in _rules) {
+            if (!diskIds.contains(r.id)) merged.add(r);
+          }
+          toWrite = merged;
+          _rules
+            ..clear()
+            ..addAll(merged);
+        }
+      }
+
+      final encoded = jsonEncode(toWrite.map((r) => r.toJson()).toList());
       await prefs.setString('saved_scheduled_rules_v1', encoded);
       await prefs.setBool('patreon_vip_unlocked_v1', _isUnlocked);
     } catch (e) {
@@ -181,8 +284,34 @@ class ScheduleService extends ChangeNotifier {
     _tickerTimer?.cancel();
     _tickerTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (_isDisposed) return;
-      checkDueRules();
+      _tickCount++;
+      // Re-reading prefs off disk costs a platform channel round trip, so do the
+      // cheap in-memory check every tick and the full cross-isolate resync
+      // (plus foreground heartbeat) once a minute.
+      if (_tickCount % 6 == 0) {
+        markForegroundAlive();
+        resyncFromStorage();
+      } else {
+        checkDueRules();
+      }
     });
+  }
+
+  /// Tells the background isolate that the UI isolate is awake and will handle
+  /// due rules itself, so the two do not race over the same occurrence.
+  Future<void> markForegroundAlive() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await ScheduleCoordinator.markForegroundAlive(prefs);
+    } catch (_) {}
+  }
+
+  /// Hands scheduled-rule execution back to the background isolate.
+  Future<void> markForegroundStopped() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await ScheduleCoordinator.clearForegroundAlive(prefs);
+    } catch (_) {}
   }
 
   @override
@@ -313,42 +442,61 @@ class ScheduleService extends ChangeNotifier {
   // ---- Execution Engine ----
 
   Future<void> checkDueRules() async {
-    final now = DateTime.now();
-    bool hasUpdates = false;
+    if (_isCheckingRules) return;
+    _isCheckingRules = true;
+    try {
+      final now = DateTime.now();
+      final changedIds = <String>{};
 
-    for (int i = 0; i < _rules.length; i++) {
-      final rule = _rules[i];
-      if (!rule.isEnabled) continue;
+      for (int i = 0; i < _rules.length; i++) {
+        final rule = _rules[i];
+        if (!rule.isEnabled) continue;
+        if (now.isBefore(rule.nextTriggerTime)) continue;
 
-      if (now.isAfter(rule.nextTriggerTime) || now.isAtSameMomentAs(rule.nextTriggerTime)) {
-        await _executeRule(rule);
+        // Claim the occurrence before doing any work. If the background isolate
+        // already delivered this exact firing while the device was asleep, the
+        // claim fails and we only advance the schedule.
+        if (_claimOccurrence(rule)) {
+          await _executeRule(rule);
+        }
 
-        final nextRecurrence = rule.computeNextRecurrence(now);
+        // Anchor the next trigger on the rule's own schedule rather than on
+        // `now`, so catching up late does not also skip the next occurrence.
+        final nextRecurrence = rule.computeNextRecurrenceAfter(now);
+        final ScheduledOrderRule updated;
         if (nextRecurrence != null) {
-          final nextStaged = _drawStagedOrderForRule(rule);
-          _rules[i] = rule.copyWith(
+          updated = rule.copyWith(
             lastTriggeredAt: now,
             nextTriggerTime: nextRecurrence,
-            stagedOrder: nextStaged,
+            stagedOrder: _drawStagedOrderForRule(rule),
           );
           // Pre-arm native alarm for next recurrence
-          NotificationService.scheduleOrderNotification(_rules[i]);
+          NotificationService.scheduleOrderNotification(updated);
         } else {
           // One-shot rule: mark disabled
-          _rules[i] = rule.copyWith(
+          updated = rule.copyWith(
             lastTriggeredAt: now,
             isEnabled: false,
             clearStagedOrder: true,
           );
           NotificationService.cancelOrderNotification(rule.id);
         }
-        hasUpdates = true;
-      }
-    }
 
-    if (hasUpdates) {
-      await _saveToStorage();
-      notifyListeners();
+        // Write back by id, not by index: the await above yields, and a merge
+        // save can reorder or replace the list in that gap.
+        final writeIndex = _rules[i].id == rule.id
+            ? i
+            : _rules.indexWhere((r) => r.id == rule.id);
+        if (writeIndex >= 0) _rules[writeIndex] = updated;
+        changedIds.add(rule.id);
+      }
+
+      if (changedIds.isNotEmpty) {
+        await _saveToStorage(changedRuleIds: changedIds);
+        notifyListeners();
+      }
+    } finally {
+      _isCheckingRules = false;
     }
   }
 
@@ -427,6 +575,10 @@ class ScheduleService extends ChangeNotifier {
 
     _orderEngine!.assignOrder(
       order,
+      // Deterministic per-occurrence id: distinguishes two rules that happened
+      // to draw the same task (which title matching would collapse into one)
+      // while still deduping a single occurrence delivered from both isolates.
+      id: ScheduleCoordinator.activeOrderIdFor(rule.id, rule.nextTriggerTime),
       assignedAt: rule.nextTriggerTime,
     );
 

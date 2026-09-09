@@ -245,6 +245,81 @@ class ScheduledOrderRule {
     }
   }
 
+  /// Like [computeNextRecurrence], but guarantees a result strictly after
+  /// [after] while anchoring on the rule's own schedule rather than on the
+  /// moment the catch-up happened.
+  ///
+  /// This matters after the device has been asleep: computing "tomorrow" from
+  /// *now* makes a daily 08:00 rule that was missed yesterday also skip today,
+  /// and makes an hourly rule drift by however late the catch-up ran.
+  DateTime? computeNextRecurrenceAfter(DateTime after) {
+    if (frequency == RepeatFrequency.once) return null;
+
+    // Random-window rules re-roll a fresh offset inside the next window, so
+    // there is no fixed anchor to preserve.
+    if (timingMode == ScheduleTimingMode.randomWindow) {
+      final candidate = computeNextRecurrence(after);
+      if (candidate != null && candidate.isAfter(after)) return candidate;
+      return computeNextRecurrence(after.add(const Duration(minutes: 1)));
+    }
+
+    var next = nextTriggerTime;
+    var guard = 0;
+    const guardLimit = 20000;
+
+    while (!next.isAfter(after) && guard < guardLimit) {
+      guard++;
+      switch (frequency) {
+        case RepeatFrequency.hourly:
+          next = next.add(const Duration(hours: 1));
+          break;
+        case RepeatFrequency.daily:
+          // Calendar arithmetic rather than +24h so the wall-clock time of day
+          // survives daylight saving transitions.
+          next = DateTime(next.year, next.month, next.day + 1, next.hour,
+              next.minute, next.second);
+          break;
+        case RepeatFrequency.weekly:
+          next = DateTime(next.year, next.month, next.day + 7, next.hour,
+              next.minute, next.second);
+          break;
+        case RepeatFrequency.once:
+          return null;
+      }
+    }
+
+    // Anchor was implausibly stale (clock change, imported data): fall back to
+    // stepping forward from the catch-up moment instead of looping forever.
+    if (!next.isAfter(after)) {
+      return computeNextRecurrence(after);
+    }
+    return next;
+  }
+
+  /// The next [count] trigger times strictly after [from], soonest first.
+  ///
+  /// Returns fewer than [count] entries for a rule that stops recurring, and an
+  /// empty list for a one-shot rule whose moment has already passed.
+  List<DateTime> upcomingTriggers(int count, {DateTime? from}) {
+    final now = from ?? DateTime.now();
+    if (count <= 0) return const [];
+
+    // A rule that is overdue has no future occurrence at nextTriggerTime, so
+    // start from the first recurrence that is still ahead of us.
+    var occurrence = nextTriggerTime.isAfter(now)
+        ? nextTriggerTime
+        : (computeNextRecurrenceAfter(now) ?? nextTriggerTime);
+
+    final triggers = <DateTime>[];
+    while (triggers.length < count && occurrence.isAfter(now)) {
+      triggers.add(occurrence);
+      final next = computeNextRecurrenceAfter(occurrence);
+      if (next == null) break;
+      occurrence = next;
+    }
+    return triggers;
+  }
+
   String get formattedTiming {
     if (timingMode == ScheduleTimingMode.specificTime) {
       if (specificScheduledTime != null) {

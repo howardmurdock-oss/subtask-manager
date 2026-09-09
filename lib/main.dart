@@ -47,6 +47,9 @@ void main() async {
 
   final scheduleService = ScheduleService();
   await scheduleService.init();
+  // Claim scheduled-rule execution for this isolate before attaching, so the
+  // background isolate stands down instead of racing the startup catch-up.
+  await scheduleService.markForegroundAlive();
   scheduleService.attachDependencies(
     orderEngine: orderEngine,
     syncService: syncService,
@@ -114,11 +117,19 @@ class _OrdersAppState extends State<OrdersApp> with WidgetsBindingObserver {
         final sync = Provider.of<SyncService>(context, listen: false);
         sync.onAppResumed();
         final schedule = Provider.of<ScheduleService>(context, listen: false);
-        schedule.checkDueRules();
+        // Resync rather than a plain check: while this isolate was frozen the
+        // background isolate may have advanced rules and delivered orders, and
+        // acting on the stale in-memory snapshot would re-fire them and then
+        // persist the rollback.
+        schedule.markForegroundAlive();
+        schedule.resyncFromStorage();
       }
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       final engine = Provider.of<OrderEngine>(context, listen: false);
       engine.onAppPaused();
+      // Hand scheduled-rule execution back to the background isolate.
+      final schedule = Provider.of<ScheduleService>(context, listen: false);
+      schedule.markForegroundStopped();
     }
   }
 
@@ -137,7 +148,8 @@ class _OrdersAppState extends State<OrdersApp> with WidgetsBindingObserver {
           final sync = Provider.of<SyncService>(context, listen: false);
           sync.startForegroundSync();
           final schedule = Provider.of<ScheduleService>(context, listen: false);
-          schedule.checkDueRules();
+          schedule.markForegroundAlive();
+          schedule.resyncFromStorage();
         }
       });
     } else if (isLocked) {
