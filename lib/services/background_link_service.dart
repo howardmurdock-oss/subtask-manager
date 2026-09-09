@@ -743,8 +743,21 @@ class DirectiveSyncTaskHandler extends TaskHandler {
       }
   }
 
+  /// Whether [msg] was addressed to this device. Mirrors the UI isolate: this
+  /// isolate subscribes to every contact's topic too, so it sees directed
+  /// traffic between other people and must ignore it.
+  bool _isAddressedToMe(SyncMessage msg) {
+    final target = msg.targetCode;
+    if (target == null || target.isEmpty) return true;
+    final clean = _cleanCode(target);
+    if (clean.isEmpty) return true;
+    if (clean == _cleanCode(_pairingCode)) return true;
+    return _pastPairingCodes.contains(clean);
+  }
+
   void _handleBackgroundMessage(SyncMessage msg) {
     if (_isOwnMessage(msg)) return;
+    if (!_isAddressedToMe(msg)) return;
     try {
       switch (msg.type) {
         case SyncMessageType.dispatchOrder:

@@ -898,7 +898,7 @@ class SyncService extends ChangeNotifier {
       if (_pairingCode.isNotEmpty) {
         sendDirectToTopic(_pairingCode, _pairingSecret, msg, relayHost: _customRelayHost);
       }
-      sendMessage(msg);
+      sendToLocalSocketOnly(msg);
     }
   }
 
@@ -982,8 +982,8 @@ class SyncService extends ChangeNotifier {
       );
     }
 
-    // 5. Send via active socket
-    sendMessage(msg);
+    // 5. Send via active local socket
+    sendToLocalSocketOnly(msg);
 
     // Deep clean locally from both sync and engine, and record tombstone (notifyRemote: false since already broadcast above)
     clearRemoteActiveOrder(activeOrderId, orderId: targetOrderId, orderTitle: title, notifyRemote: false);
@@ -1045,8 +1045,8 @@ class SyncService extends ChangeNotifier {
       }
     }
 
-    // Send via active socket if connected
-    sendMessage(msg);
+    // Send via active local socket if connected
+    sendToLocalSocketOnly(msg);
 
     // Broadcast updated state
     broadcastPlayerState();
@@ -1975,9 +1975,21 @@ class SyncService extends ChangeNotifier {
     final fallbackHost = primaryHost == 'ntfy.envs.net' ? 'ntfy.sh' : 'ntfy.envs.net';
     hostsToTry.add(fallbackHost);
 
-    final jsonStr = msg.encode();
+    // An empty code hashes to a single fixed topic that every install sharing
+    // this state would publish to and read from, so it is a cross-account
+    // crossover channel rather than a private one. Refuse rather than send.
+    if (PartnerService.normalizeCode(code).isEmpty) return false;
+
+    // Address the message to whoever owns this topic. Doing it here rather than
+    // at each call site means no directed send can be published unaddressed.
+    final addressed = (msg.targetCode == null || msg.targetCode!.isEmpty)
+        ? msg.withTargetCode(PartnerService.normalizeCode(code))
+        : msg;
+
+    final jsonStr = addressed.encode();
     final payload = secret.isNotEmpty ? EncryptionHelper.encryptString(jsonStr, secret) : jsonStr;
     final topic = _getHashedTopic(code);
+    _recordOutboundCode(PartnerService.normalizeCode(code));
 
     String titleHeader = 'OrdersApp Alert';
     String priorityHeader = '4';
@@ -2169,6 +2181,7 @@ class SyncService extends ChangeNotifier {
 
   Future<void> _handleSyncMessage(SyncMessage msg) async {
     if (_isOwnMessage(msg)) return;
+    if (!_isAddressedToMe(msg)) return;
 
     if (msg.id.isNotEmpty) {
       if (_processedMessageIds.contains(msg.id)) return;
@@ -3308,6 +3321,7 @@ class SyncService extends ChangeNotifier {
       if (_transport == ConnectionTransport.cloudRelay) {
         if (_pairingCode.isEmpty) return false;
         final topic = _getHashedTopic(_pairingCode);
+        _recordOutboundCode('SELF:${PartnerService.normalizeCode(_pairingCode)}');
         final url = Uri.parse('https://$_customRelayHost/$topic');
         final req = await _httpClient.postUrl(url).timeout(const Duration(seconds: 8));
 
@@ -3340,6 +3354,45 @@ class SyncService extends ChangeNotifier {
   bool sendMessage(SyncMessage msg) {
     sendMessageAsync(msg);
     return true;
+  }
+
+  /// Codes that outbound relay messages were addressed to, oldest first.
+  /// A `SELF:` entry marks an undirected publish to our own topic.
+  @visibleForTesting
+  final List<String> debugSentToCodes = [];
+
+  void _recordOutboundCode(String code) {
+    debugSentToCodes.add(code);
+    if (debugSentToCodes.length > 50) debugSentToCodes.removeAt(0);
+  }
+
+  /// Delivers [msg] over a live local socket only, never the cloud relay.
+  ///
+  /// [sendMessage] on the cloud relay publishes to *our own* topic, which every
+  /// contact subscribes to in order to receive our state broadcasts. Using it to
+  /// "also" deliver an already-targeted message therefore republished that
+  /// message to the entire contact list: a directive meant for one partner
+  /// arrived on every other partner's dashboard as well. Directed sends go
+  /// through [sendDirectToTopic]; this covers only the local-socket transports,
+  /// where no such fan-out exists.
+  bool sendToLocalSocketOnly(SyncMessage msg) {
+    if (_transport == ConnectionTransport.cloudRelay) return false;
+    return sendMessage(msg);
+  }
+
+  /// Whether [msg] was addressed to this device.
+  ///
+  /// Messages with no target are undirected broadcasts (or come from a build
+  /// predating addressing) and are still accepted; a target that names someone
+  /// else is dropped even though it arrived on a topic we subscribe to.
+  bool _isAddressedToMe(SyncMessage msg) {
+    final target = msg.targetCode;
+    if (target == null || target.isEmpty) return true;
+    final clean = PartnerService.normalizeCode(target);
+    if (clean.isEmpty) return true;
+    if (clean == PartnerService.normalizeCode(_pairingCode)) return true;
+    // A code we have since migrated away from is still legitimately ours.
+    return _pastPairingCodes.contains(clean);
   }
 
   /// Director command helpers with targeted routing
@@ -3458,7 +3511,7 @@ class SyncService extends ChangeNotifier {
     }
 
     // 5. Send via active local socket if available
-    sendMessage(msg);
+    sendToLocalSocketOnly(msg);
 
     // Retain dispatched order copy on Director side
     final assigned = ActiveOrder(
@@ -3573,7 +3626,7 @@ class SyncService extends ChangeNotifier {
     }
 
     // 4. Send via active local socket
-    sendMessage(msg);
+    sendToLocalSocketOnly(msg);
 
     // Also request fresh state from player
     requestStateFromPlayer(targetPartner: partner);
@@ -3706,7 +3759,7 @@ class SyncService extends ChangeNotifier {
       }
     }
 
-    sendMessage(msg);
+    sendToLocalSocketOnly(msg);
 
     // Retain dispatched quest copy on Director side for real-time progress monitoring
     final active = _partnerService?.activePartner;
@@ -3794,7 +3847,7 @@ class SyncService extends ChangeNotifier {
       sent = true;
     }
 
-    sendMessage(msg);
+    sendToLocalSocketOnly(msg);
     broadcastPlayerState();
     return sent;
   }
@@ -3858,7 +3911,7 @@ class SyncService extends ChangeNotifier {
       sent = true;
     }
 
-    sendMessage(msg);
+    sendToLocalSocketOnly(msg);
     broadcastPlayerState();
     return sent;
   }
@@ -3881,8 +3934,10 @@ class SyncService extends ChangeNotifier {
       return true;
     }
 
+    // activePartner never returns null: with no contacts it degrades to
+    // PartnerContact.self(), whose pairing code is empty. Check the code.
     final active = _partnerService?.activePartner;
-    if (active != null) {
+    if (active != null && !active.isSelf && active.pairingCode.isNotEmpty) {
       sendDirectToTopic(
         active.pairingCode,
         active.pairingSecret,
@@ -3892,7 +3947,14 @@ class SyncService extends ChangeNotifier {
       return true;
     }
 
-    return sendMessage(msg);
+    // No contact to address. Publish on our own code for a device that shares
+    // it — addressed, so contacts subscribed to this topic drop it rather than
+    // mounting a directive that was never meant for them.
+    if (_pairingCode.isNotEmpty) {
+      sendDirectToTopic(_pairingCode, _pairingSecret, msg, relayHost: _customRelayHost);
+      return true;
+    }
+    return sendToLocalSocketOnly(msg);
   }
 
   /// Internal helper to route proof review responses back to the original submitter
@@ -4059,8 +4121,10 @@ class SyncService extends ChangeNotifier {
       return true;
     }
 
+    // activePartner never returns null: with no contacts it degrades to
+    // PartnerContact.self(), whose pairing code is empty. Check the code.
     final active = _partnerService?.activePartner;
-    if (active != null) {
+    if (active != null && !active.isSelf && active.pairingCode.isNotEmpty) {
       sendDirectToTopic(
         active.pairingCode,
         active.pairingSecret,
@@ -4070,7 +4134,14 @@ class SyncService extends ChangeNotifier {
       return true;
     }
 
-    return sendMessage(msg);
+    // No contact to address. Publish on our own code for a device that shares
+    // it — addressed, so contacts subscribed to this topic drop it rather than
+    // mounting a directive that was never meant for them.
+    if (_pairingCode.isNotEmpty) {
+      sendDirectToTopic(_pairingCode, _pairingSecret, msg, relayHost: _customRelayHost);
+      return true;
+    }
+    return sendToLocalSocketOnly(msg);
   }
 
   Future<void> disconnect({bool explicit = true}) async {

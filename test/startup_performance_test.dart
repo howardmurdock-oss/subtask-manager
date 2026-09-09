@@ -91,8 +91,17 @@ void main() {
         rewardTokens: 10,
       );
 
+      sync.debugSentToCodes.clear();
       final result = sync.dispatchOrderToPlayer(order, targetPartner: targetContact);
       expect(result, isTrue);
+
+      // Assert what was actually transmitted, not just the local bookkeeping.
+      // This previously only checked remoteActiveOrders, so it passed happily
+      // while the directive was also being published to our own topic — which
+      // every contact subscribes to, delivering it to OTH02 as well.
+      expect(sync.debugSentToCodes, equals(['TGT01']));
+      expect(sync.debugSentToCodes, isNot(contains('OTH02')));
+      expect(sync.debugSentToCodes.any((c) => c.startsWith('SELF:')), isFalse);
 
       // Confirm director retained the order copy
       expect(sync.remoteActiveOrders.any((o) => o.order.title == 'Targeted Directive'), isTrue);
