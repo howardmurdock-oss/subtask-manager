@@ -187,9 +187,21 @@ if (-not $SkipCloudBuild) {
 
     # Download macOS and Linux artifacts
     Write-Host "`n==> Step 8: Downloading native macOS & Linux binaries from cloud..." -ForegroundColor Cyan
+    # `gh run download` refuses to overwrite, so artifacts left by the previous
+    # release made it fail with "The file exists." — and worse, silently kept
+    # shipping the *old* macOS/Linux binaries under the new version number.
+    if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
     New-Item -ItemType Directory -Force -Path "dist" | Out-Null
-    gh run download $runId --dir dist 2>$null
-    if ($LASTEXITCODE -eq 0) {
+
+    $previousEap2 = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    gh run download $runId --dir dist > $null 2>&1
+    $downloadOk = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $previousEap2
+    if (-not $downloadOk) {
+        Write-Host "  [WARNING] Could not download cloud artifacts; macOS/Linux will be omitted." -ForegroundColor Yellow
+    }
+    if ($downloadOk) {
         Write-Host "  [OK] Cloud artifacts downloaded to dist/." -ForegroundColor Green
 
         # Copy cloud binaries to Google Drive
