@@ -172,11 +172,43 @@ class NotificationService {
   }
 
   /// Alarms this app believes it has armed, as `<iso time> | <title>`.
-  static Future<void> _recordArmedAlarms(List<String> entries) async {
+  /// Records what [ruleId] now has armed, preserving every other rule's entries.
+  ///
+  /// This list used to be replaced wholesale on each call, and arming runs once
+  /// per rule — so the panel reported only the rule armed last and looked like a
+  /// mismatch against the OS count. Entries are stored as
+  /// `<iso>|<ruleId>|<title>` and kept sorted, so the first is genuinely the
+  /// next alarm due across all rules.
+  static Future<void> _recordArmedAlarms(
+      String ruleId, String title, List<DateTime> triggers) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList(diagArmedKey, entries);
+      await prefs.reload();
+      final existing = prefs.getStringList(diagArmedKey) ?? const <String>[];
+      final now = DateTime.now();
+
+      final merged = <String>[
+        for (final e in existing)
+          // Drop this rule's stale entries and anything already in the past.
+          if (!e.contains('|$ruleId|') && _entryIsUpcoming(e, now)) e,
+        for (final t in triggers) '${t.toIso8601String()}|$ruleId|$title',
+      ];
+      merged.sort(); // ISO-8601 sorts chronologically.
+      await prefs.setStringList(diagArmedKey, merged);
     } catch (_) {}
+  }
+
+  static bool _entryIsUpcoming(String entry, DateTime now) {
+    final iso = entry.split('|').first;
+    final t = DateTime.tryParse(iso);
+    return t == null || t.isAfter(now);
+  }
+
+  /// Renders a stored entry as `<iso> | <title>` for display.
+  static String _formatArmedEntry(String entry) {
+    final parts = entry.split('|');
+    if (parts.length < 3) return entry;
+    return '${parts.first} | ${parts.sublist(2).join('|')}';
   }
 
   /// What the OS actually holds, versus what this app thinks it armed.
@@ -200,7 +232,7 @@ class NotificationService {
       await prefs.reload();
       final armed = prefs.getStringList(diagArmedKey) ?? const <String>[];
       out['armed'] = armed.length.toString();
-      if (armed.isNotEmpty) out['nextArmed'] = armed.first;
+      if (armed.isNotEmpty) out['nextArmed'] = _formatArmedEntry(armed.first);
       out['lastResult'] = prefs.getString(diagLastResultKey) ?? 'Never';
       out['lastError'] = prefs.getString(diagLastErrorKey) ?? '';
       out['canScheduleExact'] = prefs.getString(diagCanExactKey) ?? 'unknown';
@@ -738,9 +770,7 @@ class NotificationService {
         : 'A surprise order is ready for you to complete! Open (sub)Task Manager now.';
 
     final triggers = rule.upcomingTriggers(preArmedOccurrences);
-    await _recordArmedAlarms([
-      for (final t in triggers) '${t.toIso8601String()} | ${rule.title}',
-    ]);
+    await _recordArmedAlarms(rule.id, rule.title, triggers);
 
     for (var slot = 0; slot < triggers.length; slot++) {
       final isImminent = slot == 0 || laterKeepsTask;

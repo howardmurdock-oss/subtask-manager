@@ -104,6 +104,45 @@ void main() {
     });
   });
 
+  group('Armed-alarm ledger reflects every rule', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    test('arming one rule does not erase another rule entries', () async {
+      // The ledger was replaced wholesale per call, and arming runs once per
+      // rule, so the panel reported only the rule armed last — which read as a
+      // mismatch against the OS count and sent the diagnosis the wrong way.
+      final engine = OrderEngine();
+      await engine.init();
+      final schedule = ScheduleService();
+      await schedule.init();
+      schedule.attachDependencies(
+        orderEngine: engine,
+        syncService: SyncService(engine),
+        partnerService: PartnerService(),
+      );
+
+      ScheduledOrderRule futureRule(String id, String title, int hoursOut) =>
+          ScheduledOrderRule(
+            id: id,
+            title: title,
+            targetType: ScheduleTargetType.playerSelfDraw,
+            frequency: RepeatFrequency.daily,
+            nextTriggerTime: DateTime.now().add(Duration(hours: hoursOut)),
+          );
+
+      await schedule.addRule(futureRule('rule-late', 'Later Rule', 6));
+      await schedule.addRule(futureRule('rule-soon', 'Sooner Rule', 2));
+
+      final diag = await NotificationService.getAlarmDiagnostics();
+      final armed = int.tryParse(diag['armed'] ?? '0') ?? 0;
+
+      expect(armed, greaterThan(NotificationService.preArmedOccurrences),
+          reason: 'both rules must be represented, not just the last armed');
+      expect(diag['nextArmed'], contains('Sooner Rule'),
+          reason: 'the soonest alarm across all rules must sort first');
+    });
+  });
+
   group('Execution still delivers the order', () {
     setUp(() => SharedPreferences.setMockInitialValues({}));
 
