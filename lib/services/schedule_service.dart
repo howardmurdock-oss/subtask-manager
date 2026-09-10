@@ -14,7 +14,7 @@ import 'sync_service.dart';
 import 'partner_service.dart';
 
 class ScheduleService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.1.5';
+  static const String appCurrentBuildVersion = '1.1.6';
 
   // Valid Patreon Unlock Code hashes
   static final Set<String> _validCodeHashes = {
@@ -297,6 +297,21 @@ class ScheduleService extends ChangeNotifier {
     });
   }
 
+  /// Re-registers OS alarms for every enabled rule.
+  ///
+  /// Alarms were previously only armed at cold start. Android can drop pending
+  /// alarms across a long idle stretch or an app update, and nothing
+  /// re-established them until the process was restarted from scratch — so a
+  /// rule could sit enabled for days with nothing actually queued behind it.
+  /// Re-arming is idempotent for the imminent occurrence, which keeps its
+  /// stored trigger time.
+  Future<void> rearmAllAlarms() async {
+    for (final rule in _rules) {
+      if (!rule.isEnabled) continue;
+      await NotificationService.scheduleOrderNotification(rule);
+    }
+  }
+
   /// Tells the background isolate that the UI isolate is awake and will handle
   /// due rules itself, so the two do not race over the same occurrence.
   Future<void> markForegroundAlive() async {
@@ -547,7 +562,7 @@ class ScheduleService extends ChangeNotifier {
     // The pre-armed OS alarm announces this occurrence at its trigger time on
     // its own. Announcing again here is what produced two notifications for a
     // single scheduled task whenever the service was awake to run the rule.
-    final alreadyAnnounced = await NotificationService.wasOccurrenceAnnounced(
+    final alreadyAnnounced = await NotificationService.alarmAlreadyAnnounced(
         rule.id, rule.nextTriggerTime);
 
     if (!alreadyAnnounced) {
@@ -592,7 +607,7 @@ class ScheduleService extends ChangeNotifier {
 
     // Checked after assignOrder so the order is still mounted synchronously —
     // startup catch-up depends on that.
-    final alreadyAnnounced = await NotificationService.wasOccurrenceAnnounced(
+    final alreadyAnnounced = await NotificationService.alarmAlreadyAnnounced(
         rule.id, rule.nextTriggerTime);
 
     if (!alreadyAnnounced) {

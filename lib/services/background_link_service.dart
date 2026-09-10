@@ -674,7 +674,7 @@ class DirectiveSyncTaskHandler extends TaskHandler {
 
     // A pre-armed alarm announces this occurrence by itself; this isolate is
     // usually woken *by* that alarm, so notifying again double-announces one task.
-    final alreadyAnnounced = await NotificationService.wasOccurrenceAnnounced(
+    final alreadyAnnounced = await NotificationService.alarmAlreadyAnnounced(
         rule.id, rule.nextTriggerTime);
     final isDirector = rule.targetType == ScheduleTargetType.directorDispatch;
 

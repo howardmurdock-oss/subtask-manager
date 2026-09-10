@@ -99,6 +99,53 @@ class NotificationService {
     }
   }
 
+  /// Last occurrence proven to have been armed but never delivered.
+  static const String diagMissedKey = 'alarm_diag_last_missed_v1';
+
+  /// Whether the OS is still holding the alarm armed for a rule's imminent
+  /// occurrence.
+  ///
+  /// Arming always places the soonest occurrence in slot 0, and re-arming only
+  /// happens *after* execution, so at decision time slot 0 is this occurrence.
+  /// If the OS still has it once the trigger has passed, the alarm did not
+  /// fire — which is the only reliable way to tell a delivered alarm from one
+  /// the system quietly dropped.
+  static Future<bool> isOccurrenceAlarmStillPending(String ruleId) async {
+    if (!supportsScheduledAlarms) return false;
+    try {
+      final id = notificationIdForRule(ruleId);
+      final pending = await _plugin.pendingNotificationRequests();
+      return pending.any((p) => p.id == id);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Whether the executor should stay silent because the pre-armed alarm has
+  /// genuinely already announced this occurrence.
+  ///
+  /// Recording happens when an alarm is *armed*, which is not proof it ever
+  /// fired. Treating the record alone as proof meant a dropped alarm produced
+  /// no notification at all — strictly worse than the duplicate it was added to
+  /// prevent. Confirm against what the OS still holds before going quiet.
+  static Future<bool> alarmAlreadyAnnounced(String ruleId, DateTime trigger) async {
+    final recorded = await wasOccurrenceAnnounced(ruleId, trigger);
+    if (!recorded) return false;
+
+    if (await isOccurrenceAlarmStillPending(ruleId)) {
+      // Armed, trigger passed, still queued: it never went off.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+            diagMissedKey,
+            '${trigger.toIso8601String()} | armed but never delivered; '
+            'app announced instead');
+      } catch (_) {}
+      return false;
+    }
+    return true;
+  }
+
   static const String diagArmedKey = 'alarm_diag_armed_v1';
   static const String diagLastResultKey = 'alarm_diag_last_result_v1';
   static const String diagLastErrorKey = 'alarm_diag_last_error_v1';
@@ -144,6 +191,7 @@ class NotificationService {
       'nextArmed': 'None',
       'lastResult': 'Never',
       'lastError': '',
+      'lastMissed': '',
       'pendingError': '',
       'canScheduleExact': 'unknown',
     };
@@ -156,6 +204,7 @@ class NotificationService {
       out['lastResult'] = prefs.getString(diagLastResultKey) ?? 'Never';
       out['lastError'] = prefs.getString(diagLastErrorKey) ?? '';
       out['canScheduleExact'] = prefs.getString(diagCanExactKey) ?? 'unknown';
+      out['lastMissed'] = prefs.getString(diagMissedKey) ?? '';
 
       if (!kIsWeb && !Platform.isWindows) {
         // Reading pending requests goes through the same store that R8 can

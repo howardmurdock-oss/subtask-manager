@@ -123,6 +123,10 @@ class _OrdersAppState extends State<OrdersApp> with WidgetsBindingObserver {
         // persist the rollback.
         schedule.markForegroundAlive();
         schedule.resyncFromStorage();
+        // Android can drop pending alarms across a long idle stretch; re-arming
+        // on resume is the only thing that re-establishes them short of a full
+        // cold start.
+        schedule.rearmAllAlarms();
       }
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       final engine = Provider.of<OrderEngine>(context, listen: false);

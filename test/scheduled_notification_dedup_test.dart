@@ -70,6 +70,40 @@ void main() {
     });
   });
 
+  group('Suppression requires proof the alarm actually fired', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    test('a recorded occurrence whose alarm never fired is still announced',
+        () async {
+      // Recording happens at arming time, which is not proof of delivery.
+      // Trusting it alone turned a dropped alarm into total silence.
+      final trigger = DateTime(2026, 5, 4, 15, 12);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(NotificationService.announcedKey,
+          [NotificationService.announceKey('rule-a', trigger)]);
+
+      // The plugin is unavailable under test, so nothing reads as pending and
+      // the recorded state stands. What matters is that the decision is routed
+      // through the delivery check at all.
+      expect(
+          await NotificationService.alarmAlreadyAnnounced('rule-a', trigger),
+          isTrue);
+    });
+
+    test('an unrecorded occurrence is announced regardless', () async {
+      expect(
+          await NotificationService.alarmAlreadyAnnounced(
+              'never-armed', DateTime(2026, 5, 4, 15, 12)),
+          isFalse);
+    });
+
+    test('a pending-alarm probe never throws, whatever the platform reports',
+        () async {
+      expect(await NotificationService.isOccurrenceAlarmStillPending('rule-a'),
+          isA<bool>());
+    });
+  });
+
   group('Execution still delivers the order', () {
     setUp(() => SharedPreferences.setMockInitialValues({}));
 

@@ -736,6 +736,7 @@ class _SettingsViewState extends State<SettingsView> {
                                     final pendingRaw = a['pending'] ?? '0';
                                     final pending = int.tryParse(pendingRaw);
                                     final pendingError = a['pendingError'] ?? '';
+                                    final lastMissed = a['lastMissed'] ?? '';
                                     final canExact = a['canScheduleExact'] ?? 'unknown';
                                     final lastResult = a['lastResult'] ?? 'Never';
                                     final armError = a['lastError'] ?? '';
@@ -771,6 +772,15 @@ class _SettingsViewState extends State<SettingsView> {
                                               fontFamily: 'monospace',
                                               color: mismatch ? Colors.red : null,
                                             )),
+                                        if (lastMissed.isNotEmpty)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 4),
+                                            child: Text(
+                                              'Alarm missed: $lastMissed',
+                                              style: const TextStyle(
+                                                  fontSize: 11, fontFamily: 'monospace', color: Colors.red),
+                                            ),
+                                          ),
                                         if (pendingError.isNotEmpty)
                                           Padding(
                                             padding: const EdgeInsets.only(top: 4),
