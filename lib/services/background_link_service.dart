@@ -108,6 +108,12 @@ class DirectiveSyncTaskHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) async {
+    // Stamp every tick. Whether this isolate was alive and running at a given
+    // moment is otherwise invisible: the message counter only moves when relay
+    // traffic arrives, so a service that is running but never ticking looks
+    // identical to a healthy one.
+    _recordTick();
+
     // 1. Watchdog: ensure WebSocket is alive
     if (_socket == null) {
       await _loadConfig();
@@ -976,6 +982,15 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     }
   }
 
+  Future<void> _recordTick() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('bg_last_tick_iso', DateTime.now().toIso8601String());
+      final count = (prefs.getInt('bg_tick_count') ?? 0) + 1;
+      await prefs.setInt('bg_tick_count', count);
+    } catch (_) {}
+  }
+
   Future<void> _saveDiagnostics() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1116,6 +1131,8 @@ class BackgroundLinkService {
       'lastMsg': prefs.getString('bg_link_last_msg') ?? 'None',
       'msgCount': (prefs.getInt('bg_link_msg_count') ?? 0).toString(),
       'lastError': prefs.getString('bg_link_last_error') ?? 'None',
+      'lastTick': prefs.getString('bg_last_tick_iso') ?? 'Never',
+      'tickCount': (prefs.getInt('bg_tick_count') ?? 0).toString(),
     };
   }
 }

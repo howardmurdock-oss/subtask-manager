@@ -230,7 +230,16 @@ class NotificationService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
-      final armed = prefs.getStringList(diagArmedKey) ?? const <String>[];
+      // Prune on read as well as on write. Write-side pruning only runs when
+      // some rule is armed, so entries belonging to a rule that was disabled or
+      // deleted could outlive their trigger time — inflating the armed count
+      // against what the OS holds and reporting a past time as "next armed".
+      final stored = prefs.getStringList(diagArmedKey) ?? const <String>[];
+      final now = DateTime.now();
+      final armed = stored.where((e) => _entryIsUpcoming(e, now)).toList();
+      if (armed.length != stored.length) {
+        await prefs.setStringList(diagArmedKey, armed);
+      }
       out['armed'] = armed.length.toString();
       if (armed.isNotEmpty) out['nextArmed'] = _formatArmedEntry(armed.first);
       out['lastResult'] = prefs.getString(diagLastResultKey) ?? 'Never';

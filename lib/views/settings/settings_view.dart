@@ -711,6 +711,15 @@ class _SettingsViewState extends State<SettingsView> {
                                     style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
                                 Text('Messages Processed: $msgCount (Last: $lastMsg)',
                                     style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+                                // Whether the service is *ticking*, not merely
+                                // registered. A stale tick with a RUNNING badge
+                                // means the process is alive but frozen.
+                                Text('Last service tick: ${d['lastTick'] ?? 'Never'} (${d['tickCount'] ?? '0'} ticks)',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontFamily: 'monospace',
+                                      color: (d['lastTick'] ?? 'Never') == 'Never' ? Colors.red : null,
+                                    )),
                                 if (lastError != 'None' && lastError.isNotEmpty)
                                   Padding(
                                     padding: const EdgeInsets.only(top: 4),
