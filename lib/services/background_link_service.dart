@@ -493,6 +493,17 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   Future<void> _queuePendingQuest(Map<String, dynamic> payload) =>
       _appendToQueue('pending_background_quests_v1', payload);
 
+  /// Hands a whole message to the UI isolate to apply.
+  ///
+  /// This isolate marks every message it receives as processed *before*
+  /// dispatching it, and the UI isolate skips anything already in that ledger.
+  /// So any message this isolate can notify about but cannot act on — a recall,
+  /// a proof submission, quest progress — was consumed and silently dropped:
+  /// the notification appeared, the state change never happened. Queuing the
+  /// message verbatim lets the UI isolate run its real handler later.
+  Future<void> _queuePendingSyncMessage(SyncMessage msg) =>
+      _appendToQueue('pending_background_messages_v1', msg.toJson());
+
   void _updateServiceNotification(String text) {
     try {
       FlutterForegroundTask.updateService(
@@ -814,6 +825,9 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           final statusStr = msg.payload['status'] as String?;
           final orderTitle = msg.payload['orderTitle'] as String? ?? 'Directive';
           final senderName = msg.payload['senderName'] as String? ?? 'Player';
+          // Recalls, failures and clears all mutate state this isolate does not
+          // own. Notify here, but let the UI isolate actually apply them.
+          _queuePendingSyncMessage(msg);
           if (statusStr == 'emergencyCleared' || statusStr == 'cleared') {
             NotificationService.showGenericNotification(
               title: 'Directive Emergency Cleared',
@@ -903,6 +917,9 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           if (_role != 'director') {
             break;
           }
+          // The proof itself has to reach the review queue, not just the
+          // notification shade.
+          _queuePendingSyncMessage(msg);
           final rawOrder = msg.payload['activeOrder'] ?? msg.payload['order'];
           final Map<String, dynamic> orderData = (rawOrder is Map)
               ? Map<String, dynamic>.from(rawOrder)
@@ -946,6 +963,7 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           break;
 
         case SyncMessageType.questStepCompleted:
+          _queuePendingSyncMessage(msg);
           final senderName = msg.payload['senderName'] as String? ?? 'Player';
           final questTitle = msg.payload['questTitle'] as String? ?? 'Quest';
           final stepIndex = (msg.payload['stepIndex'] as num?)?.toInt() ?? 0;
@@ -962,6 +980,7 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           break;
 
         case SyncMessageType.questCompleted:
+          _queuePendingSyncMessage(msg);
           final senderName = msg.payload['senderName'] as String? ?? 'Player';
           final questTitle = msg.payload['questTitle'] as String? ?? 'Quest';
           final bonusTokens = (msg.payload['bonusTokens'] as num?)?.toInt() ?? 0;

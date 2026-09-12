@@ -601,6 +601,26 @@ class SyncService extends ChangeNotifier {
         await prefs.remove('pending_background_quests_v1');
         broadcastPlayerState();
       }
+
+      // 6. Whole messages the background isolate could not apply itself.
+      //    Drained last so a recall lands after the directive it recalls.
+      final rawMessages = prefs.getStringList('pending_background_messages_v1');
+      if (rawMessages != null && rawMessages.isNotEmpty) {
+        for (final raw in rawMessages) {
+          try {
+            final msg = SyncMessage.fromJson(
+                Map<String, dynamic>.from(jsonDecode(raw) as Map));
+            // The background isolate marked this id processed the moment it
+            // arrived; leaving that in place would make the real handler skip it.
+            _processedMessageIds.remove(msg.id);
+            await _handleSyncMessage(msg);
+          } catch (e) {
+            if (kDebugMode) print('Error applying handed-over background message: $e');
+          }
+        }
+        await consumeQueuedEntries('pending_background_messages_v1', rawMessages);
+        notifyListeners();
+      }
     } catch (e) {
       if (kDebugMode) print('Error processing pending background messages: $e');
     } finally {
