@@ -714,6 +714,14 @@ class _SettingsViewState extends State<SettingsView> {
                                 // Whether the service is *ticking*, not merely
                                 // registered. A stale tick with a RUNNING badge
                                 // means the process is alive but frozen.
+                                Text('Relay status: ${d['relayStatus'] ?? 'No errors'}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontFamily: 'monospace',
+                                      color: (d['relayStatus'] ?? '').contains('429')
+                                          ? Colors.red
+                                          : null,
+                                    )),
                                 Text('Last service tick: ${d['lastTick'] ?? 'Never'} (${d['tickCount'] ?? '0'} ticks)',
                                     style: TextStyle(
                                       fontSize: 12,

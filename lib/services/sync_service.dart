@@ -298,8 +298,13 @@ class SyncService extends ChangeNotifier {
 
       // Start gentle periodic background drain timer (30s) while foreground app is active.
       // (Avoids running disk reloads every 3 seconds while user is typing or interacting).
+      // The background isolate receives reliably — its notifications always
+      // arrive — and queues what it cannot apply. Draining every 30s meant a
+      // directive could sit queued for half a minute after its notification had
+      // already fired, which looked exactly like the send having failed. The
+      // drain is cheap and guarded against re-entry, so run it promptly.
       _bgDrainTimer?.cancel();
-      _bgDrainTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _bgDrainTimer = Timer.periodic(const Duration(seconds: 5), (_) {
         processPendingBackgroundMessages();
       });
 

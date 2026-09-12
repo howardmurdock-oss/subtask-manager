@@ -45,6 +45,17 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   /// next one and process the same due rule twice.
   bool _isCheckingScheduledRules = false;
 
+  /// When the HTTP safety-net poll may next run.
+  ///
+  /// This class exists to avoid HTTP polling entirely — the WebSocket is the
+  /// transport. The fallback poll had crept to every repeat event, which is 240
+  /// requests an hour per device against a public relay, the exact load the
+  /// design note at the top of this file says causes 429s. Poll only when the
+  /// socket is actually down, and back off hard when the relay pushes back.
+  DateTime _nextPollAllowed = DateTime.fromMillisecondsSinceEpoch(0);
+  static const Duration _pollFloor = Duration(minutes: 2);
+  Duration _pollBackoff = _pollFloor;
+
   String _deviceId = '';
   String _pairingCode = '';
   String _pairingSecret = '';
@@ -120,8 +131,12 @@ class DirectiveSyncTaskHandler extends TaskHandler {
       await _connectWebSocket();
     }
 
-    // 2. Fallback poll (every 15s) to guarantee arrival even if socket was asleep
-    if (_pairingCode.isNotEmpty) {
+    // 2. Safety-net poll, only while the socket is not carrying traffic and only
+    //    at the backoff interval. The WebSocket is the real transport.
+    final socketDown = _socket == null;
+    final pollDue = DateTime.now().isAfter(_nextPollAllowed);
+    if (_pairingCode.isNotEmpty && socketDown && pollDue) {
+      _nextPollAllowed = DateTime.now().add(_pollBackoff);
       try {
         final topics = <String>{_hashTopic(_pairingCode)};
         for (final pc in _partnerCodes) {
@@ -131,7 +146,22 @@ class DirectiveSyncTaskHandler extends TaskHandler {
         final url = Uri.parse('https://$_customRelayHost/$combinedTopics/json?poll=1&since=2m');
         final req = await _httpClient.getUrl(url).timeout(const Duration(seconds: 5));
         final res = await req.close().timeout(const Duration(seconds: 5));
+        if (res.statusCode == 429) {
+          // The relay is refusing us. Doubling the interval is the difference
+          // between backing off and being shut out entirely.
+          _pollBackoff = Duration(
+              seconds: (_pollBackoff.inSeconds * 2).clamp(
+                  _pollFloor.inSeconds, const Duration(minutes: 30).inSeconds));
+          _nextPollAllowed = DateTime.now().add(_pollBackoff);
+          _lastError = 'Relay rate-limited (429); backing off to '
+              '${_pollBackoff.inMinutes}m';
+          await _recordRelayStatus(429);
+        } else if (res.statusCode != 200) {
+          _lastError = 'Relay poll HTTP ${res.statusCode}';
+          await _recordRelayStatus(res.statusCode);
+        }
         if (res.statusCode == 200) {
+          _pollBackoff = _pollFloor;
           final lines = await res.transform(utf8.decoder).transform(const LineSplitter()).toList();
           for (final line in lines) {
             if (line.trim().isEmpty) continue;
@@ -1019,6 +1049,14 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     }
   }
 
+  Future<void> _recordRelayStatus(int code) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('bg_last_relay_status',
+          '${DateTime.now().toIso8601String()} | HTTP $code');
+    } catch (_) {}
+  }
+
   Future<void> _recordTick() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1170,6 +1208,7 @@ class BackgroundLinkService {
       'lastError': prefs.getString('bg_link_last_error') ?? 'None',
       'lastTick': prefs.getString('bg_last_tick_iso') ?? 'Never',
       'tickCount': (prefs.getInt('bg_tick_count') ?? 0).toString(),
+      'relayStatus': prefs.getString('bg_last_relay_status') ?? 'No errors',
     };
   }
 }
