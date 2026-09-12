@@ -12,6 +12,7 @@ import '../../core/sound/sound_service.dart';
 import '../../core/sound/sound_generator.dart';
 import '../../models/order_item.dart';
 import '../../services/order_engine.dart';
+import '../../services/push_service.dart';
 import '../../services/schedule_service.dart';
 import '../../services/sync_service.dart';
 import '../../services/background_link_service.dart';
@@ -691,6 +692,25 @@ class _SettingsViewState extends State<SettingsView> {
                               ),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 10),
+                        // Push registration. Without this, a device that failed
+                        // to register its token looks identical to one sitting
+                        // quietly with nothing to receive.
+                        FutureBuilder<String>(
+                          future: PushService.lastStatus(),
+                          builder: (pctx, psnap) {
+                            final st = psnap.data ?? 'checking...';
+                            final bad = st.contains('failed') || st.contains('error');
+                            return Text(
+                                'Push: $st'
+                                '${PushService.isSupported ? '' : ' (send-only platform)'}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontFamily: 'monospace',
+                                  color: bad ? Colors.red : null,
+                                ));
+                          },
                         ),
                         const SizedBox(height: 10),
                         // Outbound send status lives outside the background
