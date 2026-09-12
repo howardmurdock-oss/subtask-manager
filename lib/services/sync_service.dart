@@ -118,7 +118,13 @@ class SyncService extends ChangeNotifier {
   // Broadcast throttling to prevent relay rate-limiting
   Timer? _broadcastDebounceTimer;
   DateTime? _lastBroadcastTime;
-  static const _broadcastMinInterval = Duration(seconds: 8);
+  // State broadcasts are the app's highest-volume relay traffic. At eight
+  // seconds a single player could issue over 400 publishes an hour against a
+  // shared public relay, which is what drove it to answer 429 and drop
+  // directives on the floor. Player state is ambient information; a minute of
+  // lag costs nothing. Directives, acks and chat are event-driven and are not
+  // affected by this interval.
+  static const _broadcastMinInterval = Duration(seconds: 60);
   static const _broadcastDebounceDelay = Duration(seconds: 10);
 
   SyncService(this._engine, {PartnerService? partnerService}) : _partnerService = partnerService {

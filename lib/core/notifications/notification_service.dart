@@ -199,9 +199,17 @@ class NotificationService {
   }
 
   static bool _entryIsUpcoming(String entry, DateTime now) {
-    final iso = entry.split('|').first;
+    // Entries written before this ledger was keyed by rule used
+    // "<iso> | <title>", with spaces around the separator. Splitting without
+    // trimming left a trailing space that DateTime.tryParse rejects, and
+    // treating unparseable entries as upcoming made those legacy rows
+    // immortal — which is why a timestamp two days in the past was still
+    // being reported as the next armed alarm, and why the armed count sat
+    // stubbornly above what the OS actually held.
+    final iso = entry.split('|').first.trim();
     final t = DateTime.tryParse(iso);
-    return t == null || t.isAfter(now);
+    if (t == null) return false; // unparseable: stale or legacy, drop it
+    return t.isAfter(now);
   }
 
   /// Renders a stored entry as `<iso> | <title>` for display.

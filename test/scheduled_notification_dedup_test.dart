@@ -143,6 +143,42 @@ void main() {
     });
   });
 
+  group('Armed ledger prunes stale and legacy rows', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    test('a legacy spaced entry in the past is dropped, not kept forever',
+        () async {
+      // Rows written before the ledger was keyed by rule used "<iso> | <title>"
+      // with spaces. Splitting without trimming left a trailing space that
+      // DateTime.tryParse rejects, and unparseable rows were treated as
+      // upcoming — so a timestamp days in the past was still reported as the
+      // next armed alarm and inflated the armed count against the OS.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(NotificationService.diagArmedKey, [
+        '2020-01-01T10:00:00.000 | Ancient Legacy Row',
+        '${DateTime.now().add(const Duration(hours: 3)).toIso8601String()}'
+            '|rule-live|Live Rule',
+      ]);
+
+      final diag = await NotificationService.getAlarmDiagnostics();
+
+      expect(diag['armed'], '1', reason: 'the legacy past row must be pruned');
+      expect(diag['nextArmed'], contains('Live Rule'));
+      expect(diag['nextArmed'], isNot(contains('Ancient')));
+    });
+
+    test('an unparseable row is discarded rather than treated as upcoming',
+        () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+          NotificationService.diagArmedKey, ['total gibberish']);
+
+      final diag = await NotificationService.getAlarmDiagnostics();
+
+      expect(diag['armed'], '0');
+    });
+  });
+
   group('Execution still delivers the order', () {
     setUp(() => SharedPreferences.setMockInitialValues({}));
 
