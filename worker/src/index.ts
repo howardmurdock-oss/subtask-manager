@@ -269,6 +269,26 @@ export default {
       return json({ ok: true, project: env.FCM_PROJECT_ID });
     }
 
+    // Exercises the credential path on its own. /send deliberately answers 404
+    // before minting a token when no device holds the topic, so a healthy 404
+    // says nothing about whether signing, the token exchange or the secret
+    // actually work. This is the only way to test them without a real device.
+    if (request.method === 'GET' && url.pathname === '/selftest') {
+      const startedAt = Date.now();
+      try {
+        const token = await getAccessToken(env);
+        return json({
+          ok: true,
+          // Never the token itself; its shape is enough to confirm success.
+          tokenLength: token.length,
+          elapsedMs: Date.now() - startedAt,
+          note: 'JWT signed, exchanged for an access token, cached in KV',
+        });
+      } catch (e) {
+        return json({ ok: false, error: String(e) }, 500);
+      }
+    }
+
     if (request.method === 'POST' && url.pathname === '/register') {
       return handleRegister(request, env).catch((e) =>
         json({ error: String(e) }, 500),

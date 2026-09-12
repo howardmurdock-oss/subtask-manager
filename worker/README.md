@@ -23,7 +23,7 @@ Do **not** enable Cloud Functions — those require the Blaze plan and a card on
 file, which is the whole reason this Worker exists.
 
 1. Create a project. Note its **project id**.
-2. Add an Android app with package name `com.example.orders_app`, download
+2. Add an Android app with package name `com.subtaskmanager.app`, download
    `google-services.json` (needed in phase 02, not here).
 3. Project settings → Service accounts → **Generate new private key**. This
    downloads a JSON file. Treat it like a password.
@@ -35,6 +35,10 @@ cd worker
 npx wrangler d1 create subtask-push-registry
 npx wrangler kv namespace create TOKEN_CACHE
 ```
+
+On Windows PowerShell run these as separate commands — `&&` is a parse error in
+PowerShell 5.1, and `curl` there is an alias for `Invoke-WebRequest`, so the
+verification steps below need `curl.exe` and the `--%` stop-parsing token.
 
 Each command prints an id. Put them in `wrangler.toml` where the
 `REPLACE_WITH_*` placeholders are, along with your Firebase project id.
@@ -76,9 +80,18 @@ curl -X POST https://subtask-push.<your-subdomain>.workers.dev/send \
 ```
 
 A real FCM token for step 2 comes from the app once phase 02 lands. Until then
-step 3 will answer `404 {"unregistered":true}`, which still proves routing,
-D1 and the token-minting path all work — the JWT signing runs before the
-registry lookup fails.
+step 3 answers `404 {"unregistered":true}`, which proves routing and that D1 is
+bound with its table present — but **not** that the credential works. `/send`
+checks the registry first and returns before minting a token, precisely so a
+desktop target costs nothing. Use `/selftest` for the credential:
+
+```bash
+curl.exe https://subtask-push.<your-subdomain>.workers.dev/selftest
+```
+
+`{"ok":true,...}` means the JWT was signed, Google accepted it, and the access
+token is cached. `{"ok":false,...}` carries the reason, and is almost always
+either a malformed `FCM_SERVICE_ACCOUNT` secret or a project id mismatch.
 
 `npm run tail` streams live logs while you test.
 
@@ -88,6 +101,7 @@ registry lookup fails.
 |---|---|---|---|
 | `GET` | `/health` | — | Liveness plus configured project id |
 | `POST` | `/register` | `{topic, token, platform}` | Upsert, keyed by push token |
+| `GET` | `/selftest` | — | Mints an access token; the only check that exercises the credential |
 | `POST` | `/send` | `{topic, payload, kind?}` | `404` with `unregistered:true` if no Android device holds that topic |
 
 `/send` returning `404 unregistered` is **not** a failure. It means the target
