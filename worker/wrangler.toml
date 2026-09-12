@@ -1,0 +1,22 @@
+name = "subtask-push"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Account id is read from CLOUDFLARE_ACCOUNT_ID, which cloudflare_env.ps1
+# already exports, so no account identifier lives in this file.
+
+[vars]
+# Firebase project id, e.g. "subtask-manager-1a2b3". Not a secret.
+FCM_PROJECT_ID = "REPLACE_WITH_FIREBASE_PROJECT_ID"
+
+# The service-account JSON is a secret and is NOT set here. Load it with:
+#   npx wrangler secret put FCM_SERVICE_ACCOUNT
+
+[[d1_databases]]
+binding = "DB"
+database_name = "subtask-push-registry"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[[kv_namespaces]]
+binding = "TOKEN_CACHE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

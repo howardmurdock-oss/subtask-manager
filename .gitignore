@@ -59,3 +59,8 @@ subTaskManager-*.apk
 .flutter-plugins
 cloudflare_env.ps1
 dist/
+
+# Cloudflare Worker: local state and secrets
+worker/.wrangler/
+worker/node_modules/
+worker/.dev.vars
