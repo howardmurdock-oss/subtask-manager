@@ -12,6 +12,7 @@ import 'services/chat_service.dart';
 import 'services/quest_service.dart';
 import 'services/schedule_service.dart';
 import 'services/background_link_service.dart';
+import 'services/push_service.dart';
 import 'views/home_screen.dart';
 import 'views/disguise/panic_decoy_view.dart';
 import 'views/security/pin_lock_screen.dart';
@@ -44,6 +45,13 @@ void main() async {
   syncService.attachServices(partnerService, chatService, questService: questService);
   final isPinLocked = securityService.isPinRequired && !securityService.isUnlocked;
   await syncService.init(deferNetwork: isPinLocked);
+
+  // Register for push once the pairing code is loaded, so the Worker learns
+  // which topic this device answers to. The topic is the same hashed code the
+  // relay uses, so no raw pairing code ever leaves the device.
+  if (syncService.pairingCode.isNotEmpty) {
+    PushService.init(topic: SyncService.getHashedTopic(syncService.pairingCode));
+  }
 
   final scheduleService = ScheduleService();
   await scheduleService.init();

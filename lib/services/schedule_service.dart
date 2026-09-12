@@ -14,7 +14,7 @@ import 'sync_service.dart';
 import 'partner_service.dart';
 
 class ScheduleService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.1.14';
+  static const String appCurrentBuildVersion = '1.2.0';
 
   // Valid Patreon Unlock Code hashes
   static final Set<String> _validCodeHashes = {

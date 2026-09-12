@@ -1,0 +1,239 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// Firebase Cloud Messaging transport.
+///
+/// Exists because neither of the mechanisms this app already had survives a
+/// dozing Android device: the foreground service gets frozen (observed running
+/// for nine hours, then not ticking for the next six), and exact alarms armed
+/// via `setAlarmClock` were confirmed armed and never delivered. FCM is
+/// delivered by Play Services, which is exempt from Doze, so it sidesteps that
+/// fight rather than trying to win it.
+///
+/// Receiving is Android only: `firebase_messaging` has no Windows or Linux
+/// implementation, and desktop does not need one — it is never Doze-killed and
+/// the existing relay serves it. Sending is not restricted, because it is a
+/// plain HTTP call to the Worker and the director in the case this exists to
+/// fix runs on Windows.
+class PushService {
+  /// Deployed Cloudflare Worker that holds the FCM service-account credential.
+  /// The credential deliberately does not ship in the app.
+  static const String workerBaseUrl = 'https://subtask-push.howard-murdock.workers.dev';
+
+  /// Last token we successfully registered, so an unchanged token on every
+  /// launch does not cost a Worker request.
+  static const String _registeredTokenKey = 'push_registered_token_v1';
+  static const String _registeredTopicKey = 'push_registered_topic_v1';
+
+  /// Surfaced in the diagnostics panel. A device that has silently stopped
+  /// receiving looks identical to a quiet one without this.
+  static const String statusKey = 'push_status_v1';
+
+  /// Whether this platform can *receive* pushes. Registration and the Firebase
+  /// SDK are Android-only.
+  static bool get isSupported => !kIsWeb && Platform.isAndroid;
+
+  /// Whether this platform can *send* through the Worker.
+  ///
+  /// Sending is a plain HTTP POST and has nothing to do with the Firebase SDK,
+  /// so it must not inherit the Android restriction: the director in the case
+  /// this whole change exists to fix runs on Windows.
+  static bool get canSend => !kIsWeb;
+
+  static bool _initialised = false;
+
+  /// Brings Firebase up and registers this device against [topic].
+  ///
+  /// [topic] is the already-hashed pairing code the app uses for relay topics,
+  /// so the Worker never learns a raw pairing code.
+  static Future<void> init({required String topic}) async {
+    if (!isSupported) return;
+    try {
+      if (!_initialised) {
+        await Firebase.initializeApp();
+        FirebaseMessaging.onBackgroundMessage(firebaseBackgroundHandler);
+        _initialised = true;
+      }
+
+      final messaging = FirebaseMessaging.instance;
+
+      // Android 13+ requires runtime notification permission. The app already
+      // requests it via flutter_local_notifications, but asking through
+      // Firebase as well keeps the token valid if that path was declined and
+      // later granted in system settings.
+      await messaging.requestPermission();
+
+      final token = await messaging.getToken();
+      if (token != null) await _registerIfChanged(token: token, topic: topic);
+
+      // Tokens rotate on reinstall, restore, and at Google's discretion. A
+      // rotation we fail to notice means this device silently stops receiving.
+      messaging.onTokenRefresh.listen((fresh) {
+        _registerIfChanged(token: fresh, topic: topic, force: true);
+      });
+
+      // Foreground arrivals still come through here rather than the background
+      // handler, so they need the same routing.
+      FirebaseMessaging.onMessage.listen((message) {
+        _enqueue(message.data);
+      });
+    } catch (e) {
+      await _recordStatus('init failed: $e');
+      if (kDebugMode) print('PushService.init error: $e');
+    }
+  }
+
+  /// Re-registers when the pairing code changes, which re-points delivery at
+  /// the new topic.
+  static Future<void> updateTopic(String topic) async {
+    if (!isSupported || !_initialised) return;
+    try {
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await _registerIfChanged(token: token, topic: topic, force: true);
+      }
+    } catch (e) {
+      await _recordStatus('topic update failed: $e');
+    }
+  }
+
+  static Future<void> _registerIfChanged({
+    required String token,
+    required String topic,
+    bool force = false,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      if (!force &&
+          prefs.getString(_registeredTokenKey) == token &&
+          prefs.getString(_registeredTopicKey) == topic) {
+        return; // Already registered under this exact pairing.
+      }
+
+      final response = await _post('/register', {
+        'topic': topic,
+        'token': token,
+        'platform': 'android',
+      });
+
+      if (response == 200) {
+        await prefs.setString(_registeredTokenKey, token);
+        await prefs.setString(_registeredTopicKey, topic);
+        await _recordStatus('registered');
+      } else {
+        await _recordStatus('register failed: HTTP $response');
+      }
+    } catch (e) {
+      await _recordStatus('register error: $e');
+    }
+  }
+
+  /// Publishes [payload] to whichever devices hold [topic].
+  ///
+  /// Returns false when the Worker reports nobody registered, which is the
+  /// normal answer for a desktop target or one that has not upgraded. The
+  /// caller must treat that as "use the relay instead", not as a failure.
+  static Future<bool> send({
+    required String topic,
+    required String payload,
+    String kind = 'sync',
+  }) async {
+    if (!canSend) return false;
+    try {
+      final status = await _post('/send', {
+        'topic': topic,
+        'payload': payload,
+        'kind': kind,
+      });
+      if (status == 200) return true;
+      if (status == 404) return false; // no Android device on this topic
+      await _recordStatus('send failed: HTTP $status');
+      return false;
+    } catch (e) {
+      await _recordStatus('send error: $e');
+      return false;
+    }
+  }
+
+  static Future<int> _post(String path, Map<String, dynamic> body) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+    try {
+      final request = await client
+          .postUrl(Uri.parse('$workerBaseUrl$path'))
+          .timeout(const Duration(seconds: 10));
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode(body));
+      final response = await request.close().timeout(const Duration(seconds: 15));
+      await response.drain<void>();
+      return response.statusCode;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static Future<void> _recordStatus(String status) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+          statusKey, '${DateTime.now().toIso8601String()} | $status');
+    } catch (_) {}
+  }
+
+  /// Last registration or send outcome, for the diagnostics panel.
+  static Future<String> lastStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      return prefs.getString(statusKey) ?? 'never registered';
+    } catch (_) {
+      return 'unavailable';
+    }
+  }
+
+  /// Hands a received push to the UI isolate.
+  ///
+  /// Deliberately does nothing else. The message is the same encrypted
+  /// `SyncMessage` the relay carries, and `pending_background_messages_v1` is
+  /// the queue `SyncService.processPendingBackgroundMessages` already drains —
+  /// so an FCM-delivered directive takes the identical path as a relay-delivered
+  /// one and inherits addressing, dedup and the occurrence ledger rather than
+  /// needing its own copy of that logic.
+  static Future<void> _enqueue(Map<String, dynamic> data) async {
+    final payload = data['p'];
+    if (payload is! String || payload.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final queue = List<String>.from(
+          prefs.getStringList('pending_background_push_v1') ?? const <String>[]);
+      queue.add(payload);
+      // Cap it: a device offline for a long stretch should not accumulate an
+      // unbounded backlog to replay on next launch.
+      if (queue.length > 100) queue.removeRange(0, queue.length - 100);
+      await prefs.setStringList('pending_background_push_v1', queue);
+    } catch (e) {
+      if (kDebugMode) print('PushService._enqueue error: $e');
+    }
+  }
+}
+
+/// Entry point for messages that arrive while the app is backgrounded or dead.
+///
+/// Must be top-level and annotated: Android spawns a fresh Dart isolate to run
+/// it, with none of the app's state available. It does the minimum — decode,
+/// queue — and leaves every decision to the UI isolate.
+@pragma('vm:entry-point')
+Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {
+    // Already initialised in this isolate; harmless.
+  }
+  await PushService._enqueue(message.data);
+}

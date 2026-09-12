@@ -19,6 +19,7 @@ import '../core/notifications/notification_service.dart';
 import '../core/sound/sound_service.dart';
 import 'order_engine.dart';
 import 'partner_service.dart';
+import 'push_service.dart';
 import 'chat_service.dart';
 import 'quest_service.dart';
 
@@ -616,7 +617,23 @@ class SyncService extends ChangeNotifier {
         broadcastPlayerState();
       }
 
-      // 6. Whole messages the background isolate could not apply itself.
+      // 6. Anything Firebase delivered. These are raw encrypted payloads,
+      //    identical to what the relay carries, so they go through the same
+      //    decode-and-dispatch path rather than a parallel one.
+      final rawPushed = prefs.getStringList('pending_background_push_v1');
+      if (rawPushed != null && rawPushed.isNotEmpty) {
+        for (final raw in rawPushed) {
+          try {
+            await _processIncomingRaw(raw);
+          } catch (e) {
+            if (kDebugMode) print('Error applying pushed message: $e');
+          }
+        }
+        await consumeQueuedEntries('pending_background_push_v1', rawPushed);
+        notifyListeners();
+      }
+
+      // 7. Whole messages the background isolate could not apply itself.
       //    Drained last so a recall lands after the directive it recalls.
       final rawMessages = prefs.getStringList('pending_background_messages_v1');
       if (rawMessages != null && rawMessages.isNotEmpty) {
@@ -2041,6 +2058,16 @@ class SyncService extends ChangeNotifier {
     final payload = secret.isNotEmpty ? EncryptionHelper.encryptString(jsonStr, secret) : jsonStr;
     final topic = _getHashedTopic(code);
     _recordOutboundCode(PartnerService.normalizeCode(code));
+
+    // Push first. It reaches a dozing Android device, which the relay cannot,
+    // and it keeps directive traffic off a shared public server that has been
+    // answering 429. A false here means no Android device holds this topic —
+    // a desktop target, or one still on an older build — so fall through to the
+    // relay rather than treating it as a delivery failure.
+    if (await PushService.send(topic: topic, payload: payload, kind: addressed.type.name)) {
+      await _recordRelaySendResult('delivered via push');
+      return true;
+    }
 
     String titleHeader = 'OrdersApp Alert';
     String priorityHeader = '4';

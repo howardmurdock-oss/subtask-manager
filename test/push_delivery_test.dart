@@ -1,0 +1,142 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:orders_app/core/security/encryption_helper.dart';
+import 'package:orders_app/models/order_item.dart';
+import 'package:orders_app/models/sync_message.dart';
+import 'package:orders_app/services/order_engine.dart';
+import 'package:orders_app/services/partner_service.dart';
+import 'package:orders_app/services/push_service.dart';
+import 'package:orders_app/services/sync_service.dart';
+
+/// Firebase delivers the same encrypted payload the relay carries, so a pushed
+/// directive must land through exactly the same decode-and-dispatch path — not
+/// a parallel one that would need its own copy of addressing, dedup and the
+/// occurrence ledger.
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  const myCode = 'PLAYER1';
+  const mySecret = 'SHARED_SECRET';
+
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  Future<(SyncService, OrderEngine)> player() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('pairing_code', myCode);
+    await prefs.setString('pairing_secret', mySecret);
+
+    final engine = OrderEngine();
+    await engine.init();
+    final partners = PartnerService();
+    await partners.init();
+    final sync = SyncService(engine, partnerService: partners);
+    await sync.init(deferNetwork: true);
+    return (sync, engine);
+  }
+
+  String encryptedDirective(String activeOrderId, String title) {
+    final msg = SyncMessage(
+      id: 'msg_$activeOrderId',
+      type: SyncMessageType.dispatchOrder,
+      senderId: 'director_device',
+      targetCode: myCode,
+      payload: {
+        'activeOrderId': activeOrderId,
+        'order': OrderItem(
+          id: 'ord_tpl',
+          title: title,
+          description: 'Delivered by push',
+          tier: 1,
+          rewardTokens: 10,
+        ).toJson(),
+        'senderCode': 'DIR001',
+        'senderName': 'Director',
+        'assignedByDirector': true,
+      },
+    );
+    return EncryptionHelper.encryptString(msg.encode(), mySecret);
+  }
+
+  group('Pushed directives', () {
+    test('a payload queued by the push handler mounts on drain', () async {
+      final (sync, engine) = await player();
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('pending_background_push_v1',
+          [encryptedDirective('active_push_1', 'Pushed Directive')]);
+
+      await sync.processPendingBackgroundMessages();
+
+      expect(engine.activeOrders.length, 1);
+      expect(engine.activeOrders.first.id, 'active_push_1');
+      expect(engine.activeOrders.first.order.title, 'Pushed Directive');
+      expect(prefs.getStringList('pending_background_push_v1'), isNull,
+          reason: 'the queue should be drained once applied');
+    });
+
+    test('several pushed directives all mount', () async {
+      final (sync, engine) = await player();
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('pending_background_push_v1', [
+        encryptedDirective('active_a', 'First'),
+        encryptedDirective('active_b', 'Second'),
+      ]);
+
+      await sync.processPendingBackgroundMessages();
+
+      expect(engine.activeOrders.map((o) => o.id).toSet(),
+          {'active_a', 'active_b'});
+    });
+
+    test('a pushed directive addressed elsewhere is ignored', () async {
+      // Push must not become a way around addressing.
+      final (sync, engine) = await player();
+
+      final msg = SyncMessage(
+        id: 'msg_not_mine',
+        type: SyncMessageType.dispatchOrder,
+        senderId: 'director_device',
+        targetCode: 'SOMEONEELSE',
+        payload: {
+          'activeOrderId': 'active_not_mine',
+          'order': OrderItem(id: 'o', title: 'Not Mine', description: 'x', tier: 1)
+              .toJson(),
+          'senderCode': 'DIR001',
+        },
+      );
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('pending_background_push_v1',
+          [EncryptionHelper.encryptString(msg.encode(), mySecret)]);
+
+      await sync.processPendingBackgroundMessages();
+
+      expect(engine.activeOrders, isEmpty);
+    });
+
+    test('an undecryptable payload does not abort the drain', () async {
+      final (sync, engine) = await player();
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('pending_background_push_v1', [
+        'not decryptable with any known secret',
+        encryptedDirective('active_survivor', 'Survivor'),
+      ]);
+
+      await sync.processPendingBackgroundMessages();
+
+      expect(engine.activeOrders.length, 1);
+      expect(engine.activeOrders.first.id, 'active_survivor');
+    });
+  });
+
+  group('Platform capability', () {
+    test('sending is allowed off Android, receiving is not', () {
+      // The director runs on Windows. Gating sends on the Firebase SDK's
+      // platform support would have made the whole migration useless there.
+      expect(PushService.canSend, isTrue);
+      expect(PushService.isSupported, isFalse,
+          reason: 'these tests run on desktop, which cannot receive pushes');
+    });
+  });
+}
