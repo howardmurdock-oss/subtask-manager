@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:orders_app/models/order_item.dart';
+import 'package:orders_app/models/user_stats.dart';
 import 'package:orders_app/models/sync_message.dart';
 import 'package:orders_app/services/order_engine.dart';
 import 'package:orders_app/services/partner_service.dart';
@@ -161,6 +162,90 @@ void main() {
 
       expect(engine.activeOrders.length, 1,
           reason: 'a recall aimed at another device must not apply here');
+    });
+
+    test('a re-dispatched task the player already completed still mounts',
+        () async {
+      // The whole failure in one place: notification arrived, card did not.
+      // A title the player has completed before must not veto a new delivery.
+      final (sync, engine) = await player();
+
+      engine.stats.history.add(DisciplineLogEntry(
+        id: 'old_delivery_id',
+        orderTitle: 'Drink Water',
+        category: 'Health',
+        tier: 1,
+        tokenDelta: 5,
+        isSuccess: true,
+        reason: 'Completed earlier',
+        timestamp: DateTime.now().subtract(const Duration(days: 1)),
+      ));
+
+      final msg = SyncMessage(
+        id: 'msg_new_water',
+        type: SyncMessageType.dispatchOrder,
+        senderId: 'director_device',
+        targetCode: myCode,
+        payload: {
+          'activeOrderId': 'new_delivery_id',
+          'order': OrderItem(
+            id: 'ord_water',
+            title: 'Drink Water',
+            description: 'Drink 500ml',
+            tier: 1,
+            rewardTokens: 5,
+          ).toJson(),
+          'senderCode': 'DIR001',
+          'senderName': 'Director',
+          'assignedByDirector': true,
+        },
+      );
+
+      await sync.handleIncomingSyncMessage(msg);
+
+      expect(engine.activeOrders.where((o) => o.id == 'new_delivery_id'),
+          isNotEmpty,
+          reason: 'a task completed yesterday must be dispatchable today');
+    });
+
+    test('a replay of the very same delivery is still refused', () async {
+      final (sync, engine) = await player();
+
+      engine.stats.history.add(DisciplineLogEntry(
+        id: 'replayed_delivery',
+        orderTitle: 'Drink Water',
+        category: 'Health',
+        tier: 1,
+        tokenDelta: 5,
+        isSuccess: true,
+        reason: 'Completed earlier',
+        timestamp: DateTime.now().subtract(const Duration(hours: 2)),
+      ));
+
+      final replay = SyncMessage(
+        id: 'msg_replay_water',
+        type: SyncMessageType.dispatchOrder,
+        senderId: 'director_device',
+        targetCode: myCode,
+        payload: {
+          'activeOrderId': 'replayed_delivery',
+          'order': OrderItem(
+            id: 'ord_water',
+            title: 'Drink Water',
+            description: 'Drink 500ml',
+            tier: 1,
+            rewardTokens: 5,
+          ).toJson(),
+          'senderCode': 'DIR001',
+          'senderName': 'Director',
+          'assignedByDirector': true,
+        },
+      );
+
+      await sync.handleIncomingSyncMessage(replay);
+
+      expect(engine.activeOrders, isEmpty,
+          reason: 'the same delivery id completed already must not resurrect');
     });
 
     test('a malformed queued message does not abort the rest of the drain',

@@ -404,11 +404,13 @@ class SyncService extends ChangeNotifier {
                 senderName == 'Myself (Director)' ||
                 data['assignedByDirector'] == false;
 
+            final hasDeliveryId = activeOrderId != null && activeOrderId.isNotEmpty;
             final isAlreadyHandled = isDirectiveHandled(
               activeOrderId: activeOrderId,
-              orderId: order.id,
+              orderId: hasDeliveryId ? null : order.id,
               msgId: messageId,
               title: order.title,
+              matchTitle: !hasDeliveryId,
             );
 
             final hasExplicitActiveId = activeOrderId != null && activeOrderId.isNotEmpty;
@@ -430,9 +432,10 @@ class SyncService extends ChangeNotifier {
               orElse: () => null,
             );
 
-            final alreadyInHistory = _engine.stats.history.any((h) =>
-                (activeOrderId != null && activeOrderId.isNotEmpty && h.id == activeOrderId) ||
-                h.orderTitle.trim().toLowerCase() == order.title.trim().toLowerCase());
+            final alreadyInHistory = hasDeliveryId
+                ? _engine.stats.history.any((h) => h.id == activeOrderId)
+                : _engine.stats.history.any((h) =>
+                    h.orderTitle.trim().toLowerCase() == order.title.trim().toLowerCase());
 
             final isDirectorAssigned = data['assignedByDirector'] as bool? ?? (senderName != 'Self');
             DateTime? parsedAssignedAt;
@@ -456,17 +459,17 @@ class SyncService extends ChangeNotifier {
               );
               markDirectiveHandled(
                 activeOrderId: assigned.id,
-                orderId: order.id,
+                orderId: hasDeliveryId ? null : order.id,
                 msgId: messageId,
-                title: order.title,
+                title: hasDeliveryId ? null : order.title,
               );
               _incomingOrderController.add(assigned);
             } else {
               markDirectiveHandled(
                 activeOrderId: existingLiveOrder?.id ?? activeOrderId,
-                orderId: order.id,
+                orderId: hasDeliveryId ? null : order.id,
                 msgId: messageId,
-                title: order.title,
+                title: hasDeliveryId ? null : order.title,
               );
             }
           } catch (e) {
@@ -651,7 +654,20 @@ class SyncService extends ChangeNotifier {
     } catch (_) {}
   }
 
-  bool isDirectiveHandled({String? activeOrderId, String? orderId, String? msgId, String? title}) {
+  /// Whether this directive has already been dealt with.
+  ///
+  /// [matchTitle] exists because a title is not an identity. Tasks are meant to
+  /// recur: "Drink Water" completed yesterday must be dispatchable again today.
+  /// Treating the title as identity meant a directive could be delivered once
+  /// ever, and every later send was refused while the notification still fired.
+  /// Callers holding a real delivery id should leave it off.
+  bool isDirectiveHandled({
+    String? activeOrderId,
+    String? orderId,
+    String? msgId,
+    String? title,
+    bool matchTitle = true,
+  }) {
     if (activeOrderId != null && activeOrderId.isNotEmpty && _handledDirectiveIds.contains(activeOrderId)) {
       return true;
     }
@@ -661,7 +677,7 @@ class SyncService extends ChangeNotifier {
     if (msgId != null && msgId.isNotEmpty && _handledDirectiveIds.contains(msgId)) {
       return true;
     }
-    if (title != null && title.trim().isNotEmpty) {
+    if (matchTitle && title != null && title.trim().isNotEmpty) {
       final cleanTitle = 'title_${title.trim().toLowerCase()}';
       if (_handledDirectiveIds.contains(cleanTitle)) {
         return true;
@@ -2454,21 +2470,25 @@ class SyncService extends ChangeNotifier {
           String assignedId = activeOrderId ?? order.id;
 
           // 1. Check if this directive has already been handled (active, completed, reviewed, or dismissed)
+          // The sender named this delivery, so that id is its identity. The
+          // title must not veto: re-dispatching a task the player has done
+          // before is the normal case, not a duplicate.
+          final hasDeliveryId = activeOrderId != null && activeOrderId.isNotEmpty;
           final isAlreadyHandled = isDirectiveHandled(
             activeOrderId: activeOrderId,
-            orderId: order.id,
+            orderId: hasDeliveryId ? null : order.id,
             msgId: msg.id,
             title: order.title,
+            matchTitle: !hasDeliveryId,
           );
 
           // 2. Check if this directive already exists on this device in any state
           final existingOrder = _engine.activeOrders.cast<ActiveOrder?>().firstWhere(
             (o) {
               if (o == null) return false;
-              if (activeOrderId != null && activeOrderId.isNotEmpty && o.id == activeOrderId) return true;
+              if (hasDeliveryId) return o.id == activeOrderId;
               if (order.id.isNotEmpty && (o.id == order.id || o.order.id == order.id)) return true;
-              final isMatchingTitle = o.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
-              return isMatchingTitle;
+              return o.order.title.trim().toLowerCase() == order.title.trim().toLowerCase();
             },
             orElse: () => null,
           );
@@ -2479,10 +2499,13 @@ class SyncService extends ChangeNotifier {
                existingOrder.status == OrderStatus.pending ||
                existingOrder.status == OrderStatus.underReview);
 
-          // 4. Check if already recorded in completed discipline history
-          final alreadyInHistory = _engine.stats.history.any((h) =>
-              (activeOrderId != null && activeOrderId.isNotEmpty && h.id == activeOrderId) ||
-              h.orderTitle.trim().toLowerCase() == order.title.trim().toLowerCase());
+          // 4. Check if this exact delivery is already in completed history.
+          //    Matched by id only — a title in the history just means the player
+          //    has done this task before, which is no reason to refuse a new one.
+          final alreadyInHistory = hasDeliveryId
+              ? _engine.stats.history.any((h) => h.id == activeOrderId)
+              : _engine.stats.history.any((h) =>
+                  h.orderTitle.trim().toLowerCase() == order.title.trim().toLowerCase());
 
           // If Director explicitly re-sent and it's not currently running, unblock it!
           final shouldMount = (!isAlreadyActive && isResend) ||
@@ -2513,9 +2536,9 @@ class SyncService extends ChangeNotifier {
             assignedId = assigned.id;
             markDirectiveHandled(
               activeOrderId: assigned.id,
-              orderId: order.id,
+              orderId: hasDeliveryId ? null : order.id,
               msgId: msg.id,
-              title: order.title,
+              title: hasDeliveryId ? null : order.title,
             );
             _incomingOrderController.add(assigned);
             try {
@@ -2534,9 +2557,9 @@ class SyncService extends ChangeNotifier {
             assignedId = existingOrder?.id ?? activeOrderId ?? order.id;
             markDirectiveHandled(
               activeOrderId: assignedId,
-              orderId: order.id,
+              orderId: hasDeliveryId ? null : order.id,
               msgId: msg.id,
-              title: order.title,
+              title: hasDeliveryId ? null : order.title,
             );
           }
 

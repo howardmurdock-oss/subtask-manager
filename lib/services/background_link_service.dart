@@ -801,10 +801,28 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           final isResend = msg.payload['isResend'] == true || msg.payload['forceAssign'] == true;
 
           // Check if directive was already handled or recorded in active orders / handled IDs (bypass if intentional re-send)
-          if (!isResend && _isDirectiveHandled(activeOrderId: activeOrderId, orderId: orderId, msgId: msg.id, title: title)) {
+          // A title is not an identity: the same task dispatched again is a new
+          // directive, not a repeat of the old one. Only fall back to the title
+          // when the sender gave us no delivery id to go on.
+          final hasDeliveryId = activeOrderId != null && activeOrderId.isNotEmpty;
+          if (!isResend &&
+              _isDirectiveHandled(
+                activeOrderId: activeOrderId,
+                orderId: orderId,
+                msgId: msg.id,
+                title: hasDeliveryId ? null : title,
+              )) {
             break;
           }
-          _markDirectiveHandled(activeOrderId: activeOrderId, orderId: orderId, msgId: msg.id, title: title);
+          // Bank the delivery, not the task: orderId is the catalog id and the
+          // title is shared by every task of that name, so recording either one
+          // would block this task from ever being dispatched again.
+          _markDirectiveHandled(
+            activeOrderId: activeOrderId,
+            orderId: hasDeliveryId ? null : orderId,
+            msgId: msg.id,
+            title: hasDeliveryId ? null : title,
+          );
 
           final queuedPayload = Map<String, dynamic>.from(msg.payload);
           queuedPayload['messageId'] = msg.id;

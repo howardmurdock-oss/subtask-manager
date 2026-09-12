@@ -55,7 +55,11 @@ void main() {
       expect(engine.activeOrders.first.id, equals('active_uuid_999'));
       expect(engine.activeOrders.first.order.title, equals('Daily Pushup Challenge'));
       expect(sync.isDirectiveHandled(activeOrderId: 'active_uuid_999'), isTrue);
-      expect(sync.isDirectiveHandled(title: 'Daily Pushup Challenge'), isTrue);
+      // The title is deliberately NOT banked. It identifies the task, not this
+      // delivery, so banking it blocked every future dispatch of that task —
+      // the director got a notification on the player device and no card.
+      // Replay protection comes from the delivery id, asserted below.
+      expect(sync.isDirectiveHandled(title: 'Daily Pushup Challenge'), isFalse);
 
       // 2. Replay arrival (e.g. ntfy 24h replay or app relaunch): must be silently ignored
       final replayMsg = SyncMessage(
@@ -88,8 +92,13 @@ void main() {
       await engine.init();
 
       // Pre-populate completed directive in history
+      // A completed directive records the id of the delivery it completed
+      // (DisciplineLogEntry.id = activeOrder.id), so a genuine replay arrives
+      // carrying this same id. The previous fixture used an unrelated id and
+      // therefore only passed via title matching — which also blocked
+      // legitimate re-dispatch of any task the player had ever finished.
       engine.stats.history.add(DisciplineLogEntry(
-        id: 'rec_completed_777',
+        id: 'old_active_id',
         orderTitle: 'Morning Stretch',
         category: 'Fitness',
         tier: 1,
@@ -132,6 +141,29 @@ void main() {
 
       // Must NOT be resurrected into active orders
       expect(engine.activeOrders.where((o) => o.order.title == 'Morning Stretch'), isEmpty);
+
+      // But a *new* dispatch of the same task is a different directive and must
+      // land. Tasks recur; a title the player has completed before is no reason
+      // to refuse one. This is what silently produced a notification with no
+      // card on the player's device.
+      final freshDispatch = SyncMessage(
+        id: 'msg_fresh_dispatch',
+        type: SyncMessageType.dispatchOrder,
+        senderId: 'director_xyz',
+        payload: {
+          'activeOrderId': 'brand_new_active_id',
+          'order': orderItem.toJson(),
+          'senderCode': 'DIR999',
+          'senderName': 'Director',
+          'assignedByDirector': true,
+        },
+      );
+
+      await sync.handleIncomingSyncMessage(freshDispatch);
+
+      expect(engine.activeOrders.where((o) => o.id == 'brand_new_active_id'),
+          isNotEmpty,
+          reason: 'a new delivery of a previously completed task must mount');
 
       sync.dispose();
       partnerService.dispose();
