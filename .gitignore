@@ -64,3 +64,8 @@ dist/
 worker/.wrangler/
 worker/node_modules/
 worker/.dev.vars
+
+# Firebase service-account keys. These can push to every user; never commit one.
+*adminsdk*.json
+*service-account*.json
+*serviceAccount*.json

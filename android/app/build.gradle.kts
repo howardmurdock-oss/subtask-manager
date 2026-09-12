@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.orders_app"
+    namespace = "com.subtaskmanager.app"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -16,8 +16,9 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.orders_app"
+        // Must match the Android app registered in Firebase, or pushes are
+        // accepted by FCM and silently never delivered.
+        applicationId = "com.subtaskmanager.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

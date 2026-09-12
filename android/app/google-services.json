@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "523429174286",
+    "project_id": "subtask-manager",
+    "storage_bucket": "subtask-manager.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:523429174286:android:e4a81fa710aa518f17305f",
+        "android_client_info": {
+          "package_name": "com.subtaskmanager.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC744w52mJoeO6byhv0gHrOQpvgg94e7Qc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

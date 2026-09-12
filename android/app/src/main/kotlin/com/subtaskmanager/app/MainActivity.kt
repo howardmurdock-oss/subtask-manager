@@ -1,4 +1,4 @@
-package com.example.orders_app
+package com.subtaskmanager.app
 
 import io.flutter.embedding.android.FlutterActivity
 
