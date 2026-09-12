@@ -175,6 +175,34 @@ class PushService {
     }
   }
 
+  /// Stages upcoming scheduled directives with the Worker.
+  ///
+  /// Each entry is a fully-formed encrypted dispatchOrder and the moment it
+  /// should be sent. The Worker holds no scheduling logic at all — it sends
+  /// what it was given, when it was told to — so a scheduled directive arrives
+  /// on the device as an ordinary dispatch and needs no special handling.
+  ///
+  /// Replaces everything previously staged for this topic, so a rule the user
+  /// disabled or retimed stops firing.
+  static Future<bool> stageSchedule({
+    required String topic,
+    required List<Map<String, dynamic>> entries,
+  }) async {
+    if (!canSend) return false;
+    try {
+      final status = await _post('/schedule', {'topic': topic, 'entries': entries});
+      if (status == 200) {
+        await _recordStatus('staged ${entries.length} scheduled directive(s)');
+        return true;
+      }
+      await _recordStatus('schedule upload failed: HTTP $status');
+      return false;
+    } catch (e) {
+      await _recordStatus('schedule upload error: $e');
+      return false;
+    }
+  }
+
   static Future<int> _post(String path, Map<String, dynamic> body) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
     try {

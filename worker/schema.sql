@@ -14,3 +14,20 @@ CREATE INDEX IF NOT EXISTS idx_devices_topic ON devices (topic);
 
 -- Supports pruning registrations that have gone quiet for months.
 CREATE INDEX IF NOT EXISTS idx_devices_updated_at ON devices (updated_at);
+
+-- Pre-staged scheduled pushes.
+--
+-- The Worker holds no scheduling logic. A device computes its own upcoming
+-- occurrences, encrypts each one as a complete dispatchOrder message, and
+-- uploads it with the time it should go out. The cron simply sends what it was
+-- given, so a scheduled directive arrives down the same path as a
+-- director-dispatched one and needs no separate handling on the device.
+CREATE TABLE IF NOT EXISTS schedules (
+  topic    TEXT NOT NULL,
+  rule_id  TEXT NOT NULL,
+  due_at   INTEGER NOT NULL,
+  payload  TEXT NOT NULL,
+  PRIMARY KEY (topic, rule_id, due_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedules_due_at ON schedules (due_at);

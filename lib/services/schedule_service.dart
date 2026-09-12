@@ -10,11 +10,14 @@ import '../core/notifications/notification_service.dart';
 import '../core/sound/sound_service.dart';
 import 'order_engine.dart';
 import 'schedule_coordinator.dart';
+import 'push_service.dart';
+import '../models/sync_message.dart';
+import '../core/security/encryption_helper.dart';
 import 'sync_service.dart';
 import 'partner_service.dart';
 
 class ScheduleService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.2.2';
+  static const String appCurrentBuildVersion = '1.3.0';
 
   // Valid Patreon Unlock Code hashes
   static final Set<String> _validCodeHashes = {
@@ -275,6 +278,10 @@ class ScheduleService extends ChangeNotifier {
       final encoded = jsonEncode(toWrite.map((r) => r.toJson()).toList());
       await prefs.setString('saved_scheduled_rules_v1', encoded);
       await prefs.setBool('patreon_vip_unlocked_v1', _isUnlocked);
+
+      // Every rule change and every execution passes through here, so this is
+      // the one place that keeps the Worker's view of the schedule current.
+      unawaited(uploadScheduleToRelay());
     } catch (e) {
       if (kDebugMode) print('Error saving ScheduleService storage: $e');
     }
@@ -295,6 +302,82 @@ class ScheduleService extends ChangeNotifier {
         checkDueRules();
       }
     });
+  }
+
+  /// Hands upcoming self-draw occurrences to the Worker to fire on time.
+  ///
+  /// The device cannot be relied upon to wake itself: on the hardware this was
+  /// built against the foreground service ran nine hours then stopped ticking
+  /// for six, and an exact alarm confirmed as armed was never delivered. A cron
+  /// outside the device is subject to none of that.
+  ///
+  /// Each occurrence is staged as the same encrypted dispatchOrder a director
+  /// would send, carrying the deterministic per-occurrence active-order id — so
+  /// if the local alarm fires as well, `assignOrder` recognises the duplicate
+  /// and the occurrence ledger refuses the second execution. Belt and braces,
+  /// not either-or.
+  Future<void> uploadScheduleToRelay() async {
+    if (!PushService.canSend) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final myCode = prefs.getString('pairing_code') ?? '';
+      final mySecret = prefs.getString('pairing_secret') ?? '';
+      if (myCode.isEmpty) return;
+
+      final entries = <Map<String, dynamic>>[];
+      final now = DateTime.now();
+
+      for (final rule in _rules) {
+        if (!rule.isEnabled) continue;
+        // Director rules dispatch to someone else and are sent when they fire;
+        // only self-draws need waking this device up.
+        if (rule.targetType != ScheduleTargetType.playerSelfDraw) continue;
+
+        final order = rule.stagedOrder ?? rule.specificOrder;
+        if (order == null) continue;
+
+        for (final trigger
+            in rule.upcomingTriggers(NotificationService.preArmedOccurrences, from: now)) {
+          final message = SyncMessage(
+            id: 'sched_${ScheduleCoordinator.occurrenceKey(rule.id, trigger)}',
+            type: SyncMessageType.dispatchOrder,
+            // Deliberately not this device's id or pairing code. A scheduled
+            // self-draw really is "from me to me", but _isOwnMessage exists to
+            // kill relay echo loops and cannot tell the two apart — staging it
+            // under our own identity meant the push arrived and was discarded
+            // as our own echo. Addressing still works through targetCode.
+            senderId: 'scheduled',
+            targetCode: myCode,
+            payload: {
+              'activeOrderId':
+                  ScheduleCoordinator.activeOrderIdFor(rule.id, trigger),
+              'order': order.toJson(),
+              'senderCode': '',
+              'senderName': 'Scheduled Task',
+              'assignedByDirector': false,
+              'isScheduled': true,
+              'assignedAt': trigger.toIso8601String(),
+            },
+          );
+
+          final encoded = message.encode();
+          entries.add({
+            'ruleId': '${rule.id}_${trigger.millisecondsSinceEpoch}',
+            'at': trigger.millisecondsSinceEpoch,
+            'payload': mySecret.isNotEmpty
+                ? EncryptionHelper.encryptString(encoded, mySecret)
+                : encoded,
+          });
+        }
+      }
+
+      await PushService.stageSchedule(
+        topic: SyncService.getHashedTopic(myCode),
+        entries: entries,
+      );
+    } catch (e) {
+      if (kDebugMode) print('ScheduleService: schedule upload error: $e');
+    }
   }
 
   /// Re-registers OS alarms for every enabled rule.

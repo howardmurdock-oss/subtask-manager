@@ -38,6 +38,25 @@ const MAX_PAYLOAD_BYTES = 3500;
 
 const MAX_TOKENS_PER_TOPIC = 10;
 
+/**
+ * Occurrences a device may stage ahead. Matches the app's pre-armed alarm
+ * window, so both mechanisms cover the same span of time.
+ */
+const MAX_SCHEDULED_PER_TOPIC = 40;
+
+/**
+ * Pushes attempted per cron tick. The free plan caps subrequests per
+ * invocation, and each push is one; anything left waits for the next minute
+ * rather than being dropped.
+ */
+const MAX_DUE_PER_TICK = 30;
+
+/**
+ * Past this, the device's own catch-up has long since handled the occurrence
+ * and pushing it would deliver a directive the user already dealt with.
+ */
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // encoding helpers
 // ---------------------------------------------------------------------------
@@ -179,6 +198,114 @@ async function handleRegister(request: Request, env: Env): Promise<Response> {
   return json({ ok: true });
 }
 
+/**
+ * Pushes one payload to every device holding a topic.
+ *
+ * Shared by /send and the cron so a scheduled directive is delivered by exactly
+ * the same code as a dispatched one — the device cannot tell them apart, which
+ * is the point: it already knows how to handle a dispatch.
+ */
+async function pushToTopic(
+  env: Env,
+  accessToken: string,
+  topic: string,
+  payload: string,
+  kind: string,
+): Promise<{ sent: number; stale: string[] }> {
+  const { results } = await env.DB.prepare(
+    `SELECT push_token FROM devices WHERE topic = ?1 ORDER BY updated_at DESC LIMIT ?2`,
+  )
+    .bind(topic, MAX_TOKENS_PER_TOPIC)
+    .all<{ push_token: string }>();
+
+  if (!results || results.length === 0) return { sent: 0, stale: [] };
+
+  const endpoint = `https://fcm.googleapis.com/v1/projects/${env.FCM_PROJECT_ID}/messages:send`;
+  let sent = 0;
+  const stale: string[] = [];
+
+  for (const row of results) {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: {
+          token: row.push_token,
+          data: { p: payload, k: kind, v: '1' },
+          android: { priority: 'high' },
+        },
+      }),
+    });
+
+    if (response.ok) {
+      sent++;
+      continue;
+    }
+    const detail = await response.text();
+    if (
+      response.status === 404 ||
+      detail.includes('UNREGISTERED') ||
+      detail.includes('INVALID_ARGUMENT')
+    ) {
+      stale.push(row.push_token);
+    }
+  }
+
+  return { sent, stale };
+}
+
+async function pruneTokens(env: Env, tokens: string[]): Promise<void> {
+  if (tokens.length === 0) return;
+  const placeholders = tokens.map((_, i) => `?${i + 1}`).join(',');
+  await env.DB.prepare(`DELETE FROM devices WHERE push_token IN (${placeholders})`)
+    .bind(...tokens)
+    .run();
+}
+
+/**
+ * Replaces everything staged for a topic.
+ *
+ * Wholesale replacement rather than merging: a rule the user disabled or
+ * retimed must not keep firing from a row nobody remembers uploading, and the
+ * device always knows its own full schedule.
+ */
+async function handleSchedule(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json().catch(() => null)) as {
+    topic?: string;
+    entries?: Array<{ ruleId?: string; at?: number; payload?: string }>;
+  } | null;
+
+  if (!body?.topic || !Array.isArray(body.entries)) {
+    return json({ error: 'topic and entries are required' }, 400);
+  }
+
+  const valid = body.entries
+    .filter(
+      (e): e is { ruleId: string; at: number; payload: string } =>
+        typeof e?.ruleId === 'string' &&
+        typeof e?.at === 'number' &&
+        typeof e?.payload === 'string' &&
+        new TextEncoder().encode(e.payload).length <= MAX_PAYLOAD_BYTES,
+    )
+    .slice(0, MAX_SCHEDULED_PER_TOPIC);
+
+  const statements = [
+    env.DB.prepare(`DELETE FROM schedules WHERE topic = ?1`).bind(body.topic),
+    ...valid.map((e) =>
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO schedules (topic, rule_id, due_at, payload)
+         VALUES (?1, ?2, ?3, ?4)`,
+      ).bind(body.topic, e.ruleId, e.at, e.payload),
+    ),
+  ];
+  await env.DB.batch(statements);
+
+  return json({ ok: true, staged: valid.length, rejected: body.entries.length - valid.length });
+}
+
 async function handleSend(request: Request, env: Env): Promise<Response> {
   const body = (await request.json().catch(() => null)) as {
     topic?: string;
@@ -194,11 +321,12 @@ async function handleSend(request: Request, env: Env): Promise<Response> {
     return json({ error: 'payload too large for a data message', limit: MAX_PAYLOAD_BYTES }, 413);
   }
 
+  // Checked before minting a token: a desktop target should cost nothing.
   const { results } = await env.DB.prepare(
-    `SELECT push_token FROM devices WHERE topic = ?1 ORDER BY updated_at DESC LIMIT ?2`,
+    `SELECT 1 FROM devices WHERE topic = ?1 LIMIT 1`,
   )
-    .bind(body.topic, MAX_TOKENS_PER_TOPIC)
-    .all<{ push_token: string }>();
+    .bind(body.topic)
+    .all();
 
   if (!results || results.length === 0) {
     // No Android device has claimed this topic. The caller should fall back to
@@ -207,61 +335,76 @@ async function handleSend(request: Request, env: Env): Promise<Response> {
   }
 
   const accessToken = await getAccessToken(env);
-  const endpoint = `https://fcm.googleapis.com/v1/projects/${env.FCM_PROJECT_ID}/messages:send`;
+  const { sent, stale } = await pushToTopic(
+    env,
+    accessToken,
+    body.topic,
+    body.payload,
+    body.kind ?? 'sync',
+  );
+  await pruneTokens(env, stale);
 
-  let sent = 0;
-  const stale: string[] = [];
-  const errors: string[] = [];
+  return json({ sent, pruned: stale.length }, sent > 0 ? 200 : 502);
+}
+
+/**
+ * Fires staged directives whose time has come.
+ *
+ * This exists because the device cannot be relied on to wake itself. On the
+ * hardware this was built against, a foreground service ran for nine hours and
+ * then stopped ticking for six, and an exact alarm armed via setAlarmClock was
+ * confirmed armed and never delivered. A cron running outside the device is not
+ * subject to any of that.
+ */
+async function runDueSchedules(env: Env): Promise<void> {
+  const now = Date.now();
+
+  const { results } = await env.DB.prepare(
+    `SELECT topic, rule_id, due_at, payload FROM schedules
+     WHERE due_at <= ?1 ORDER BY due_at ASC LIMIT ?2`,
+  )
+    .bind(now, MAX_DUE_PER_TICK)
+    .all<{ topic: string; rule_id: string; due_at: number; payload: string }>();
+
+  if (!results || results.length === 0) return;
+
+  let accessToken: string | null = null;
+  const staleTokens: string[] = [];
+  const done: Array<{ topic: string; ruleId: string; dueAt: number }> = [];
 
   for (const row of results) {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        message: {
-          token: row.push_token,
-          // Data-only: the app decides what to show, so its dedup and
-          // addressing rules still apply.
-          data: {
-            p: body.payload,
-            k: body.kind ?? 'sync',
-            v: '1',
-          },
-          android: { priority: 'high' },
-        },
-      }),
-    });
+    done.push({ topic: row.topic, ruleId: row.rule_id, dueAt: row.due_at });
 
-    if (response.ok) {
-      sent++;
-      continue;
-    }
+    // Long overdue: the device's own catch-up has dealt with this by now, and
+    // pushing it would re-deliver something the user already saw.
+    if (now - row.due_at > STALE_AFTER_MS) continue;
 
-    const detail = await response.text();
-    // A token that the device has replaced or that belongs to an uninstalled
-    // app stays in the table forever unless it is pruned here, and every send
-    // to that topic keeps paying for it.
-    if (response.status === 404 || detail.includes('UNREGISTERED') || detail.includes('INVALID_ARGUMENT')) {
-      stale.push(row.push_token);
-    } else {
-      errors.push(`${response.status}: ${detail.slice(0, 200)}`);
-    }
+    accessToken ??= await getAccessToken(env);
+    const { stale } = await pushToTopic(env, accessToken, row.topic, row.payload, 'scheduled');
+    staleTokens.push(...stale);
   }
 
-  if (stale.length > 0) {
-    const placeholders = stale.map((_, i) => `?${i + 1}`).join(',');
-    await env.DB.prepare(`DELETE FROM devices WHERE push_token IN (${placeholders})`)
-      .bind(...stale)
-      .run();
+  // Delete after attempting, not before: a row that fails to send is one the
+  // device will still catch up on, and retrying it every minute for a day
+  // would be worse than dropping it.
+  if (done.length > 0) {
+    await env.DB.batch(
+      done.map((d) =>
+        env.DB.prepare(
+          `DELETE FROM schedules WHERE topic = ?1 AND rule_id = ?2 AND due_at = ?3`,
+        ).bind(d.topic, d.ruleId, d.dueAt),
+      ),
+    );
   }
 
-  return json({ sent, pruned: stale.length, errors }, sent > 0 ? 200 : 502);
+  await pruneTokens(env, staleTokens);
 }
 
 export default {
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(runDueSchedules(env));
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
@@ -293,6 +436,10 @@ export default {
       return handleRegister(request, env).catch((e) =>
         json({ error: String(e) }, 500),
       );
+    }
+
+    if (request.method === 'POST' && url.pathname === '/schedule') {
+      return handleSchedule(request, env).catch((e) => json({ error: String(e) }, 500));
     }
 
     if (request.method === 'POST' && url.pathname === '/send') {

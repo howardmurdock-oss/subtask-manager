@@ -20,3 +20,9 @@ database_id = "c10bb87d-867e-442f-b3e0-81b6aef93f1e"
 [[kv_namespaces]]
 binding = "TOKEN_CACHE"
 id = "b2662ab7352f46e5bed49c37560e1578"
+
+# Evaluated every minute. Scheduled windows in this app are fifteen minutes or
+# wider, so minute granularity is far more precision than they need - and
+# infinitely more than a frozen foreground service was providing.
+[triggers]
+crons = ["* * * * *"]
