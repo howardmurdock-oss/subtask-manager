@@ -2011,10 +2011,14 @@ class SyncService extends ChangeNotifier {
     String? relayHost,
   }) async {
     final primaryHost = (relayHost != null && relayHost.isNotEmpty) ? relayHost : _customRelayHost;
-    final hostsToTry = <String>[primaryHost];
-    // Only try alternative host if primary host fails
-    final fallbackHost = primaryHost == 'ntfy.envs.net' ? 'ntfy.sh' : 'ntfy.envs.net';
-    hostsToTry.add(fallbackHost);
+
+    // Retry the SAME host. Falling over to a different relay used to look like
+    // resilience, but a recipient only subscribes to their own configured host:
+    // a directive republished to another server is delivered nowhere, while
+    // this method still returned true and the sender believed it had gone. That
+    // produced sends that silently vanished whenever the primary returned 429
+    // or simply timed out, and worked on the retry a moment later.
+    const attempts = 3;
 
     // An empty code hashes to a single fixed topic that every install sharing
     // this state would publish to and read from, so it is a cross-account
@@ -2119,8 +2123,14 @@ class SyncService extends ChangeNotifier {
     }
 
     final safeTitle = titleHeader.replaceAll(RegExp(r'[^\x20-\x7E]'), '').trim();
+    String lastFailure = 'unknown';
 
-    for (final host in hostsToTry) {
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0) {
+        // Brief backoff: a 429 or a blip clears in well under a second.
+        await Future.delayed(Duration(milliseconds: 400 * attempt));
+      }
+      final host = primaryHost;
       try {
         final url = Uri.parse('https://$host/$topic');
         final req = await _httpClient.postUrl(url).timeout(const Duration(seconds: 15));
@@ -2140,16 +2150,48 @@ class SyncService extends ChangeNotifier {
         final res = await req.close().timeout(const Duration(seconds: 20));
         await res.drain();
         if (res.statusCode == 200) {
+          if (attempt > 0) {
+            await _recordRelaySendResult('recovered on retry ${attempt + 1}');
+          }
           return true;
-        } else if (res.statusCode == 429) {
-          if (kDebugMode) print('Relay $host rate-limited (429), failing over to next relay...');
-          continue;
+        }
+        lastFailure = 'HTTP ${res.statusCode} from $host';
+        if (kDebugMode) {
+          print('Relay $host returned ${res.statusCode}, retrying same host...');
         }
       } catch (e) {
-        if (kDebugMode) print('Failed sending to $host: $e, trying next relay...');
+        lastFailure = '$e';
+        if (kDebugMode) print('Failed sending to $host: $e, retrying same host...');
       }
     }
+
+    // Every attempt failed. Say so rather than reporting a phantom success:
+    // the caller and the diagnostics panel are the only things that can tell
+    // the user their directive never left the device.
+    await _recordRelaySendResult('FAILED after $attempts attempts: $lastFailure');
     return false;
+  }
+
+  /// Last outcome of publishing to the relay, for the diagnostics panel.
+  static const String relaySendStatusKey = 'relay_send_status_v1';
+
+  Future<void> _recordRelaySendResult(String summary) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(relaySendStatusKey,
+          '${DateTime.now().toIso8601String()} | $summary');
+    } catch (_) {}
+  }
+
+  /// Last relay publish outcome, or a note that none have failed.
+  static Future<String> lastRelaySendStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      return prefs.getString(relaySendStatusKey) ?? 'No send failures recorded';
+    } catch (_) {
+      return 'unavailable';
+    }
   }
 
   bool _isOwnMessage(SyncMessage? msg) {

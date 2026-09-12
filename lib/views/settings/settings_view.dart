@@ -12,6 +12,7 @@ import '../../core/sound/sound_service.dart';
 import '../../core/sound/sound_generator.dart';
 import '../../models/order_item.dart';
 import '../../services/order_engine.dart';
+import '../../services/schedule_service.dart';
 import '../../services/sync_service.dart';
 import '../../services/background_link_service.dart';
 import '../../core/notifications/notification_service.dart';
@@ -645,13 +646,53 @@ class _SettingsViewState extends State<SettingsView> {
                     }
                   },
                 ),
-                if (!_isBatterySaver && Platform.isAndroid) ...[
+                // Shown on every platform. The panel was Android-only, which left
+                // the director device — where dispatches originate — with no way
+                // to see that its own sends were failing.
+                if (!_isBatterySaver) ...[
                   const Divider(height: 1),
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Version badge: confirms at a glance which build is
+                        // actually installed. Diagnosing across two devices is
+                        // guesswork when you cannot tell what each is running.
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primary.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: theme.colorScheme.primary.withValues(alpha: 0.4),
+                                ),
+                              ),
+                              child: Text(
+                                'v${ScheduleService.appCurrentBuildVersion}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  fontFamily: 'monospace',
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              Platform.isAndroid
+                                  ? 'Android'
+                                  : (Platform.isWindows ? 'Windows' : 'Desktop'),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
                         Row(
                           children: [
                             Icon(Icons.bug_report_rounded, size: 16, color: theme.colorScheme.primary),
@@ -714,6 +755,21 @@ class _SettingsViewState extends State<SettingsView> {
                                 // Whether the service is *ticking*, not merely
                                 // registered. A stale tick with a RUNNING badge
                                 // means the process is alive but frozen.
+                                // Outbound: whether THIS device's dispatches are
+                                // reaching the relay at all. A failed publish
+                                // used to report success and vanish silently.
+                                FutureBuilder<String>(
+                                  future: SyncService.lastRelaySendStatus(),
+                                  builder: (sctx, ssnap) {
+                                    final st = ssnap.data ?? 'checking...';
+                                    return Text('Outbound send: $st',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontFamily: 'monospace',
+                                          color: st.contains('FAILED') ? Colors.red : null,
+                                        ));
+                                  },
+                                ),
                                 Text('Relay status: ${d['relayStatus'] ?? 'No errors'}',
                                     style: TextStyle(
                                       fontSize: 12,
