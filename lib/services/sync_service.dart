@@ -2343,7 +2343,11 @@ class SyncService extends ChangeNotifier {
             _partnerService?.findContactById(senderId);
 
         if (existingContact != null) {
-          // If the partner is already on the contact list, mark handled, update secret or lastSeen seamlessly without re-prompting
+          // Already a contact, so no prompt is needed - but an answer is. The
+          // sender is sitting on a pending request and has no idea it was
+          // absorbed here; without a reply it waits forever, which looks
+          // exactly like the request never arriving. This is the state a
+          // half-finished earlier attempt leaves behind.
           _partnerService?.markRequestHandled(cleanSender, sharedSecret);
           if (sharedSecret.isNotEmpty && existingContact.pairingSecret != sharedSecret) {
             _partnerService?.updateContact(existingContact.copyWith(
@@ -2352,6 +2356,28 @@ class SyncService extends ChangeNotifier {
             ));
           } else {
             _partnerService?.updateLastSeen(existingContact.id);
+          }
+
+          if (senderCode.isNotEmpty) {
+            final myDisplayName = _nickname.isNotEmpty
+                ? _nickname
+                : (_role == ConnectionRole.director ? 'Director' : 'Submissive');
+            sendDirectToTopic(
+              senderCode,
+              '',
+              SyncMessage(
+                type: SyncMessageType.pairingAccept,
+                senderId: _deviceId,
+                payload: {
+                  'senderId': _deviceId,
+                  'senderCode': _pairingCode,
+                  'senderName': myDisplayName,
+                  'sharedSecret': sharedSecret.isNotEmpty
+                      ? sharedSecret
+                      : existingContact.pairingSecret,
+                },
+              ),
+            );
           }
           return;
         }

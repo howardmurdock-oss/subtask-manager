@@ -13,7 +13,7 @@ import 'order_engine.dart';
 import 'sync_service.dart';
 
 class QuestService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.3.0';
+  static const String appCurrentBuildVersion = '1.3.1';
 
   // Valid Patreon Unlock Code hashes (stored securely as SHA-256 digests)
   // Included default codes: 'PATREON-VIP', 'QUESTS-2026', 'DIRECTIVE-CHAIN', 'PATREON-SUPPORTER', 'QUEST'

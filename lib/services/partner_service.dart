@@ -275,23 +275,42 @@ class PartnerService extends ChangeNotifier {
     }
   }
 
+  /// Whether this exact pairing request has already been dealt with.
+  ///
+  /// Identity is the sender's code *plus the shared secret of that request*.
+  /// A bare code is far too coarse: every request carries a freshly generated
+  /// secret, so matching on the code alone meant that once someone's request
+  /// had been handled even once - accepted, declined, or silently absorbed
+  /// because they were already a contact - every future request from them was
+  /// dropped without a trace, and they could never pair again.
+  ///
+  /// Permanently refusing a person is what blocking is for, and that is a
+  /// separate, deliberate decision made through [isSenderBlocked].
   bool isRequestHandled(String? senderCode, [String? sharedSecret]) {
     if (senderCode == null) return false;
     final clean = normalizeCode(senderCode);
     if (clean.isEmpty) return false;
-    if (_handledRequestFingerprints.contains(clean)) return true;
-    if (sharedSecret != null && sharedSecret.trim().isNotEmpty) {
-      if (_handledRequestFingerprints.contains('${clean}_${sharedSecret.trim()}')) return true;
+
+    final secret = sharedSecret?.trim() ?? '';
+    if (secret.isNotEmpty) {
+      return _handledRequestFingerprints.contains('${clean}_$secret');
     }
-    return false;
+    // No secret to distinguish requests: fall back to the coarse match rather
+    // than treating an unidentifiable repeat as new.
+    return _handledRequestFingerprints.contains(clean);
   }
 
   Future<void> markRequestHandled(String senderCode, [String? sharedSecret]) async {
     final clean = normalizeCode(senderCode);
     if (clean.isNotEmpty) {
-      _handledRequestFingerprints.add(clean);
-      if (sharedSecret != null && sharedSecret.trim().isNotEmpty) {
-        _handledRequestFingerprints.add('${clean}_${sharedSecret.trim()}');
+      final secret = sharedSecret?.trim() ?? '';
+      if (secret.isNotEmpty) {
+        // Only the specific exchange. Banking the bare code as well would
+        // blacklist the sender forever, which is not what handling a request
+        // means.
+        _handledRequestFingerprints.add('${clean}_$secret');
+      } else {
+        _handledRequestFingerprints.add(clean);
       }
       _pendingRequests.removeWhere((r) => normalizeCode(r.senderCode) == clean);
       if (_handledRequestFingerprints.length > 500) {
