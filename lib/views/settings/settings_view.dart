@@ -693,6 +693,23 @@ class _SettingsViewState extends State<SettingsView> {
                           ],
                         ),
                         const SizedBox(height: 10),
+                        // Outbound send status lives outside the background
+                        // service section on purpose: it is the only signal the
+                        // dispatching device has, and on desktop there is no
+                        // background service for it to hang off.
+                        FutureBuilder<String>(
+                          future: SyncService.lastRelaySendStatus(),
+                          builder: (sctx, ssnap) {
+                            final st = ssnap.data ?? 'checking...';
+                            return Text('Outbound send: $st',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontFamily: 'monospace',
+                                  color: st.contains('FAILED') ? Colors.red : null,
+                                ));
+                          },
+                        ),
+                        const SizedBox(height: 10),
                         Row(
                           children: [
                             Icon(Icons.bug_report_rounded, size: 16, color: theme.colorScheme.primary),
@@ -712,10 +729,23 @@ class _SettingsViewState extends State<SettingsView> {
                         FutureBuilder<Map<String, String>>(
                           future: BackgroundLinkService.getDiagnostics(),
                           builder: (ctx, snap) {
+                            if (snap.hasError) {
+                              return Text(
+                                  'Diagnostics unavailable: ${snap.error}',
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      fontFamily: 'monospace',
+                                      color: Colors.orange));
+                            }
                             if (!snap.hasData) {
-                              return const Text('Loading…', style: TextStyle(fontSize: 12));
+                              return const Text('Loading…',
+                                  style: TextStyle(fontSize: 12));
                             }
                             final d = snap.data!;
+                            // The foreground service is an Android concept. On
+                            // desktop there is nothing to report, and a red
+                            // "NOT RUNNING" badge would be a false alarm.
+                            final serviceSupported = d['supported'] == 'true';
                             final isRunning = d['isRunning'] == 'true';
                             final isSocketLive = d['socketLive'] == 'true';
                             final state = d['state'] ?? 'Unknown';
@@ -730,17 +760,33 @@ class _SettingsViewState extends State<SettingsView> {
                                 Row(
                                   children: [
                                     Icon(
-                                      isRunning ? Icons.check_circle_rounded : Icons.cancel_rounded,
+                                      !serviceSupported
+                                          ? Icons.desktop_windows_rounded
+                                          : (isRunning
+                                              ? Icons.check_circle_rounded
+                                              : Icons.cancel_rounded),
                                       size: 14,
-                                      color: isRunning ? Colors.green : Colors.red,
+                                      color: !serviceSupported
+                                          ? theme.colorScheme.onSurface
+                                              .withValues(alpha: 0.6)
+                                          : (isRunning ? Colors.green : Colors.red),
                                     ),
                                     const SizedBox(width: 6),
-                                    Text(
-                                      isRunning ? 'Service RUNNING' : 'Service NOT RUNNING',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                        color: isRunning ? Colors.green : Colors.red,
+                                    Expanded(
+                                      child: Text(
+                                        !serviceSupported
+                                            ? 'No background service on this platform'
+                                            : (isRunning
+                                                ? 'Service RUNNING'
+                                                : 'Service NOT RUNNING'),
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                          color: !serviceSupported
+                                              ? theme.colorScheme.onSurface
+                                                  .withValues(alpha: 0.7)
+                                              : (isRunning ? Colors.green : Colors.red),
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -755,21 +801,6 @@ class _SettingsViewState extends State<SettingsView> {
                                 // Whether the service is *ticking*, not merely
                                 // registered. A stale tick with a RUNNING badge
                                 // means the process is alive but frozen.
-                                // Outbound: whether THIS device's dispatches are
-                                // reaching the relay at all. A failed publish
-                                // used to report success and vanish silently.
-                                FutureBuilder<String>(
-                                  future: SyncService.lastRelaySendStatus(),
-                                  builder: (sctx, ssnap) {
-                                    final st = ssnap.data ?? 'checking...';
-                                    return Text('Outbound send: $st',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontFamily: 'monospace',
-                                          color: st.contains('FAILED') ? Colors.red : null,
-                                        ));
-                                  },
-                                ),
                                 Text('Relay status: ${d['relayStatus'] ?? 'No errors'}',
                                     style: TextStyle(
                                       fontSize: 12,

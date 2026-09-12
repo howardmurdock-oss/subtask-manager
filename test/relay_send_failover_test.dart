@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:orders_app/models/sync_message.dart';
+import 'package:orders_app/services/background_link_service.dart';
 import 'package:orders_app/services/order_engine.dart';
 import 'package:orders_app/services/partner_service.dart';
 import 'package:orders_app/services/sync_service.dart';
@@ -67,6 +68,21 @@ void main() {
         reason: 'retries stay on the configured host');
     expect(status, isNot(contains('ntfy.sh')),
         reason: 'publishing to another relay delivers the directive nowhere');
+  });
+
+  test('diagnostics never reject, so the panel cannot hang on Loading',
+      () async {
+    // The panel renders this through a FutureBuilder that only distinguishes
+    // "has data" from "waiting". A rejected future left the section stuck on
+    // "Loading..." forever, which is what the Windows build showed once the
+    // panel stopped being Android-only.
+    final diag = await BackgroundLinkService.getDiagnostics();
+
+    expect(diag, isA<Map<String, String>>());
+    expect(diag.containsKey('supported'), isTrue);
+    expect(diag.containsKey('relayStatus'), isTrue);
+    expect(diag['isRunning'], isNotNull,
+        reason: 'every key must be populated even where the plugin is absent');
   });
 
   test('no failure is recorded before anything has been sent', () async {

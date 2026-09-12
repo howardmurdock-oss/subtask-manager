@@ -1195,20 +1195,53 @@ class BackgroundLinkService {
   }
 
   /// Read live diagnostics saved by background isolate
+  /// Diagnostics for the settings panel.
+  ///
+  /// Must never complete with an error. The panel renders this through a
+  /// FutureBuilder that only distinguishes "has data" from "waiting", so a
+  /// rejected future leaves the section stuck on "Loading..." forever. The
+  /// foreground-service plugin is Android-only and throws when queried
+  /// anywhere else, which is exactly what happened the first time this panel
+  /// was shown on Windows.
   static Future<Map<String, String>> getDiagnostics() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
-    return {
-      'isRunning': (await FlutterForegroundTask.isRunningService).toString(),
-      'socketLive': prefs.getString('bg_link_is_socket_live') ?? 'false',
-      'state': prefs.getString('bg_link_state') ?? 'Unknown',
-      'host': prefs.getString('bg_link_host') ?? 'ntfy.envs.net',
-      'lastMsg': prefs.getString('bg_link_last_msg') ?? 'None',
-      'msgCount': (prefs.getInt('bg_link_msg_count') ?? 0).toString(),
-      'lastError': prefs.getString('bg_link_last_error') ?? 'None',
-      'lastTick': prefs.getString('bg_last_tick_iso') ?? 'Never',
-      'tickCount': (prefs.getInt('bg_tick_count') ?? 0).toString(),
-      'relayStatus': prefs.getString('bg_last_relay_status') ?? 'No errors',
+    final out = <String, String>{
+      'supported': Platform.isAndroid.toString(),
+      'isRunning': 'false',
+      'socketLive': 'false',
+      'state': Platform.isAndroid
+          ? 'Unknown'
+          : 'No background service on this platform',
+      'host': 'ntfy.envs.net',
+      'lastMsg': 'None',
+      'msgCount': '0',
+      'lastError': 'None',
+      'lastTick': 'Never',
+      'tickCount': '0',
+      'relayStatus': 'No errors',
     };
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      out['socketLive'] = prefs.getString('bg_link_is_socket_live') ?? 'false';
+      out['state'] = prefs.getString('bg_link_state') ?? out['state']!;
+      out['host'] = prefs.getString('bg_link_host') ?? 'ntfy.envs.net';
+      out['lastMsg'] = prefs.getString('bg_link_last_msg') ?? 'None';
+      out['msgCount'] = (prefs.getInt('bg_link_msg_count') ?? 0).toString();
+      out['lastError'] = prefs.getString('bg_link_last_error') ?? 'None';
+      out['lastTick'] = prefs.getString('bg_last_tick_iso') ?? 'Never';
+      out['tickCount'] = (prefs.getInt('bg_tick_count') ?? 0).toString();
+      out['relayStatus'] = prefs.getString('bg_last_relay_status') ?? 'No errors';
+    } catch (e) {
+      out['lastError'] = 'prefs unavailable: $e';
+    }
+    if (Platform.isAndroid) {
+      try {
+        out['isRunning'] =
+            (await FlutterForegroundTask.isRunningService).toString();
+      } catch (e) {
+        out['lastError'] = 'service query failed: $e';
+      }
+    }
+    return out;
   }
 }
