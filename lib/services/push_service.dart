@@ -6,6 +6,10 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/notifications/notification_service.dart';
+import '../core/security/encryption_helper.dart';
+import '../models/sync_message.dart';
+
 /// Firebase Cloud Messaging transport.
 ///
 /// Exists because neither of the mechanisms this app already had survives a
@@ -33,6 +37,16 @@ class PushService {
   /// Surfaced in the diagnostics panel. A device that has silently stopped
   /// receiving looks identical to a quiet one without this.
   static const String statusKey = 'push_status_v1';
+
+  /// Message ids the background isolate has already raised a notification for.
+  ///
+  /// When the app is dead, nothing drains the queue, so the background handler
+  /// has to announce the directive itself. When the app is merely backgrounded
+  /// the drain is still running and announces it too — so without this the same
+  /// directive would be announced twice, which is a bug this project has
+  /// already fixed once for scheduled alarms.
+  static const String announcedByPushKey = 'push_announced_ids_v1';
+  static const int _maxAnnouncedIds = 100;
 
   /// Whether this platform can *receive* pushes. Registration and the Firebase
   /// SDK are Android-only.
@@ -196,6 +210,116 @@ class PushService {
     }
   }
 
+  /// Whether the background isolate already notified about this message.
+  static Future<bool> wasAnnouncedByPush(String messageId) async {
+    if (messageId.isEmpty) return false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      return (prefs.getStringList(announcedByPushKey) ?? const <String>[])
+          .contains(messageId);
+    } catch (_) {
+      return false; // Fail open: a duplicate beats a silent directive.
+    }
+  }
+
+  static Future<void> _markAnnouncedByPush(String messageId) async {
+    if (messageId.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final ids = List<String>.from(
+          prefs.getStringList(announcedByPushKey) ?? const <String>[]);
+      if (ids.contains(messageId)) return;
+      ids.add(messageId);
+      if (ids.length > _maxAnnouncedIds) {
+        ids.removeRange(0, ids.length - _maxAnnouncedIds);
+      }
+      await prefs.setStringList(announcedByPushKey, ids);
+    } catch (_) {}
+  }
+
+  /// Raises a notification from the background isolate.
+  ///
+  /// Decryption happens here, on the device, rather than having the sender put
+  /// a readable title in the push. The payload is ciphertext precisely so that
+  /// neither Cloudflare nor Google ever learns what a directive says, and a
+  /// notification title would have given that away for the sake of convenience.
+  static Future<void> _announceFromBackground(Map<String, dynamic> data) async {
+    final raw = data['p'];
+    if (raw is! String || raw.isEmpty) return;
+    try {
+      // This isolate is spawned fresh with none of the app's state, so the
+      // notification plugin has never been set up here. showOrderDispatched
+      // does not initialise it on demand the way the alarm path does, and an
+      // uninitialised plugin fails quietly - which would look exactly like the
+      // bug being fixed. init() is idempotent.
+      await NotificationService.init();
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+
+      // Same candidate secrets the relay path tries, in the same order.
+      final secrets = <String>[];
+      final own = prefs.getString('pairing_secret') ?? '';
+      if (own.isNotEmpty) secrets.add(own);
+      final rawContacts = prefs.getString('partner_contacts_list') ??
+          prefs.getString('partner_contacts_v1');
+      if (rawContacts != null && rawContacts.isNotEmpty) {
+        try {
+          for (final c in jsonDecode(rawContacts) as List) {
+            final s = (c is Map ? c['pairingSecret'] as String? : null) ?? '';
+            if (s.isNotEmpty && !secrets.contains(s)) secrets.add(s);
+          }
+        } catch (_) {}
+      }
+
+      SyncMessage? message;
+      try {
+        message = SyncMessage.decode(raw);
+      } catch (_) {
+        for (final secret in secrets) {
+          try {
+            message = SyncMessage.decode(EncryptionHelper.decryptString(raw, secret));
+            break;
+          } catch (_) {}
+        }
+      }
+      if (message == null) return;
+
+      switch (message.type) {
+        case SyncMessageType.dispatchOrder:
+          final order = message.payload['order'];
+          final title = (order is Map ? order['title'] as String? : null) ?? 'New Directive';
+          final description =
+              (order is Map ? order['description'] as String? : null) ?? '';
+          final tokens = (order is Map ? (order['rewardTokens'] as num?)?.toInt() : null);
+          await NotificationService.showOrderDispatchedNotification(
+            title: title,
+            description: description,
+            assignerName: message.payload['senderName'] as String? ?? 'Director',
+            rewardTokens: tokens,
+          );
+          break;
+        case SyncMessageType.chatMessage:
+          await NotificationService.showChatMessageNotification(
+            senderName: message.payload['senderName'] as String? ?? 'Partner',
+            messageText: message.payload['text'] as String? ?? 'New message',
+          );
+          break;
+        default:
+          // Everything else is applied silently when the app next opens; only
+          // arrivals a user would want to know about immediately warrant a
+          // notification from here.
+          return;
+      }
+
+      await _markAnnouncedByPush(message.id);
+    } catch (e) {
+      if (kDebugMode) print('PushService._announceFromBackground error: $e');
+    }
+  }
+
   /// Hands a received push to the UI isolate.
   ///
   /// Deliberately does nothing else. The message is the same encrypted
@@ -236,4 +360,10 @@ Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
     // Already initialised in this isolate; harmless.
   }
   await PushService._enqueue(message.data);
+
+  // The queue alone is not enough. With the app swiped away there is no UI
+  // isolate to drain it, so nothing would be seen until the app was next
+  // opened - the push arrived and sat silently, which is precisely the failure
+  // this transport was adopted to end.
+  await PushService._announceFromBackground(message.data);
 }

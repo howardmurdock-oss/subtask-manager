@@ -130,6 +130,45 @@ void main() {
     });
   });
 
+  group('Background announcement dedup', () {
+    test('a message the background isolate announced is not announced again',
+        () async {
+      // With the app swiped away nothing drains the queue, so the background
+      // isolate has to raise the notification itself. When the app is merely
+      // backgrounded the drain is alive and would announce it too.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+          PushService.announcedByPushKey, ['msg_already_announced']);
+
+      expect(await PushService.wasAnnouncedByPush('msg_already_announced'),
+          isTrue);
+      expect(await PushService.wasAnnouncedByPush('msg_other'), isFalse);
+    });
+
+    test('an unknown message is announced, failing open', () async {
+      expect(await PushService.wasAnnouncedByPush('never_seen'), isFalse,
+          reason: 'a silent directive is worse than a duplicate notification');
+      expect(await PushService.wasAnnouncedByPush(''), isFalse);
+    });
+
+    test('a pushed directive still mounts even when already announced',
+        () async {
+      // Suppressing the notification must never suppress the directive.
+      final (sync, engine) = await player();
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+          PushService.announcedByPushKey, ['msg_active_announced']);
+      await prefs.setStringList('pending_background_push_v1',
+          [encryptedDirective('active_announced', 'Quietly Mounted')]);
+
+      await sync.processPendingBackgroundMessages();
+
+      expect(engine.activeOrders.length, 1);
+      expect(engine.activeOrders.first.id, 'active_announced');
+    });
+  });
+
   group('Platform capability', () {
     test('sending is allowed off Android, receiving is not', () {
       // The director runs on Windows. Gating sends on the Firebase SDK's

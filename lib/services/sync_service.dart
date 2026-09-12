@@ -2621,13 +2621,20 @@ class SyncService extends ChangeNotifier {
               title: hasDeliveryId ? null : order.title,
             );
             _incomingOrderController.add(assigned);
+            // If this arrived by push while the app was closed, the background
+            // isolate has already raised the notification. Announcing again
+            // here would double up on exactly the arrivals the user is most
+            // likely to be watching for.
+            final announcedByPush = await PushService.wasAnnouncedByPush(msg.id);
             try {
-              NotificationService.showOrderDispatchedNotification(
-                title: order.title,
-                description: order.description,
-                assignerName: senderName,
-                rewardTokens: order.rewardTokens,
-              );
+              if (!announcedByPush) {
+                NotificationService.showOrderDispatchedNotification(
+                  title: order.title,
+                  description: order.description,
+                  assignerName: senderName,
+                  rewardTokens: order.rewardTokens,
+                );
+              }
             } catch (_) {}
             try {
               SoundService.playAlarm();
