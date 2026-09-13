@@ -17,7 +17,19 @@ import 'sync_service.dart';
 import 'partner_service.dart';
 
 class ScheduleService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.3.1';
+  static const String appCurrentBuildVersion = '1.3.2';
+
+  /// Occurrences staged with the Worker per rule.
+  ///
+  /// Deliberately far larger than [NotificationService.preArmedOccurrences],
+  /// which is bounded by how many OS alarm slots the app is willing to hold.
+  /// A staged row costs one D1 row and nothing else, and the horizon is the
+  /// only margin there is: the Worker deletes each row as it fires it and can
+  /// never regenerate one, because the payload is ciphertext it cannot read.
+  /// Run the queue dry and the schedule stops - silently, with the app still
+  /// reporting the rule as enabled - so the horizon has to outlast any
+  /// plausible stretch of the app not being opened.
+  static const int stagedOccurrences = 14;
 
   // Valid Patreon Unlock Code hashes
   static final Set<String> _validCodeHashes = {
@@ -310,74 +322,127 @@ class ScheduleService extends ChangeNotifier {
   /// built against the foreground service ran nine hours then stopped ticking
   /// for six, and an exact alarm confirmed as armed was never delivered. A cron
   /// outside the device is subject to none of that.
-  ///
-  /// Each occurrence is staged as the same encrypted dispatchOrder a director
-  /// would send, carrying the deterministic per-occurrence active-order id — so
-  /// if the local alarm fires as well, `assignOrder` recognises the duplicate
-  /// and the occurrence ledger refuses the second execution. Belt and braces,
-  /// not either-or.
   Future<void> uploadScheduleToRelay() async {
-    if (!PushService.canSend) return;
+    await stageRulesWithWorker(_rules);
+  }
+
+  /// Rebuilds the staged schedule from whatever is on disk.
+  ///
+  /// Exists so the FCM background isolate can top the queue back up after a
+  /// scheduled push consumes a row. That isolate has no [ScheduleService] - it
+  /// has no app state at all - so this deliberately takes nothing but
+  /// SharedPreferences.
+  static Future<bool> restageFromStorage() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final raw = prefs.getString('saved_scheduled_rules_v1');
+      if (raw == null || raw.isEmpty) return false;
+      final rules = (jsonDecode(raw) as List)
+          .map((r) => ScheduledOrderRule.fromJson(Map<String, dynamic>.from(r as Map)))
+          .toList();
+      return await stageRulesWithWorker(rules);
+    } catch (e) {
+      if (kDebugMode) print('ScheduleService: restage error: $e');
+      return false;
+    }
+  }
+
+  /// Builds and uploads the staged schedule for [rules].
+  ///
+  /// Static because both callers matter and only one of them has an instance:
+  /// the app when rules change, and the background isolate when a scheduled
+  /// push lands.
+  static Future<bool> stageRulesWithWorker(List<ScheduledOrderRule> rules) async {
+    if (!PushService.canSend) return false;
     try {
       final prefs = await SharedPreferences.getInstance();
       final myCode = prefs.getString('pairing_code') ?? '';
       final mySecret = prefs.getString('pairing_secret') ?? '';
-      if (myCode.isEmpty) return;
+      if (myCode.isEmpty) return false;
 
-      final entries = <Map<String, dynamic>>[];
-      final now = DateTime.now();
-
-      for (final rule in _rules) {
-        if (!rule.isEnabled) continue;
-        // Director rules dispatch to someone else and are sent when they fire;
-        // only self-draws need waking this device up.
-        if (rule.targetType != ScheduleTargetType.playerSelfDraw) continue;
-
-        final order = rule.stagedOrder ?? rule.specificOrder;
-        if (order == null) continue;
-
-        for (final trigger
-            in rule.upcomingTriggers(NotificationService.preArmedOccurrences, from: now)) {
-          final message = SyncMessage(
-            id: 'sched_${ScheduleCoordinator.occurrenceKey(rule.id, trigger)}',
-            type: SyncMessageType.dispatchOrder,
-            // Deliberately not this device's id or pairing code. A scheduled
-            // self-draw really is "from me to me", but _isOwnMessage exists to
-            // kill relay echo loops and cannot tell the two apart — staging it
-            // under our own identity meant the push arrived and was discarded
-            // as our own echo. Addressing still works through targetCode.
-            senderId: 'scheduled',
-            targetCode: myCode,
-            payload: {
-              'activeOrderId':
-                  ScheduleCoordinator.activeOrderIdFor(rule.id, trigger),
-              'order': order.toJson(),
-              'senderCode': '',
-              'senderName': 'Scheduled Task',
-              'assignedByDirector': false,
-              'isScheduled': true,
-              'assignedAt': trigger.toIso8601String(),
-            },
-          );
-
-          final encoded = message.encode();
-          entries.add({
-            'ruleId': '${rule.id}_${trigger.millisecondsSinceEpoch}',
-            'at': trigger.millisecondsSinceEpoch,
-            'payload': mySecret.isNotEmpty
-                ? EncryptionHelper.encryptString(encoded, mySecret)
-                : encoded,
-          });
-        }
-      }
-
-      await PushService.stageSchedule(
+      return await PushService.stageSchedule(
         topic: SyncService.getHashedTopic(myCode),
-        entries: entries,
+        entries: buildStagedEntries(
+          rules: rules,
+          myCode: myCode,
+          mySecret: mySecret,
+          from: DateTime.now(),
+        ),
       );
     } catch (e) {
       if (kDebugMode) print('ScheduleService: schedule upload error: $e');
+      return false;
     }
+  }
+
+  /// Turns rules into the rows the Worker will replay.
+  ///
+  /// Each occurrence is staged as the same encrypted dispatchOrder a director
+  /// would send, carrying the deterministic per-occurrence active-order id - so
+  /// if the local alarm fires as well, `assignOrder` recognises the duplicate
+  /// and the occurrence ledger refuses the second execution. Belt and braces,
+  /// not either-or.
+  ///
+  /// Pure, and separated from the upload so the horizon, the addressing and the
+  /// ordering can be tested without a network.
+  @visibleForTesting
+  static List<Map<String, dynamic>> buildStagedEntries({
+    required List<ScheduledOrderRule> rules,
+    required String myCode,
+    required String mySecret,
+    required DateTime from,
+  }) {
+    final entries = <Map<String, dynamic>>[];
+
+    for (final rule in rules) {
+      if (!rule.isEnabled) continue;
+      // Director rules dispatch to someone else and are sent when they fire;
+      // only self-draws need waking this device up.
+      if (rule.targetType != ScheduleTargetType.playerSelfDraw) continue;
+
+      final order = rule.stagedOrder ?? rule.specificOrder;
+      if (order == null) continue;
+
+      for (final trigger in rule.upcomingTriggers(stagedOccurrences, from: from)) {
+        final message = SyncMessage(
+          id: 'sched_${ScheduleCoordinator.occurrenceKey(rule.id, trigger)}',
+          type: SyncMessageType.dispatchOrder,
+          // Deliberately not this device's id or pairing code. A scheduled
+          // self-draw really is "from me to me", but _isOwnMessage exists to
+          // kill relay echo loops and cannot tell the two apart - staging it
+          // under our own identity meant the push arrived and was discarded as
+          // our own echo. Addressing still works through targetCode.
+          senderId: 'scheduled',
+          targetCode: myCode,
+          payload: {
+            'activeOrderId': ScheduleCoordinator.activeOrderIdFor(rule.id, trigger),
+            'order': order.toJson(),
+            'senderCode': '',
+            'senderName': 'Scheduled Task',
+            'assignedByDirector': false,
+            'isScheduled': true,
+            'assignedAt': trigger.toIso8601String(),
+          },
+        );
+
+        final encoded = message.encode();
+        entries.add({
+          'ruleId': '${rule.id}_${trigger.millisecondsSinceEpoch}',
+          'at': trigger.millisecondsSinceEpoch,
+          'payload': mySecret.isNotEmpty
+              ? EncryptionHelper.encryptString(encoded, mySecret)
+              : encoded,
+        });
+      }
+    }
+
+    // Nearest occurrence first. The Worker caps how many rows one topic may
+    // hold and truncates the tail; entries come out of the loop grouped by
+    // rule, so unsorted they would starve a whole rule of the pair rather than
+    // trimming the far end of everyone's horizon.
+    entries.sort((a, b) => (a['at'] as int).compareTo(b['at'] as int));
+    return entries;
   }
 
   /// Re-registers OS alarms for every enabled rule.

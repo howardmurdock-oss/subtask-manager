@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/notifications/notification_service.dart';
 import '../core/security/encryption_helper.dart';
 import '../models/sync_message.dart';
+import 'schedule_service.dart';
 
 /// Firebase Cloud Messaging transport.
 ///
@@ -394,4 +395,15 @@ Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
   // opened - the push arrived and sat silently, which is precisely the failure
   // this transport was adopted to end.
   await PushService._announceFromBackground(message.data);
+
+  // A scheduled push just consumed the row that delivered it, and the Worker
+  // cannot mint a replacement - the payload is ciphertext by design, so it has
+  // no idea what the rule says or when it next comes due. Only the device can
+  // refill the queue, and if it never does, the schedule runs out at the end of
+  // the staged horizon and stops without complaining. This handler is the one
+  // moment a sleeping device is guaranteed to be awake and online, which makes
+  // it the right place to top it back up.
+  if (message.data['k'] == 'scheduled') {
+    await ScheduleService.restageFromStorage();
+  }
 }
