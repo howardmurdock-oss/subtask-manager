@@ -301,7 +301,20 @@ async function handleSchedule(request: Request, env: Env): Promise<Response> {
     )
     .slice(0, MAX_SCHEDULED_PER_TOPIC);
 
+  // Rows already due but not yet fired - the cron runs on the minute, so a
+  // row can sit due for up to sixty seconds. A device only re-stages while
+  // its app is alive, and a live app handles an occurrence it sees come due,
+  // so these are dropped rather than sent (sending would notify twice). But
+  // they are logged: silently deleting one made a morning test look like the
+  // cron had never been asked.
+  await ensureDeliveriesTable(env);
+  const now = Date.now();
   const statements = [
+    env.DB.prepare(
+      `INSERT INTO deliveries (topic, rule_id, due_at, fired_at, devices, sent, detail)
+       SELECT topic, rule_id, due_at, ?2, 0, 0, 'superseded: device re-staged first'
+       FROM schedules WHERE topic = ?1 AND due_at <= ?2`,
+    ).bind(body.topic, now),
     env.DB.prepare(`DELETE FROM schedules WHERE topic = ?1`).bind(body.topic),
     ...valid.map((e) =>
       env.DB.prepare(
@@ -509,8 +522,11 @@ async function handleDiagSummary(env: Env): Promise<Response> {
     ),
     env.DB.prepare(`SELECT COUNT(*) AS count, MIN(due_at) AS next_due FROM schedules`),
     env.DB.prepare(
-      `SELECT COUNT(*) AS attempts, SUM(CASE WHEN sent > 0 THEN 1 ELSE 0 END) AS delivered,
-              SUM(CASE WHEN devices = 0 THEN 1 ELSE 0 END) AS no_device
+      `SELECT SUM(CASE WHEN detail LIKE 'superseded%' THEN 0 ELSE 1 END) AS attempts,
+              SUM(CASE WHEN sent > 0 THEN 1 ELSE 0 END) AS delivered,
+              SUM(CASE WHEN devices = 0 AND (detail IS NULL OR detail NOT LIKE 'superseded%')
+                       THEN 1 ELSE 0 END) AS no_device,
+              SUM(CASE WHEN detail LIKE 'superseded%' THEN 1 ELSE 0 END) AS superseded
        FROM deliveries WHERE fired_at >= ?1`,
     ).bind(since),
   ]);

@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/notifications/notification_service.dart';
 import '../core/security/encryption_helper.dart';
 import '../models/sync_message.dart';
+import 'schedule_coordinator.dart';
 import 'schedule_service.dart';
 
 /// Firebase Cloud Messaging transport.
@@ -353,6 +354,20 @@ class PushService {
     } catch (_) {}
   }
 
+  /// Whether a pushed directive should be announced, claiming its scheduled
+  /// occurrence if it has one. False only when the occurrence was already
+  /// claimed - by the device's own alarm or service tick, or an earlier push.
+  @visibleForTesting
+  static Future<bool> claimForAnnouncement(
+      SharedPreferences prefs, Map<String, dynamic> payload) async {
+    final activeId = payload['activeOrderId'] as String? ?? '';
+    if (payload['isScheduled'] != true || !activeId.startsWith('sched_')) {
+      return true;
+    }
+    return ScheduleCoordinator.claimOccurrence(
+        prefs, activeId.substring('sched_'.length));
+  }
+
   /// Raises a notification from the background isolate.
   ///
   /// Decryption happens here, on the device, rather than having the sender put
@@ -403,6 +418,12 @@ class PushService {
 
       switch (message.type) {
         case SyncMessageType.dispatchOrder:
+          // A scheduled occurrence can reach this device twice: its own alarm
+          // or service tick, and the cron's push. Claim it in the same ledger
+          // the local path uses, so whichever arrives second stays quiet -
+          // and so the local path, finding it claimed, does not announce a
+          // directive this push already did.
+          if (!await claimForAnnouncement(prefs, message.payload)) return;
           final order = message.payload['order'];
           final title = (order is Map ? order['title'] as String? : null) ?? 'New Directive';
           final description =

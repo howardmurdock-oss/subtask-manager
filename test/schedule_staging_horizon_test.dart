@@ -1,4 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:orders_app/services/push_service.dart';
+import 'package:orders_app/services/schedule_coordinator.dart';
 import 'package:orders_app/core/notifications/notification_service.dart';
 import 'package:orders_app/models/order_item.dart';
 import 'package:orders_app/models/scheduled_order_rule.dart';
@@ -132,5 +135,39 @@ void main() {
     final other = dailySelfDraw(id: 'r2', hour: 9)
         .upcomingTriggers(14, from: DateTime(2026, 9, 13, 12));
     expect(other, isNot(orderedEquals(triggers)));
+  });
+
+  group('a scheduled occurrence is announced once across alarm and push', () {
+    final trigger = DateTime.utc(2026, 9, 19, 13, 9, 24);
+    Map<String, dynamic> payload() => {
+          'activeOrderId': ScheduleCoordinator.activeOrderIdFor('r1', trigger),
+          'isScheduled': true,
+        };
+
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    test('push stays quiet when the device already fired it', () async {
+      final prefs = await SharedPreferences.getInstance();
+      await ScheduleCoordinator.claimOccurrence(
+          prefs, ScheduleCoordinator.occurrenceKey('r1', trigger));
+      expect(await PushService.claimForAnnouncement(prefs, payload()), isFalse);
+    });
+
+    test('push that arrives first claims it, so the alarm stays quiet', () async {
+      final prefs = await SharedPreferences.getInstance();
+      expect(await PushService.claimForAnnouncement(prefs, payload()), isTrue);
+      expect(
+          await ScheduleCoordinator.claimOccurrence(
+              prefs, ScheduleCoordinator.occurrenceKey('r1', trigger)),
+          isFalse);
+    });
+
+    test('ordinary dispatches are always announced and claim nothing', () async {
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+          await PushService.claimForAnnouncement(prefs, {'activeOrderId': 'ord_123'}),
+          isTrue);
+      expect(await ScheduleCoordinator.loadLedger(prefs), isEmpty);
+    });
   });
 }

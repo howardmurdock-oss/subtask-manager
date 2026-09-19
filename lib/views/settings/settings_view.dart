@@ -1515,7 +1515,8 @@ class _PushDeliveryEvidence extends StatelessWidget {
           }
           for (final raw in deliveries.take(6)) {
             final d = raw as Map;
-            final ok = (d['sent'] as num? ?? 0) > 0;
+            final ok = (d['sent'] as num? ?? 0) > 0 ||
+                '${d['detail'] ?? ''}'.startsWith('superseded');
             lines.add(Text(
                 'Sent ${_hm(d['fired_at'])} (due ${_hm(d['due_at'])}) '
                 '${d['sent']}/${d['devices']}'
