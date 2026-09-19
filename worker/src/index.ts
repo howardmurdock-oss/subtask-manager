@@ -365,6 +365,32 @@ async function handleSend(request: Request, env: Env): Promise<Response> {
  * confirmed armed and never delivered. A cron running outside the device is not
  * subject to any of that.
  */
+let deliveriesTableReady = false;
+
+/**
+ * Creates the delivery log if it is missing.
+ *
+ * Done here rather than relying on schema.sql alone because applying that file
+ * goes through Cloudflare's D1 query API, which has refused this account
+ * (7403) even while the Worker's own binding works - so the log must not
+ * depend on it. Once per isolate; both statements are no-ops after the first.
+ */
+async function ensureDeliveriesTable(env: Env): Promise<void> {
+  if (deliveriesTableReady) return;
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS deliveries (
+         topic TEXT NOT NULL, rule_id TEXT NOT NULL, due_at INTEGER NOT NULL,
+         fired_at INTEGER NOT NULL, devices INTEGER NOT NULL, sent INTEGER NOT NULL,
+         detail TEXT)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_deliveries_topic ON deliveries (topic, fired_at)`,
+    ),
+  ]);
+  deliveriesTableReady = true;
+}
+
 async function runDueSchedules(env: Env): Promise<void> {
   const now = Date.now();
 
@@ -376,6 +402,7 @@ async function runDueSchedules(env: Env): Promise<void> {
     .all<{ topic: string; rule_id: string; due_at: number; payload: string }>();
 
   if (!results || results.length === 0) return;
+  await ensureDeliveriesTable(env);
 
   let accessToken: string | null = null;
   const staleTokens: string[] = [];
@@ -441,8 +468,9 @@ async function runDueSchedules(env: Env): Promise<void> {
  * code, and the same hash is visible on the public relay.
  */
 async function handleDiag(url: URL, env: Env): Promise<Response> {
+  await ensureDeliveriesTable(env);
   const topic = url.searchParams.get('topic');
-  if (!topic) return json({ error: 'topic is required' }, 400);
+  if (!topic) return handleDiagSummary(env);
 
   const [devices, staged, deliveries] = await env.DB.batch([
     env.DB.prepare(
@@ -464,6 +492,33 @@ async function handleDiag(url: URL, env: Env): Promise<Response> {
     staged: stagedRow.count ?? 0,
     nextDue: stagedRow.next_due ?? null,
     deliveries: deliveries.results ?? [],
+  });
+}
+
+/**
+ * Service-wide totals, with no topics, tokens or payloads - enough to answer
+ * "is anything registered, is anything staged, is the cron sending" without
+ * knowing anyone's pairing code.
+ */
+async function handleDiagSummary(env: Env): Promise<Response> {
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  const [devices, staged, deliveries] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT platform, COUNT(*) AS count, MAX(updated_at) AS last_registered
+       FROM devices GROUP BY platform`,
+    ),
+    env.DB.prepare(`SELECT COUNT(*) AS count, MIN(due_at) AS next_due FROM schedules`),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS attempts, SUM(CASE WHEN sent > 0 THEN 1 ELSE 0 END) AS delivered,
+              SUM(CASE WHEN devices = 0 THEN 1 ELSE 0 END) AS no_device
+       FROM deliveries WHERE fired_at >= ?1`,
+    ).bind(since),
+  ]);
+  return json({
+    now: Date.now(),
+    devices: devices.results ?? [],
+    staged: staged.results?.[0] ?? {},
+    last24h: deliveries.results?.[0] ?? {},
   });
 }
 
