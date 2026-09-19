@@ -17,7 +17,7 @@ import 'sync_service.dart';
 import 'partner_service.dart';
 
 class ScheduleService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.3.4';
+  static const String appCurrentBuildVersion = '1.3.5';
 
   /// Occurrences staged with the Worker per rule.
   ///
@@ -691,13 +691,28 @@ class ScheduleService extends ChangeNotifier {
 
     // Resolve target partner
     PartnerContact? targetPartner;
+    final namesPartner = (rule.targetPartnerId?.isNotEmpty ?? false) ||
+        (rule.targetPartnerCode?.isNotEmpty ?? false);
     if (rule.targetPartnerId == PartnerContact.selfId || rule.targetPartnerName == 'Myself (This Device)') {
       targetPartner = PartnerContact.self();
-    } else if (rule.targetPartnerId != null && _partnerService != null) {
+    } else if (namesPartner && _partnerService != null) {
       targetPartner = _partnerService!.unblockedContacts.cast<PartnerContact?>().firstWhere(
-            (p) => p?.id == rule.targetPartnerId || p?.pairingCode == rule.targetPartnerCode,
+            (p) =>
+                (rule.targetPartnerCode?.isNotEmpty == true &&
+                    PartnerService.normalizeCode(p!.pairingCode) ==
+                        PartnerService.normalizeCode(rule.targetPartnerCode!)) ||
+                p!.id == rule.targetPartnerId,
             orElse: () => null,
           );
+      if (targetPartner == null) {
+        // The rule is for someone no longer in the contact list (removed, or
+        // blocked). Falling back to whoever happens to be selected sent their
+        // scheduled directive to a different player entirely.
+        if (kDebugMode) {
+          print('ScheduleService: rule ${rule.id} targets a partner who is not a contact; skipped');
+        }
+        return;
+      }
     }
     targetPartner ??= _partnerService?.activePartner ?? PartnerContact.self();
 

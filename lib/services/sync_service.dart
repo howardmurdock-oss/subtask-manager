@@ -60,6 +60,12 @@ class SyncService extends ChangeNotifier {
   List<ActiveRedemption> _remotePendingRedemptions = [];
   int _remoteTokens = 0;
   int _remoteStreak = 0;
+
+  // Keyed by the reporting player's pairing code. A single set of fields meant
+  // a director with two players saw whichever had broadcast most recently.
+  final Map<String, int> _remoteTokensByCode = {};
+  final Map<String, int> _remoteStreakByCode = {};
+  final Map<String, List<ActiveRedemption>> _remoteRedemptionsByCode = {};
   /// Set of order IDs and titles confirmed to be actively mounted on submissive's dashboard
   final Set<String> _confirmedOnPlayerOrderIds = <String>{};
   /// Set of quest IDs and titles confirmed to be received by player
@@ -825,18 +831,101 @@ class SyncService extends ChangeNotifier {
 
   List<ActiveOrder> get remoteActiveOrders => _remoteActiveOrders;
   List<ActiveOrder> get remoteReviewOrders => _remoteReviewOrders;
-  List<ActiveRedemption> get remotePendingRedemptions => _remotePendingRedemptions;
-  int get remoteTokens => _remoteTokens;
-  int get remoteStreak => _remoteStreak;
+  /// The selected player's figures when they have reported, otherwise the most
+  /// recent report from anyone.
+  List<ActiveRedemption> get remotePendingRedemptions =>
+      _remoteRedemptionsByCode[_selectedPlayerCode()] ?? _remotePendingRedemptions;
+  int get remoteTokens => _remoteTokensByCode[_selectedPlayerCode()] ?? _remoteTokens;
+  int get remoteStreak => _remoteStreakByCode[_selectedPlayerCode()] ?? _remoteStreak;
+
+  String _selectedPlayerCode() {
+    final active = _partnerService?.activePartner;
+    if (active == null || active.isSelf) return '';
+    return PartnerService.normalizeCode(active.pairingCode);
+  }
+
+  // -------------------------------------------------------------------------
+  // Recipient resolution. Every directed send goes to exactly one resolved
+  // contact or to nobody. The fallbacks this replaces - "the first contact",
+  // "every player", "every director" - are how directives, recalls, proofs and
+  // approvals reached people they were never meant for.
+  // -------------------------------------------------------------------------
+
+  /// Code first: on the side that sent a pairing request, a contact's id is a
+  /// random local id that never matches the other device's id, so id-only
+  /// lookups quietly failed and fell through to a guess.
+  PartnerContact? _contactFor({String? code, String? id}) {
+    final ps = _partnerService;
+    if (ps == null) return null;
+    if (code != null && code.isNotEmpty) {
+      final byCode = ps.findContactByCode(code);
+      if (byCode != null) return byCode;
+    }
+    if (id != null && id.isNotEmpty) return ps.findContactById(id);
+    return null;
+  }
+
+  Future<bool> _sendToContact(PartnerContact? c, SyncMessage msg) async {
+    if (c == null || c.isSelf || c.pairingCode.isEmpty) return false;
+    return sendDirectToTopic(
+      c.pairingCode,
+      c.pairingSecret,
+      msg,
+      relayHost: c.customRelayHost.isNotEmpty ? c.customRelayHost : _customRelayHost,
+    );
+  }
+
+  /// Pairing code of the player holding a director-side order, or '' when it
+  /// cannot be known. On the director's own dispatch copy `assignedByPartner*`
+  /// names the player; on the player's copy (which replaces it at every state
+  /// sync) it names this director - hence [ActiveOrder.heldByCode].
+  String _holderCodeOf(ActiveOrder o) {
+    final held = PartnerService.normalizeCode(o.heldByCode ?? '');
+    if (held.isNotEmpty) return held;
+    final assigned = PartnerService.normalizeCode(o.assignedByPartnerCode ?? '');
+    if (assigned.isNotEmpty && assigned != PartnerService.normalizeCode(_pairingCode)) {
+      return assigned;
+    }
+    return '';
+  }
+
+  PartnerContact? _holderOf(ActiveOrder o) {
+    final code = _holderCodeOf(o);
+    if (code.isNotEmpty) return _contactFor(code: code);
+    return null;
+  }
+
+  /// With exactly one player contact, an order whose holder was never recorded
+  /// can only be theirs. With more, there is no safe guess.
+  List<PartnerContact> _players() =>
+      _partnerService?.unblockedContacts
+          .where((c) => c.role == PartnerRole.submissive && !c.isSelf && c.pairingCode.isNotEmpty)
+          .toList() ??
+      const <PartnerContact>[];
+
+  PartnerContact? _onlyPlayer() {
+    final players = _players();
+    return players.length == 1 ? players.first : null;
+  }
+
+  /// Whether [o] belongs to the player with [code]. An order of unknown holder
+  /// only counts when that player is the sole player contact.
+  bool _isHeldBy(ActiveOrder o, String code) {
+    final clean = PartnerService.normalizeCode(code);
+    if (clean.isEmpty) return false;
+    final holder = _holderCodeOf(o);
+    if (holder.isNotEmpty) return holder == clean;
+    final only = _onlyPlayer();
+    return only != null && PartnerService.normalizeCode(only.pairingCode) == clean;
+  }
   Set<String> get confirmedOnPlayerOrderIds => Set.unmodifiable(_confirmedOnPlayerOrderIds);
   Set<String> get confirmedOnPlayerQuestIds => Set.unmodifiable(_confirmedOnPlayerQuestIds);
 
-  bool isOrderConfirmedOnPlayer(ActiveOrder order) {
-    if (_confirmedOnPlayerOrderIds.contains(order.id)) return true;
-    if (order.order.id.isNotEmpty && _confirmedOnPlayerOrderIds.contains(order.order.id)) return true;
-    if (_confirmedOnPlayerOrderIds.contains(order.order.title.trim().toLowerCase())) return true;
-    return false;
-  }
+  /// Keyed on the dispatch id alone. The template id and title are shared by
+  /// every copy of a task, so one player confirming "Plank" made another
+  /// player's undelivered "Plank" look confirmed, and never re-sent.
+  bool isOrderConfirmedOnPlayer(ActiveOrder order) =>
+      _confirmedOnPlayerOrderIds.contains(order.id);
 
   bool isQuestConfirmedOnPlayer(String questId, [String? questTitle]) {
     if (_confirmedOnPlayerQuestIds.contains(questId)) return true;
@@ -860,13 +949,10 @@ class SyncService extends ChangeNotifier {
     } catch (_) {}
   }
 
-  bool isOrderRecalled(ActiveOrder order) {
-    if (_recalledOrderIds.contains(order.id)) return true;
-    if (order.order.id.isNotEmpty && _recalledOrderIds.contains(order.order.id)) return true;
-    final titleNorm = order.order.title.trim().toLowerCase();
-    if (titleNorm.isNotEmpty && _recalledOrderTitles.contains(titleNorm)) return true;
-    return false;
-  }
+  /// Keyed on the dispatch id alone. Matching the template id or title meant
+  /// recalling "Plank" from one player tombstoned every player's "Plank", and
+  /// the next state sync from any of them sent them a recall for it.
+  bool isOrderRecalled(ActiveOrder order) => _recalledOrderIds.contains(order.id);
 
   Future<void> _saveRecalledOrders() async {
     try {
@@ -891,10 +977,24 @@ class SyncService extends ChangeNotifier {
   }
 
   void clearRemoteActiveOrder(String activeOrderId, {String? orderId, String? orderTitle, bool notifyRemote = true}) {
-    _remoteActiveOrders.removeWhere((o) =>
-        o.id == activeOrderId ||
-        (orderId != null && orderId.isNotEmpty && o.order.id == orderId) ||
-        (orderTitle != null && orderTitle.isNotEmpty && o.order.title.trim().toLowerCase() == orderTitle.trim().toLowerCase()));
+    // By id. Matching the template or title also removed other players'
+    // copies of the same task. A caller that only has the name still gets a
+    // match, but only where it cannot reach someone else's copy.
+    var targets = _remoteActiveOrders.where((o) => o.id == activeOrderId).toList();
+    if (targets.isEmpty) {
+      final byName = _remoteActiveOrders.where((o) =>
+          (orderId != null && orderId.isNotEmpty && o.order.id == orderId) ||
+          (orderTitle != null &&
+              orderTitle.isNotEmpty &&
+              o.order.title.trim().toLowerCase() == orderTitle.trim().toLowerCase())).toList();
+      final holders = byName.map(_holderCodeOf).toSet();
+      if (byName.isNotEmpty &&
+          ((holders.length == 1 && !holders.contains('')) || _players().length <= 1)) {
+        targets = byName;
+      }
+    }
+    final holder = targets.isNotEmpty ? _holderOf(targets.first) : null;
+    _remoteActiveOrders.removeWhere((o) => targets.any((t) => identical(t, o)));
 
     _confirmedOnPlayerOrderIds.remove(activeOrderId);
     if (orderId != null && orderId.isNotEmpty) _confirmedOnPlayerOrderIds.remove(orderId);
@@ -909,17 +1009,9 @@ class SyncService extends ChangeNotifier {
     }
     _saveRecalledOrders();
 
-    // Also remove from local engine active orders
+    // Also remove from local engine active orders - this dispatch only. Title
+    // matching removed the director's own tasks of the same name.
     _engine.removeActiveOrder(activeOrderId);
-    if (orderTitle != null && orderTitle.isNotEmpty) {
-      final matchingEngine = _engine.activeOrders.where((o) =>
-          o.id == activeOrderId ||
-          (orderId != null && o.order.id == orderId) ||
-          o.order.title.trim().toLowerCase() == orderTitle.trim().toLowerCase()).map((o) => o.id).toList();
-      for (final id in matchingEngine) {
-        _engine.removeActiveOrder(id);
-      }
-    }
     _saveDirectorDispatchedOrders();
     notifyListeners();
 
@@ -944,41 +1036,15 @@ class SyncService extends ChangeNotifier {
           'senderName': myDisplayName,
         },
       );
-      final currentActive = _partnerService?.activePartner;
-      if (currentActive != null && currentActive.pairingCode.isNotEmpty) {
-        sendDirectToTopic(
-          currentActive.pairingCode,
-          currentActive.pairingSecret,
-          msg,
-          relayHost: currentActive.customRelayHost.isNotEmpty ? currentActive.customRelayHost : _customRelayHost,
-        );
-      }
-      final submissives = _partnerService?.unblockedContacts.where((c) => c.role == PartnerRole.submissive).toList() ?? [];
-      for (final p in submissives) {
-        if (p.pairingCode.isNotEmpty && p.pairingCode != currentActive?.pairingCode) {
-          sendDirectToTopic(
-            p.pairingCode,
-            p.pairingSecret,
-            msg,
-            relayHost: p.customRelayHost.isNotEmpty ? p.customRelayHost : _customRelayHost,
-          );
-        }
-      }
-      if (_pairingCode.isNotEmpty) {
-        sendDirectToTopic(_pairingCode, _pairingSecret, msg, relayHost: _customRelayHost);
-      }
+      // To the player holding it. This used to go to every player contact,
+      // and each removed any task sharing the title.
+      _sendToContact(holder ?? _onlyPlayer(), msg);
       sendToLocalSocketOnly(msg);
     }
   }
 
   void recallDispatchedOrder(String activeOrderId, {String? orderId, String? orderTitle, String? partnerCode}) {
-    int idx = _remoteActiveOrders.indexWhere((o) => o.id == activeOrderId);
-    if (idx == -1 && orderId != null && orderId.isNotEmpty) {
-      idx = _remoteActiveOrders.indexWhere((o) => o.order.id == orderId);
-    }
-    if (idx == -1 && orderTitle != null && orderTitle.isNotEmpty) {
-      idx = _remoteActiveOrders.indexWhere((o) => o.order.title.trim().toLowerCase() == orderTitle.trim().toLowerCase());
-    }
+    final idx = _remoteActiveOrders.indexWhere((o) => o.id == activeOrderId);
 
     final active = idx != -1 ? _remoteActiveOrders[idx] : null;
     final title = active?.order.title ?? orderTitle ?? 'Directive';
@@ -1005,53 +1071,19 @@ class SyncService extends ChangeNotifier {
       },
     );
 
-    // 1. Direct to assigned partner code if available
-    if (code != null && code.isNotEmpty) {
-      final partner = _partnerService?.findContactByCode(code) ??
-          _partnerService?.findContactById(partnerId ?? '');
-      sendDirectToTopic(
-        code,
-        partner?.pairingSecret ?? _pairingSecret,
-        msg,
-        relayHost: partner != null && partner.customRelayHost.isNotEmpty ? partner.customRelayHost : _customRelayHost,
-      );
-    }
-
-    // 2. Direct to active partner contact
-    final currentActive = _partnerService?.activePartner;
-    if (currentActive != null && currentActive.pairingCode.isNotEmpty && currentActive.pairingCode != code) {
-      sendDirectToTopic(
-        currentActive.pairingCode,
-        currentActive.pairingSecret,
-        msg,
-        relayHost: currentActive.customRelayHost.isNotEmpty ? currentActive.customRelayHost : _customRelayHost,
-      );
-    }
-
-    // 3. Direct to all submissive contacts
-    final submissives = _partnerService?.unblockedContacts.where((c) => c.role == PartnerRole.submissive).toList() ?? [];
-    for (final p in submissives) {
-      if (p.pairingCode.isNotEmpty && p.pairingCode != code && p.pairingCode != currentActive?.pairingCode) {
-        sendDirectToTopic(
-          p.pairingCode,
-          p.pairingSecret,
-          msg,
-          relayHost: p.customRelayHost.isNotEmpty ? p.customRelayHost : _customRelayHost,
-        );
-      }
-    }
-
-    // 4. Send to shared personal pairing code
-    if (_pairingCode.isNotEmpty) {
-      sendDirectToTopic(
-        _pairingCode,
-        _pairingSecret,
-        msg,
-        relayHost: _customRelayHost,
-      );
-    }
-
-    // 5. Send via active local socket
+    // Only the player holding it. This used to go to the selected partner and
+    // every player contact too, and each of them removed any task with the
+    // same title - including ones other directors, or they themselves, had set.
+    final holder = (active != null ? _holderOf(active) : null) ??
+        _contactFor(
+          code: (code != null &&
+                  PartnerService.normalizeCode(code) != PartnerService.normalizeCode(_pairingCode))
+              ? code
+              : null,
+          id: partnerId,
+        ) ??
+        _onlyPlayer();
+    _sendToContact(holder, msg);
     sendToLocalSocketOnly(msg);
 
     // Deep clean locally from both sync and engine, and record tombstone (notifyRemote: false since already broadcast above)
@@ -1101,18 +1133,8 @@ class SyncService extends ChangeNotifier {
       );
     }
 
-    // Also send to all unblocked dominant partners
-    final dominants = _partnerService?.unblockedContacts.where((c) => c.role == PartnerRole.dominant).toList() ?? [];
-    for (final d in dominants) {
-      if (d.pairingCode.isNotEmpty && d.pairingCode != code) {
-        sendDirectToTopic(
-          d.pairingCode,
-          d.pairingSecret,
-          msg,
-          relayHost: d.customRelayHost.isNotEmpty ? d.customRelayHost : _customRelayHost,
-        );
-      }
-    }
+    // Only the director who assigned it. Every other director used to be told
+    // as well, and marked any of their own tasks with that title as cleared.
 
     // Send via active local socket if connected
     sendToLocalSocketOnly(msg);
@@ -1120,6 +1142,41 @@ class SyncService extends ChangeNotifier {
     // Broadcast updated state
     broadcastPlayerState();
     notifyListeners();
+  }
+
+  /// Tells the director who assigned [activeOrder] that it was forfeited.
+  ///
+  /// The dashboard used to publish this undirected on the player's own topic,
+  /// which every contact subscribes to: every director was told, and each
+  /// marked any task of theirs with the same title as failed.
+  Future<void> notifyOrderFailed(ActiveOrder activeOrder, {required String reason}) async {
+    if (!activeOrder.assignedByDirector) return;
+    final msg = SyncMessage(
+      id: const Uuid().v4(),
+      type: SyncMessageType.orderStatusUpdate,
+      senderId: _deviceId,
+      payload: {
+        'activeOrderId': activeOrder.id,
+        'status': 'failed',
+        'orderTitle': activeOrder.order.title,
+        'reason': reason,
+        'senderName': _nickname.isNotEmpty ? _nickname : 'Player',
+        'senderCode': _pairingCode,
+      },
+    );
+    final director = _contactFor(
+        code: activeOrder.assignedByPartnerCode, id: activeOrder.assignedByPartnerId);
+    if (director != null) {
+      await _sendToContact(director, msg);
+    } else {
+      // Not a contact (removed since, say): the code the order recorded.
+      final code = activeOrder.assignedByPartnerCode ?? '';
+      if (code.isNotEmpty &&
+          PartnerService.normalizeCode(code) != PartnerService.normalizeCode(_pairingCode)) {
+        await sendDirectToTopic(code, _pairingSecret, msg, relayHost: _customRelayHost);
+      }
+    }
+    sendToLocalSocketOnly(msg);
   }
 
   void clearAllFailedRemoteOrders() {
@@ -2063,6 +2120,8 @@ class SyncService extends ChangeNotifier {
     final payload = secret.isNotEmpty ? EncryptionHelper.encryptString(jsonStr, secret) : jsonStr;
     final topic = _getHashedTopic(code);
     _recordOutboundCode(PartnerService.normalizeCode(code));
+    debugSentMessages.add(addressed);
+    if (debugSentMessages.length > 50) debugSentMessages.removeAt(0);
 
     // Push first. It reaches a dozing Android device, which the relay cannot,
     // and it keeps directive traffic off a shared public server that has been
@@ -2749,13 +2808,19 @@ class SyncService extends ChangeNotifier {
           final orderId = msg.payload['orderId'] as String? ?? '';
           final reason = msg.payload['reason'] as String?;
           final senderName = msg.payload['senderName'] as String? ?? 'Player';
+          final statusSenderCode = msg.payload['senderCode'] as String? ?? '';
+
+          // The sender's dispatch, by id. Matching by title marked other
+          // players' tasks of the same name as failed, cleared or completed.
+          bool isTheirs(ActiveOrder o) {
+            if (activeOrderId != null && activeOrderId.isNotEmpty) return o.id == activeOrderId;
+            if (!_isHeldBy(o, statusSenderCode)) return false;
+            return (orderId.isNotEmpty && o.order.id == orderId) ||
+                o.order.title.toLowerCase() == orderTitle.toLowerCase();
+          }
 
           if (statusStr == 'failed') {
-            final idx = _remoteActiveOrders.indexWhere(
-              (o) => (activeOrderId != null && o.id == activeOrderId) ||
-                     (orderId.isNotEmpty && o.order.id == orderId) ||
-                     o.order.title.toLowerCase() == orderTitle.toLowerCase(),
-            );
+            final idx = _remoteActiveOrders.indexWhere(isTheirs);
             if (idx != -1) {
               _remoteActiveOrders[idx] = _remoteActiveOrders[idx].copyWith(
                 status: OrderStatus.failed,
@@ -2774,27 +2839,28 @@ class SyncService extends ChangeNotifier {
             } catch (_) {}
             notifyListeners();
           } else if (statusStr == 'recalled') {
-            // Find all matching active orders on player side
-            final matchingIds = _engine.activeOrders.where((o) {
-              if (activeOrderId != null && o.id == activeOrderId) return true;
-              if (orderId.isNotEmpty && o.order.id == orderId) return true;
-              if (orderTitle.isNotEmpty && o.order.title.trim().toLowerCase() == orderTitle.trim().toLowerCase()) return true;
-              return false;
-            }).map((o) => o.id).toList();
-
-            for (final id in matchingIds) {
-              _engine.removeActiveOrder(id);
+            // The recalled dispatch, by id. Matching the template id or title
+            // removed every task with that name - whoever had assigned it,
+            // scheduled and self-drawn tasks included. A recall without an id
+            // (older director builds) is still honoured, but only for tasks
+            // that same director assigned.
+            final recallerCode = PartnerService.normalizeCode(msg.payload['senderCode'] as String? ?? '');
+            bool recalled(ActiveOrder o) {
+              if (activeOrderId != null && activeOrderId.isNotEmpty) return o.id == activeOrderId;
+              if (!o.assignedByDirector || recallerCode.isEmpty) return false;
+              if (PartnerService.normalizeCode(o.assignedByPartnerCode ?? '') != recallerCode) return false;
+              return (orderId.isNotEmpty && o.order.id == orderId) ||
+                  (orderTitle.isNotEmpty &&
+                      o.order.title.trim().toLowerCase() == orderTitle.trim().toLowerCase());
             }
 
-            // Also check underReviewOrders if player had already submitted proof
-            final matchingReviewIds = _engine.underReviewOrders.where((o) {
-              if (activeOrderId != null && o.id == activeOrderId) return true;
-              if (orderId.isNotEmpty && o.order.id == orderId) return true;
-              if (orderTitle.isNotEmpty && o.order.title.trim().toLowerCase() == orderTitle.trim().toLowerCase()) return true;
-              return false;
-            }).map((o) => o.id).toList();
+            final matchingIds = [
+              ..._engine.activeOrders.where(recalled).map((o) => o.id),
+              ..._engine.underReviewOrders.where(recalled).map((o) => o.id),
+            ].toSet();
+            if (matchingIds.isEmpty) break;
 
-            for (final id in matchingReviewIds) {
+            for (final id in matchingIds) {
               _engine.removeActiveOrder(id);
             }
 
@@ -2809,11 +2875,7 @@ class SyncService extends ChangeNotifier {
             broadcastPlayerState();
             notifyListeners();
           } else if (statusStr == 'emergencyCleared' || statusStr == 'cleared') {
-            final idx = _remoteActiveOrders.indexWhere(
-              (o) => (activeOrderId != null && activeOrderId.isNotEmpty && o.id == activeOrderId) ||
-                     (orderId.isNotEmpty && o.order.id == orderId) ||
-                     o.order.title.toLowerCase() == orderTitle.toLowerCase(),
-            );
+            final idx = _remoteActiveOrders.indexWhere(isTheirs);
             if (idx != -1) {
               _remoteActiveOrders[idx] = _remoteActiveOrders[idx].copyWith(
                 status: OrderStatus.emergencyCleared,
@@ -2821,13 +2883,9 @@ class SyncService extends ChangeNotifier {
               );
               _saveDirectorDispatchedOrders();
             }
-            if (activeOrderId != null && activeOrderId.isNotEmpty) {
-              _confirmedOnPlayerOrderIds.remove(activeOrderId);
+            if (idx != -1) {
+              _confirmedOnPlayerOrderIds.remove(_remoteActiveOrders[idx].id);
             }
-            if (orderId.isNotEmpty) {
-              _confirmedOnPlayerOrderIds.remove(orderId);
-            }
-            _confirmedOnPlayerOrderIds.remove(orderTitle.toLowerCase());
             _saveConfirmedOrders();
 
             NotificationService.showGenericNotification(
@@ -2839,11 +2897,7 @@ class SyncService extends ChangeNotifier {
             } catch (_) {}
             notifyListeners();
           } else if (statusStr == 'completed') {
-            _remoteActiveOrders.removeWhere(
-              (o) => (activeOrderId != null && o.id == activeOrderId) ||
-                     (orderId.isNotEmpty && o.order.id == orderId) ||
-                     o.order.title.toLowerCase() == orderTitle.toLowerCase(),
-            );
+            _remoteActiveOrders.removeWhere(isTheirs);
             _saveDirectorDispatchedOrders();
             notifyListeners();
           }
@@ -2859,15 +2913,19 @@ class SyncService extends ChangeNotifier {
         }
         try {
           if (msg.payload['activeOrder'] != null) {
-            final order = ActiveOrder.fromJson(msg.payload['activeOrder'] as Map<String, dynamic>);
-            _remoteActiveOrders.removeWhere((o) =>
+            final submitterCode = PartnerService.normalizeCode(msg.payload['senderCode'] as String? ?? '');
+            final order = ActiveOrder.fromJson(msg.payload['activeOrder'] as Map<String, dynamic>)
+                .copyWith(heldByCode: submitterCode.isNotEmpty ? submitterCode : null);
+            // Only the submitter's own copy is replaced. Matching any task with
+            // the same title filed one player's proof over another's.
+            bool sameTask(ActiveOrder o) =>
                 o.id == order.id ||
-                (o.order.id.isNotEmpty && o.order.id == order.order.id) ||
-                o.order.title.trim().toLowerCase() == order.order.title.trim().toLowerCase());
-            _remoteReviewOrders.removeWhere((o) =>
-                o.id == order.id ||
-                (o.order.id.isNotEmpty && o.order.id == order.order.id) ||
-                o.order.title.trim().toLowerCase() == order.order.title.trim().toLowerCase());
+                (submitterCode.isNotEmpty &&
+                    _isHeldBy(o, submitterCode) &&
+                    ((o.order.id.isNotEmpty && o.order.id == order.order.id) ||
+                        o.order.title.trim().toLowerCase() == order.order.title.trim().toLowerCase()));
+            _remoteActiveOrders.removeWhere(sameTask);
+            _remoteReviewOrders.removeWhere(sameTask);
             _remoteReviewOrders.insert(0, order);
             _saveDirectorDispatchedOrders();
 
@@ -2973,22 +3031,49 @@ class SyncService extends ChangeNotifier {
 
       case SyncMessageType.sendState:
         try {
-          _remoteTokens = (msg.payload['tokens'] as num?)?.toInt() ?? 0;
-          _remoteStreak = (msg.payload['streak'] as num?)?.toInt() ?? 0;
+          // Who is reporting. Older player builds do not say, and an id lookup
+          // fails on the side that sent the pairing request, so with a single
+          // player the report is theirs by elimination. With several and no
+          // way to tell, the report is merged without clearing anything:
+          // guessing is what marked one player's tasks as emergency-cleared
+          // whenever another player synced.
+          var reporter = PartnerService.normalizeCode(msg.payload['senderCode'] as String? ?? '');
+          if (reporter.isEmpty) {
+            reporter = PartnerService.normalizeCode(
+                _contactFor(id: msg.senderId)?.pairingCode ?? _onlyPlayer()?.pairingCode ?? '');
+          }
+          final attributable = reporter.isNotEmpty;
+          // Unattributed but with at most one player contact, there is nobody
+          // else the report could be about, so it is treated as covering
+          // every directive - which is how a single player always worked.
+          final soleSource = !attributable && _players().length <= 1;
+          ActiveOrder tag(ActiveOrder o) => attributable ? o.copyWith(heldByCode: reporter) : o;
+          bool mine(ActiveOrder o) => attributable ? _isHeldBy(o, reporter) : soleSource;
+          bool sameTask(ActiveOrder a, ActiveOrder b) =>
+              a.id == b.id ||
+              (mine(a) &&
+                  ((a.order.id.isNotEmpty && b.order.id.isNotEmpty && a.order.id == b.order.id) ||
+                      a.order.title.trim().toLowerCase() == b.order.title.trim().toLowerCase()));
+
+          final tokens = (msg.payload['tokens'] as num?)?.toInt() ?? 0;
+          final streak = (msg.payload['streak'] as num?)?.toInt() ?? 0;
+          _remoteTokens = tokens;
+          _remoteStreak = streak;
+          if (attributable) {
+            _remoteTokensByCode[reporter] = tokens;
+            _remoteStreakByCode[reporter] = streak;
+          }
 
           if (msg.payload['underReviewOrders'] is List) {
             final incomingReviews = (msg.payload['underReviewOrders'] as List)
-                .map((e) => ActiveOrder.fromJson(e as Map<String, dynamic>))
+                .map((e) => tag(ActiveOrder.fromJson(e as Map<String, dynamic>)))
                 .toList();
 
-            // When player sends periodic state, they use toStateJson() (proofImageBase64: null).
-            // We must preserve existing local proofImageBase64 if incoming is null!
+            // State omits proof images to stay small; keep the ones the proof
+            // submission itself delivered.
             final List<ActiveOrder> preservedReviews = [];
             for (final inRev in incomingReviews) {
-              final existingIdx = _remoteReviewOrders.indexWhere((r) =>
-                  r.id == inRev.id ||
-                  (r.order.id.isNotEmpty && inRev.order.id.isNotEmpty && r.order.id == inRev.order.id) ||
-                  r.order.title.trim().toLowerCase() == inRev.order.title.trim().toLowerCase());
+              final existingIdx = _remoteReviewOrders.indexWhere((r) => sameTask(r, inRev));
               if (existingIdx != -1 && (inRev.proofImageBase64 == null || inRev.proofImageBase64!.isEmpty)) {
                 final existing = _remoteReviewOrders[existingIdx];
                 preservedReviews.add(inRev.copyWith(
@@ -2999,36 +3084,36 @@ class SyncService extends ChangeNotifier {
                 preservedReviews.add(inRev);
               }
             }
-            _remoteReviewOrders = preservedReviews;
 
-            // Remove any orders that are now under review from active list
-            for (final rev in _remoteReviewOrders) {
-              _remoteActiveOrders.removeWhere(
-                (o) => o.id == rev.id ||
-                       (o.order.id.isNotEmpty && o.order.id == rev.order.id) ||
-                       o.order.title.trim().toLowerCase() == rev.order.title.trim().toLowerCase(),
-              );
+            // Replace this player's reviews; every other player's stay put.
+            _remoteReviewOrders = (attributable || soleSource)
+                ? [
+                    ..._remoteReviewOrders.where((r) => !mine(r) && !preservedReviews.any((p) => p.id == r.id)),
+                    ...preservedReviews,
+                  ]
+                : [
+                    ..._remoteReviewOrders.where((r) => !preservedReviews.any((p) => p.id == r.id)),
+                    ...preservedReviews,
+                  ];
+
+            for (final rev in preservedReviews) {
+              _remoteActiveOrders.removeWhere((o) => sameTask(o, rev));
             }
           }
 
           if (msg.payload['activeOrders'] is List) {
             final incomingRaw = (msg.payload['activeOrders'] as List)
-                .map((e) => ActiveOrder.fromJson(e as Map<String, dynamic>))
+                .map((e) => tag(ActiveOrder.fromJson(e as Map<String, dynamic>)))
                 .toList();
 
             final List<ActiveOrder> incomingActive = [];
             for (final inO in incomingRaw) {
               if (inO.status == OrderStatus.underReview) continue;
-              if (_remoteReviewOrders.any((r) =>
-                  r.id == inO.id ||
-                  (r.order.id.isNotEmpty && inO.order.id.isNotEmpty && r.order.id == inO.order.id) ||
-                  r.order.title.trim().toLowerCase() == inO.order.title.trim().toLowerCase())) {
-                continue;
-              }
-              // If this order has been recalled/cleared by Director, do not resurrect!
+              if (_remoteReviewOrders.any((r) => sameTask(r, inO))) continue;
+              // Recalled here but still on their dashboard: tell them again.
               if (isOrderRecalled(inO)) {
-                final senderCode = msg.payload['senderCode'] as String? ?? inO.assignedByPartnerCode;
-                if (senderCode != null && senderCode.isNotEmpty) {
+                final recipient = _contactFor(code: attributable ? reporter : null);
+                if (recipient != null) {
                   final recallMsg = SyncMessage(
                     type: SyncMessageType.orderStatusUpdate,
                     senderId: _deviceId,
@@ -3040,7 +3125,7 @@ class SyncService extends ChangeNotifier {
                       'senderCode': _pairingCode,
                     },
                   );
-                  sendDirectToTopic(senderCode, _pairingSecret, recallMsg, relayHost: _customRelayHost);
+                  _sendToContact(recipient, recallMsg);
                 }
                 continue;
               }
@@ -3048,69 +3133,41 @@ class SyncService extends ChangeNotifier {
             }
 
             final List<ActiveOrder> mergedList = [];
-            int findMatchIndex(ActiveOrder target) {
-              return mergedList.indexWhere((o) =>
-                  o.id == target.id ||
-                  (o.order.id.isNotEmpty && target.order.id.isNotEmpty && o.order.id == target.order.id) ||
-                  (o.order.title.trim().isNotEmpty && target.order.title.trim().isNotEmpty &&
-                   o.order.title.trim().toLowerCase() == target.order.title.trim().toLowerCase()));
-            }
-
             for (final local in _remoteActiveOrders) {
               if (local.status == OrderStatus.underReview) continue;
               if (isOrderRecalled(local)) continue;
-              if (_remoteReviewOrders.any((r) =>
-                  r.id == local.id ||
-                  (r.order.id.isNotEmpty && local.order.id == r.order.id) ||
-                  r.order.title.trim().toLowerCase() == local.order.title.trim().toLowerCase())) {
-                continue;
-              }
+              if (_remoteReviewOrders.any((r) => sameTask(r, local))) continue;
 
-              final isPresentOnPlayer = incomingActive.any((inO) =>
-                  inO.id == local.id ||
-                  (inO.order.id.isNotEmpty && inO.order.id == local.order.id) ||
-                  inO.order.title.trim().toLowerCase() == local.order.title.trim().toLowerCase());
+              final isPresentOnPlayer = incomingActive.any((inO) => sameTask(local, inO));
 
+              // Missing from this player's report means this player cleared it
+              // - but only for tasks this player holds. Another player's tasks
+              // are, of course, missing from this report.
               if (!isPresentOnPlayer &&
+                  mine(local) &&
                   isOrderConfirmedOnPlayer(local) &&
                   local.status != OrderStatus.failed &&
                   local.status != OrderStatus.cancelled &&
                   local.status != OrderStatus.emergencyCleared) {
-                // Submissive cleared this directive from their dashboard!
-                final updatedLocal = local.copyWith(
+                mergedList.add(local.copyWith(
                   status: OrderStatus.emergencyCleared,
                   directorNote: 'Emergency Cleared by Submissive',
-                );
-                final existingIdx = findMatchIndex(updatedLocal);
-                if (existingIdx != -1) {
-                  mergedList[existingIdx] = updatedLocal;
-                } else {
-                  mergedList.add(updatedLocal);
-                }
+                ));
                 _confirmedOnPlayerOrderIds.remove(local.id);
-                if (local.order.id.isNotEmpty) _confirmedOnPlayerOrderIds.remove(local.order.id);
-                _confirmedOnPlayerOrderIds.remove(local.order.title.trim().toLowerCase());
               } else {
-                final existingIdx = findMatchIndex(local);
-                if (existingIdx != -1) {
-                  mergedList[existingIdx] = local;
-                } else {
-                  mergedList.add(local);
-                }
+                mergedList.add(local);
               }
             }
 
             for (final incoming in incomingActive) {
-              final existingIdx = findMatchIndex(incoming);
+              final existingIdx = mergedList.indexWhere((o) => sameTask(o, incoming));
               if (existingIdx != -1) {
-                // Overwrite with freshest player progress/status
+                // Freshest progress from the player who holds it.
                 mergedList[existingIdx] = incoming;
               } else {
                 mergedList.add(incoming);
               }
               _confirmedOnPlayerOrderIds.add(incoming.id);
-              if (incoming.order.id.isNotEmpty) _confirmedOnPlayerOrderIds.add(incoming.order.id);
-              _confirmedOnPlayerOrderIds.add(incoming.order.title.trim().toLowerCase());
             }
 
             _remoteActiveOrders = mergedList;
@@ -3118,10 +3175,8 @@ class SyncService extends ChangeNotifier {
           }
 
           if (msg.payload['underReviewOrders'] is List) {
-            for (final rev in _remoteReviewOrders) {
+            for (final rev in _remoteReviewOrders.where(mine)) {
               _confirmedOnPlayerOrderIds.add(rev.id);
-              if (rev.order.id.isNotEmpty) _confirmedOnPlayerOrderIds.add(rev.order.id);
-              _confirmedOnPlayerOrderIds.add(rev.order.title.trim().toLowerCase());
             }
             _saveConfirmedOrders();
           }
@@ -3130,6 +3185,7 @@ class SyncService extends ChangeNotifier {
             _remotePendingRedemptions = (msg.payload['pendingRedemptions'] as List)
                 .map((e) => ActiveRedemption.fromJson(e as Map<String, dynamic>))
                 .toList();
+            if (attributable) _remoteRedemptionsByCode[reporter] = _remotePendingRedemptions;
           }
 
           if (msg.payload['activeQuest'] is Map) {
@@ -3336,36 +3392,9 @@ class SyncService extends ChangeNotifier {
       }
     }
 
-    // 2. If partner not found or fallback, send to active partner
-    final active = _partnerService?.activePartner;
-    if (active != null && !active.isSelf && active.pairingCode.isNotEmpty) {
-      return await sendDirectToTopic(
-        active.pairingCode,
-        active.pairingSecret,
-        msg,
-        relayHost: active.customRelayHost.isNotEmpty ? active.customRelayHost : _customRelayHost,
-      );
-    }
-
-    // 3. Try any unblocked dominant contacts
-    final dominants = _partnerService?.unblockedContacts
-        .where((c) => c.role == PartnerRole.dominant && !c.isSelf && c.pairingCode.isNotEmpty)
-        .toList() ?? [];
-    if (dominants.isNotEmpty) {
-      bool anySent = false;
-      for (final d in dominants) {
-        final sent = await sendDirectToTopic(
-          d.pairingCode,
-          d.pairingSecret,
-          msg,
-          relayHost: d.customRelayHost.isNotEmpty ? d.customRelayHost : _customRelayHost,
-        );
-        if (sent) anySent = true;
-      }
-      return anySent;
-    }
-
-    // Do NOT fallback to own channel / sendMessage to prevent self-looping
+    // No further fallbacks. Proof - photos included - used to go next to the
+    // selected partner, and failing that to every director contact. A proof
+    // with no known reviewer is not sent anywhere.
     return false;
   }
 
@@ -3391,47 +3420,58 @@ class SyncService extends ChangeNotifier {
     _lastBroadcastTime = DateTime.now();
     _broadcastDebounceTimer?.cancel();
 
-    final msg = SyncMessage(
-      id: Uuid().v4(),
-      type: SyncMessageType.sendState,
-      senderId: _deviceId,
-      payload: {
-        'tokens': _engine.stats.tokens,
-        'streak': _engine.stats.currentStreakDays,
-        'score': _engine.stats.disciplineScore,
-        'activeOrders': _engine.currentRunningOrders.map((o) => o.toStateJson()).toList(),
-        'underReviewOrders': _engine.underReviewOrders.map((o) => o.toStateJson()).toList(),
-        'pendingRedemptions': _engine.pendingRedemptions.map((r) => r.toJson()).toList(),
-        if (_questService?.activeQuest != null)
-          'activeQuest': _questService!.activeQuest!.toJson(),
-      },
-    );
+    SyncMessage stateFor(PartnerContact? director) {
+      // Each director is sent the tasks they assigned, and nothing else. The
+      // whole dashboard - every director's tasks, self-assigned ones, and the
+      // notes submitted as proof - used to go to every director, and was also
+      // published on this device's own topic, which every contact reads.
+      bool theirs(ActiveOrder o) {
+        if (director == null) return true; // local socket: one known peer
+        if (!o.assignedByDirector) return false;
+        final code = PartnerService.normalizeCode(o.assignedByPartnerCode ?? '');
+        return (code.isNotEmpty && code == PartnerService.normalizeCode(director.pairingCode)) ||
+            (o.assignedByPartnerId != null && o.assignedByPartnerId == director.id);
+      }
 
-    // 1. Send via active transport if connected
-    sendMessage(msg);
+      final quest = _questService?.activeQuest;
+      final questCode = PartnerService.normalizeCode(quest?.assignedByPartnerCode ?? '');
+      final shareQuest = quest != null &&
+          (director == null ||
+              questCode.isEmpty ||
+              questCode == PartnerService.normalizeCode(director.pairingCode));
 
-    // 2. Also send direct to all unblocked dominant partners
+      return SyncMessage(
+        id: Uuid().v4(),
+        type: SyncMessageType.sendState,
+        senderId: _deviceId,
+        payload: {
+          'senderCode': _pairingCode,
+          'tokens': _engine.stats.tokens,
+          'streak': _engine.stats.currentStreakDays,
+          'score': _engine.stats.disciplineScore,
+          'activeOrders': _engine.currentRunningOrders.where(theirs).map((o) => o.toStateJson()).toList(),
+          'underReviewOrders': _engine.underReviewOrders.where(theirs).map((o) => o.toStateJson()).toList(),
+          'pendingRedemptions': _engine.pendingRedemptions.map((r) => r.toJson()).toList(),
+          if (shareQuest) 'activeQuest': quest.toJson(),
+        },
+      );
+    }
+
+    // Local socket transports are a single, known peer.
+    sendToLocalSocketOnly(stateFor(null));
+
     final dominants = _partnerService?.unblockedContacts
-        .where((c) => c.role == PartnerRole.dominant)
-        .toList() ?? [];
+            .where((c) => c.role == PartnerRole.dominant && !c.isSelf && c.pairingCode.isNotEmpty)
+            .toList() ??
+        [];
     if (dominants.isNotEmpty) {
       for (final partner in dominants) {
-        sendDirectToTopic(
-          partner.pairingCode,
-          partner.pairingSecret,
-          msg,
-          relayHost: partner.customRelayHost.isNotEmpty ? partner.customRelayHost : _customRelayHost,
-        );
+        _sendToContact(partner, stateFor(partner));
       }
     } else {
       final active = _partnerService?.activePartner;
-      if (active != null) {
-        sendDirectToTopic(
-          active.pairingCode,
-          active.pairingSecret,
-          msg,
-          relayHost: active.customRelayHost.isNotEmpty ? active.customRelayHost : _customRelayHost,
-        );
+      if (active != null && !active.isSelf && active.pairingCode.isNotEmpty) {
+        _sendToContact(active, stateFor(active));
       }
     }
   }
@@ -3529,6 +3569,11 @@ class SyncService extends ChangeNotifier {
   /// A `SELF:` entry marks an undirected publish to our own topic.
   @visibleForTesting
   final List<String> debugSentToCodes = [];
+
+  /// Directed messages as sent, addressed. Lets tests check what each
+  /// recipient was given, not just who received something.
+  @visibleForTesting
+  final List<SyncMessage> debugSentMessages = [];
 
   void _recordOutboundCode(String code) {
     debugSentToCodes.add(code);
@@ -3653,19 +3698,8 @@ class SyncService extends ChangeNotifier {
         dispatched = true;
       }
 
-      // 3. Direct to all submissive contacts if no specific partner
-      final submissives = _partnerService?.unblockedContacts.where((c) => c.role == PartnerRole.submissive).toList() ?? [];
-      for (final p in submissives) {
-        if (p.id != active?.id && p.pairingCode.isNotEmpty) {
-          sendDirectToTopic(
-            p.pairingCode,
-            p.pairingSecret,
-            msg,
-            relayHost: p.customRelayHost.isNotEmpty ? p.customRelayHost : _customRelayHost,
-          );
-          dispatched = true;
-        }
-      }
+      // No longer followed by every other player contact: a directive with no
+      // named recipient went to all of them.
 
       // 4. Send to shared personal pairing code if no contacts exist
       if (!dispatched && _pairingCode.isNotEmpty) {
@@ -3691,12 +3725,17 @@ class SyncService extends ChangeNotifier {
       assignedByPartnerCode: targetPartner?.pairingCode ?? _partnerService?.activePartner?.pairingCode ?? _pairingCode,
       assignedByPartnerName: targetPartner?.displayName ?? _partnerService?.activePartner?.displayName ?? 'Submissive',
       assignedByPartnerId: targetPartner?.id ?? _partnerService?.activePartnerId,
+      heldByCode: () {
+        final to = (targetPartner != null && !targetPartner.isSelf && targetPartner.pairingCode.isNotEmpty)
+            ? targetPartner
+            : _partnerService?.activePartner;
+        return (to != null && !to.isSelf && to.pairingCode.isNotEmpty)
+            ? PartnerService.normalizeCode(to.pairingCode)
+            : null;
+      }(),
     );
 
-    _remoteActiveOrders.removeWhere(
-      (o) => o.id == assigned.id ||
-             (o.order.title == order.title && o.assignedByPartnerCode == assigned.assignedByPartnerCode),
-    );
+    _remoteActiveOrders.removeWhere((o) => o.id == assigned.id);
     _remoteActiveOrders.insert(0, assigned);
     _saveDirectorDispatchedOrders();
     notifyListeners();
@@ -3749,42 +3788,19 @@ class SyncService extends ChangeNotifier {
 
     bool dispatched = false;
 
-    // 1. Direct to explicit partner or assigned contact
-    PartnerContact? partner = targetPartner;
-    if (partner == null && activeOrder.assignedByPartnerId != null && activeOrder.assignedByPartnerId!.isNotEmpty) {
-      partner = _partnerService?.findContactById(activeOrder.assignedByPartnerId!);
-    }
-    if (partner == null && activeOrder.assignedByPartnerCode != null && activeOrder.assignedByPartnerCode!.isNotEmpty) {
-      partner = _partnerService?.findContactByCode(activeOrder.assignedByPartnerCode!);
-    }
-    partner ??= _partnerService?.activePartner;
+    // To the player holding it, and nobody else. This used to be re-sent to
+    // every other player contact as well, flagged forceAssign - which skips
+    // their duplicate checks - so every one of them mounted it.
+    final partner = (targetPartner != null && !targetPartner.isSelf)
+        ? targetPartner
+        : (_holderOf(activeOrder) ?? _onlyPlayer());
 
-    if (partner != null && partner.pairingCode.isNotEmpty) {
-      await sendDirectToTopic(
-        partner.pairingCode,
-        partner.pairingSecret,
-        msg,
-        relayHost: partner.customRelayHost.isNotEmpty ? partner.customRelayHost : _customRelayHost,
-      );
+    if (await _sendToContact(partner, msg)) {
       dispatched = true;
     }
 
-    // 2. Direct to all other submissive contacts
-    final submissives = _partnerService?.unblockedContacts.where((c) => c.role == PartnerRole.submissive).toList() ?? [];
-    for (final p in submissives) {
-      if (p.id != partner?.id && p.pairingCode.isNotEmpty) {
-        await sendDirectToTopic(
-          p.pairingCode,
-          p.pairingSecret,
-          msg,
-          relayHost: p.customRelayHost.isNotEmpty ? p.customRelayHost : _customRelayHost,
-        );
-        dispatched = true;
-      }
-    }
-
     // 3. Send to shared personal pairing code
-    if (_pairingCode.isNotEmpty) {
+    if (!dispatched && _pairingCode.isNotEmpty) {
       await sendDirectToTopic(
         _pairingCode,
         _pairingSecret,
@@ -3809,10 +3825,19 @@ class SyncService extends ChangeNotifier {
     requestStateFromPlayer(targetPartner: targetPartner);
 
     // Re-transmit any unconfirmed active directives
-    for (final active in _remoteActiveOrders) {
-      if (!isOrderConfirmedOnPlayer(active) && active.status != OrderStatus.failed) {
-        await resendDispatchedOrder(active, targetPartner: targetPartner);
+    for (final active in List<ActiveOrder>.from(_remoteActiveOrders)) {
+      if (isOrderConfirmedOnPlayer(active) || active.status == OrderStatus.failed) continue;
+      // Each directive to the player who holds it. With a player named, only
+      // theirs - this used to send every unconfirmed directive, whoever it
+      // belonged to, to the named player.
+      final holder = _holderOf(active) ?? _onlyPlayer();
+      if (holder == null) continue;
+      if (targetPartner != null &&
+          PartnerService.normalizeCode(holder.pairingCode) !=
+              PartnerService.normalizeCode(targetPartner.pairingCode)) {
+        continue;
       }
+      await resendDispatchedOrder(active, targetPartner: holder);
     }
 
     // Re-transmit any unconfirmed active quests
@@ -3900,24 +3925,10 @@ class SyncService extends ChangeNotifier {
         dispatched = true;
       }
 
-      // 3. Fall back to broadcasting to all unblocked submissive and peer contacts
-      final recipients = _partnerService?.unblockedContacts
-          .where((c) => c.role == PartnerRole.submissive || c.role == PartnerRole.peer)
-          .toList() ?? [];
-      for (final p in recipients) {
-        if (p.id != active?.id && p.pairingCode.isNotEmpty) {
-          sendDirectToTopic(
-            p.pairingCode,
-            p.pairingSecret,
-            msg,
-            relayHost: p.customRelayHost.isNotEmpty ? p.customRelayHost : _customRelayHost,
-          );
-          dispatched = true;
-        }
-      }
+      // No longer followed by every player and peer contact.
 
       // 4. Send to shared personal pairing code
-      if (_pairingCode.isNotEmpty) {
+      if (!dispatched && _pairingCode.isNotEmpty) {
         sendDirectToTopic(
           _pairingCode,
           _pairingSecret,
@@ -3989,31 +4000,11 @@ class SyncService extends ChangeNotifier {
       sent = true;
     }
 
-    // 2. Direct to all unblocked dominant and peer partners
-    final recipients = _partnerService?.unblockedContacts
-        .where((c) => (c.role == PartnerRole.dominant || c.role == PartnerRole.peer) && c.pairingCode != assignerCode)
-        .toList() ?? [];
-    for (final partner in recipients) {
-      if (partner.pairingCode.isNotEmpty) {
-        await sendDirectToTopic(
-          partner.pairingCode,
-          partner.pairingSecret,
-          msg,
-          relayHost: partner.customRelayHost.isNotEmpty ? partner.customRelayHost : _customRelayHost,
-        );
-        sent = true;
-      }
-    }
-
-    final active = _partnerService?.activePartner;
-    if (active != null && active.pairingCode != assignerCode && !recipients.any((d) => d.id == active.id) && active.pairingCode.isNotEmpty) {
-      await sendDirectToTopic(
-        active.pairingCode,
-        active.pairingSecret,
-        msg,
-        relayHost: active.customRelayHost.isNotEmpty ? active.customRelayHost : _customRelayHost,
-      );
-      sent = true;
+    // Progress is for the director who set the quest. It used to go to every
+    // director and peer contact as well. The selected partner stands in only
+    // when the quest does not record who set it.
+    if (!sent) {
+      sent = await _sendToContact(_partnerService?.activePartner, msg);
     }
 
     sendToLocalSocketOnly(msg);
@@ -4053,31 +4044,11 @@ class SyncService extends ChangeNotifier {
       sent = true;
     }
 
-    // 2. Direct to all unblocked dominant and peer partners
-    final recipients = _partnerService?.unblockedContacts
-        .where((c) => (c.role == PartnerRole.dominant || c.role == PartnerRole.peer) && c.pairingCode != assignerCode)
-        .toList() ?? [];
-    for (final partner in recipients) {
-      if (partner.pairingCode.isNotEmpty) {
-        await sendDirectToTopic(
-          partner.pairingCode,
-          partner.pairingSecret,
-          msg,
-          relayHost: partner.customRelayHost.isNotEmpty ? partner.customRelayHost : _customRelayHost,
-        );
-        sent = true;
-      }
-    }
-
-    final active = _partnerService?.activePartner;
-    if (active != null && active.pairingCode != assignerCode && !recipients.any((d) => d.id == active.id) && active.pairingCode.isNotEmpty) {
-      await sendDirectToTopic(
-        active.pairingCode,
-        active.pairingSecret,
-        msg,
-        relayHost: active.customRelayHost.isNotEmpty ? active.customRelayHost : _customRelayHost,
-      );
-      sent = true;
+    // Progress is for the director who set the quest. It used to go to every
+    // director and peer contact as well. The selected partner stands in only
+    // when the quest does not record who set it.
+    if (!sent) {
+      sent = await _sendToContact(_partnerService?.activePartner, msg);
     }
 
     sendToLocalSocketOnly(msg);
@@ -4129,7 +4100,7 @@ class SyncService extends ChangeNotifier {
   /// Internal helper to route proof review responses back to the original submitter
   void _sendToProofSender(String activeOrderId, SyncMessage msg, {PartnerContact? targetPartner}) {
     // 1. If explicit partner provided, send to them
-    if (targetPartner != null) {
+    if (targetPartner != null && !targetPartner.isSelf) {
       sendDirectToTopic(
         targetPartner.pairingCode,
         targetPartner.pairingSecret,
@@ -4149,6 +4120,19 @@ class SyncService extends ChangeNotifier {
     }
     if (senderPartner == null && trackedSenderCode != null && trackedSenderCode.isNotEmpty) {
       senderPartner = _partnerService?.findContactByCode(trackedSenderCode);
+    }
+
+    // The player the proof is filed under.
+    if (senderPartner == null) {
+      final review = _remoteReviewOrders.cast<ActiveOrder?>().firstWhere(
+            (o) => o!.id == activeOrderId,
+            orElse: () => null,
+          ) ??
+          _remoteActiveOrders.cast<ActiveOrder?>().firstWhere(
+            (o) => o!.id == activeOrderId,
+            orElse: () => null,
+          );
+      if (review != null) senderPartner = _holderOf(review);
     }
 
     if (senderPartner != null) {
@@ -4172,23 +4156,16 @@ class SyncService extends ChangeNotifier {
       return;
     }
 
-    // 4. Fall back to broadcasting to all submissive contacts
-    final submissives = _partnerService?.unblockedContacts
-        .where((c) => c.role == PartnerRole.submissive)
-        .toList() ?? [];
-    if (submissives.isNotEmpty) {
-      for (final p in submissives) {
-        sendDirectToTopic(
-          p.pairingCode,
-          p.pairingSecret,
-          msg,
-          relayHost: p.customRelayHost.isNotEmpty ? p.customRelayHost : _customRelayHost,
-        );
-      }
+    // 4. The only player, if there is only one. This used to broadcast the
+    //    verdict - reason and task title included - to every player contact.
+    final only = _onlyPlayer();
+    if (only != null) {
+      _sendToContact(only, msg);
       return;
     }
 
-    // 5. Last resort: active partner
+    // 5. Last resort: active partner. Verdicts apply by exact id, so a wrong
+    //    guess here changes nothing on the recipient.
     final active = _partnerService?.activePartner;
     if (active != null) {
       sendDirectToTopic(

@@ -443,12 +443,27 @@ class PlayerDashboardView extends StatelessWidget {
                         ),
                       );
                     } else {
+                      // The assigning director, or the one picked in the
+                      // dropdown - never "the first contact". That fallback
+                      // sent proof to whoever happened to head the list when
+                      // the stored id did not match, which it never does on
+                      // the side that sent the pairing request.
                       PartnerContact? partner;
-                      if (selectedDirectorId != null) {
-                        partner = unblockedPartners.firstWhere(
-                          (p) => p.id == selectedDirectorId,
-                          orElse: () => unblockedPartners.first,
-                        );
+                      if (isDirectorAssigned) {
+                        final code = activeOrder.assignedByPartnerCode ?? '';
+                        partner = unblockedPartners.cast<PartnerContact?>().firstWhere(
+                              (p) =>
+                                  (code.isNotEmpty &&
+                                      PartnerService.normalizeCode(p!.pairingCode) ==
+                                          PartnerService.normalizeCode(code)) ||
+                                  p!.id == activeOrder.assignedByPartnerId,
+                              orElse: () => null,
+                            );
+                      } else if (selectedDirectorId != null) {
+                        partner = unblockedPartners.cast<PartnerContact?>().firstWhere(
+                              (p) => p!.id == selectedDirectorId,
+                              orElse: () => null,
+                            );
                       }
 
                       if (!activeOrder.assignedByDirector && partner != null) {
@@ -623,22 +638,7 @@ class PlayerDashboardView extends StatelessWidget {
               onPressed: () {
                 engine.failOrder(activeOrder.id, reason: 'Voluntarily forfeited');
                 final sync = Provider.of<SyncService>(context, listen: false);
-                if (activeOrder.assignedByDirector) {
-                  sync.sendMessage(
-                    SyncMessage(
-                      type: SyncMessageType.orderStatusUpdate,
-                      senderId: sync.deviceId,
-                      payload: {
-                        'activeOrderId': activeOrder.id,
-                        'status': 'failed',
-                        'orderTitle': activeOrder.order.title,
-                        'reason': 'Voluntarily forfeited',
-                        'senderName': sync.nickname.isNotEmpty ? sync.nickname : 'Player',
-                        'senderCode': sync.pairingCode,
-                      },
-                    ),
-                  );
-                }
+                sync.notifyOrderFailed(activeOrder, reason: 'Voluntarily forfeited');
                 sync.broadcastPlayerState();
                 Navigator.pop(ctx);
               },

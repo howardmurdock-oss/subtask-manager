@@ -38,6 +38,13 @@ class ActiveOrder {
   final String? assignedByPartnerId;
   final String? assignedByPartnerName;
 
+  /// Director-side only: pairing code of the player whose device holds this
+  /// order. `assignedByPartner*` cannot carry it reliably - on the director's
+  /// own copy it names the player, but the player's copy (which replaces it on
+  /// every state sync) names the director. Losing track of the holder is what
+  /// let resends, recalls and approvals fan out to every player.
+  final String? heldByCode;
+
   ActiveOrder({
     String? id,
     required this.order,
@@ -57,6 +64,7 @@ class ActiveOrder {
     this.assignedByPartnerCode,
     this.assignedByPartnerId,
     this.assignedByPartnerName,
+    this.heldByCode,
   })  : id = id ?? const Uuid().v4(),
         assignedAt = assignedAt ?? DateTime.now(),
         actionSecondsRemaining = actionSecondsRemaining ?? order.actionDurationSeconds;
@@ -142,6 +150,7 @@ class ActiveOrder {
       'assignedByPartnerCode': assignedByPartnerCode,
       'assignedByPartnerId': assignedByPartnerId,
       'assignedByPartnerName': assignedByPartnerName,
+      if (heldByCode != null) 'heldByCode': heldByCode,
     };
   }
 
@@ -185,6 +194,7 @@ class ActiveOrder {
       assignedByPartnerCode: json['assignedByPartnerCode'] as String?,
       assignedByPartnerId: json['assignedByPartnerId'] as String?,
       assignedByPartnerName: json['assignedByPartnerName'] as String?,
+      heldByCode: json['heldByCode'] as String?,
     );
   }
 
@@ -209,6 +219,7 @@ class ActiveOrder {
     String? assignedByPartnerCode,
     String? assignedByPartnerId,
     String? assignedByPartnerName,
+    String? heldByCode,
   }) {
     return ActiveOrder(
       id: id ?? this.id,
@@ -229,6 +240,7 @@ class ActiveOrder {
       assignedByPartnerCode: assignedByPartnerCode ?? this.assignedByPartnerCode,
       assignedByPartnerId: assignedByPartnerId ?? this.assignedByPartnerId,
       assignedByPartnerName: assignedByPartnerName ?? this.assignedByPartnerName,
+      heldByCode: heldByCode ?? this.heldByCode,
     );
   }
 
@@ -252,6 +264,7 @@ class ActiveOrder {
       assignedByPartnerCode: assignedByPartnerCode,
       assignedByPartnerId: assignedByPartnerId,
       assignedByPartnerName: assignedByPartnerName,
+      heldByCode: heldByCode,
     );
   }
 }

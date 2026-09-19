@@ -171,15 +171,17 @@ void main() {
       expect(sync.debugSentToCodes.any((c) => c.startsWith('SELF:')), isFalse);
     });
 
-    test('state broadcasts still go out on our own topic', () async {
-      // The own-topic channel is legitimate for undirected state sync — the fix
-      // must not silence it.
+    test('state broadcasts are no longer published on our own topic', () async {
+      // Every contact reads our own topic. State used to be published there,
+      // which handed each contact the whole dashboard - every director's
+      // tasks and the notes submitted as proof. It now goes directly to each
+      // director, holding only their own directives (multi_partner_routing_test).
       final (sync, _, _) = await directorWithTwoContacts();
 
       sync.broadcastPlayerState();
       await Future.delayed(const Duration(milliseconds: 20));
 
-      expect(sync.debugSentToCodes.any((c) => c.startsWith('SELF:')), isTrue);
+      expect(sync.debugSentToCodes.any((c) => c.startsWith('SELF:')), isFalse);
     });
   });
 
