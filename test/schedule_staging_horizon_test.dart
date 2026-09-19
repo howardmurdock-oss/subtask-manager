@@ -100,4 +100,37 @@ void main() {
         entries.map((e) => (e['ruleId'] as String).split('_').first).toSet();
     expect(ruleIds, {'r1'});
   });
+
+  test('re-staging a random window does not reshuffle it', () {
+    // Every computation used to re-roll each future day, so the local alarm,
+    // the server row and the next re-stage all disagreed about when the same
+    // occurrence was - and dedup, which keys on that time, could never match
+    // them up.
+    final rule = dailySelfDraw(id: 'r1', hour: 9);
+    final first = build([rule]).map((e) => e['at']).toList();
+    final second = build([rule]).map((e) => e['at']).toList();
+    expect(second, orderedEquals(first));
+
+    final from = DateTime(2026, 9, 13, 12);
+    expect(rule.upcomingTriggers(ScheduleService.stagedOccurrences, from: from),
+        orderedEquals(rule.upcomingTriggers(ScheduleService.stagedOccurrences, from: from)));
+  });
+
+  test('a stable random window still lands inside the window, and varies', () {
+    final rule = dailySelfDraw(id: 'r1', hour: 9);
+    final triggers = rule.upcomingTriggers(14, from: DateTime(2026, 9, 13, 12));
+
+    for (final t in triggers) {
+      expect(t.hour, 9);
+      expect(t.minute, lessThan(15));
+    }
+    // Stable per day, but not the same minute every day - it is still random
+    // from the user's point of view.
+    expect(triggers.map((t) => t.minute * 60 + t.second).toSet().length, greaterThan(1));
+
+    // Two rules with the same window do not fire in lockstep.
+    final other = dailySelfDraw(id: 'r2', hour: 9)
+        .upcomingTriggers(14, from: DateTime(2026, 9, 13, 12));
+    expect(other, isNot(orderedEquals(triggers)));
+  });
 }

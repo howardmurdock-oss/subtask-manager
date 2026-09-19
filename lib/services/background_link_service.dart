@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1241,7 +1242,41 @@ class BackgroundLinkService {
       } catch (e) {
         out['lastError'] = 'service query failed: $e';
       }
+      try {
+        final power = await const MethodChannel('subtask/power_state')
+            .invokeMapMethod<String, dynamic>('get');
+        if (power != null) {
+          out['batteryExempt'] = '${power['ignoringBatteryOptimizations']}';
+          out['bgRestricted'] = '${power['backgroundRestricted'] ?? 'n/a'}';
+          out['standbyBucket'] = _bucketName(power['standbyBucket']);
+          out['device'] = '${power['manufacturer']} / SDK ${power['sdk']}';
+        }
+      } catch (_) {
+        // Not reachable from a background isolate; the panel only calls this
+        // from the UI, where it is.
+      }
     }
     return out;
+  }
+
+  static String _bucketName(Object? bucket) {
+    switch (bucket) {
+      case 5:
+        return 'exempted';
+      case 10:
+        return 'active';
+      case 20:
+        return 'working set';
+      case 30:
+        return 'frequent';
+      case 40:
+        return 'rare';
+      case 45:
+        return 'RESTRICTED';
+      case null:
+        return 'n/a';
+      default:
+        return '$bucket';
+    }
   }
 }

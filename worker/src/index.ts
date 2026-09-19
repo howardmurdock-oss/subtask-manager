@@ -57,6 +57,9 @@ const MAX_DUE_PER_TICK = 30;
  */
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
+/** How long delivery records are kept for /diag. */
+const DELIVERY_LOG_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // encoding helpers
 // ---------------------------------------------------------------------------
@@ -211,18 +214,19 @@ async function pushToTopic(
   topic: string,
   payload: string,
   kind: string,
-): Promise<{ sent: number; stale: string[] }> {
+): Promise<{ devices: number; sent: number; stale: string[]; errors: string[] }> {
   const { results } = await env.DB.prepare(
     `SELECT push_token FROM devices WHERE topic = ?1 ORDER BY updated_at DESC LIMIT ?2`,
   )
     .bind(topic, MAX_TOKENS_PER_TOPIC)
     .all<{ push_token: string }>();
 
-  if (!results || results.length === 0) return { sent: 0, stale: [] };
+  if (!results || results.length === 0) return { devices: 0, sent: 0, stale: [], errors: [] };
 
   const endpoint = `https://fcm.googleapis.com/v1/projects/${env.FCM_PROJECT_ID}/messages:send`;
   let sent = 0;
   const stale: string[] = [];
+  const errors: string[] = [];
 
   for (const row of results) {
     const response = await fetch(endpoint, {
@@ -245,16 +249,21 @@ async function pushToTopic(
       continue;
     }
     const detail = await response.text();
+    errors.push(`${response.status} ${detail.slice(0, 160)}`);
+    // Only prune on a verdict about the token itself. INVALID_ARGUMENT is also
+    // what FCM returns for a malformed or oversized *message*, and treating
+    // that as a dead token deleted a live registration - which the device then
+    // never replaced, because it believed it was still registered.
     if (
       response.status === 404 ||
       detail.includes('UNREGISTERED') ||
-      detail.includes('INVALID_ARGUMENT')
+      (detail.includes('INVALID_ARGUMENT') && /registration token/i.test(detail))
     ) {
       stale.push(row.push_token);
     }
   }
 
-  return { sent, stale };
+  return { devices: results.length, sent, stale, errors };
 }
 
 async function pruneTokens(env: Env, tokens: string[]): Promise<void> {
@@ -335,7 +344,7 @@ async function handleSend(request: Request, env: Env): Promise<Response> {
   }
 
   const accessToken = await getAccessToken(env);
-  const { sent, stale } = await pushToTopic(
+  const { sent, stale, errors } = await pushToTopic(
     env,
     accessToken,
     body.topic,
@@ -344,7 +353,7 @@ async function handleSend(request: Request, env: Env): Promise<Response> {
   );
   await pruneTokens(env, stale);
 
-  return json({ sent, pruned: stale.length }, sent > 0 ? 200 : 502);
+  return json({ sent, pruned: stale.length, errors }, sent > 0 ? 200 : 502);
 }
 
 /**
@@ -370,34 +379,92 @@ async function runDueSchedules(env: Env): Promise<void> {
 
   let accessToken: string | null = null;
   const staleTokens: string[] = [];
-  const done: Array<{ topic: string; ruleId: string; dueAt: number }> = [];
+  const statements: D1PreparedStatement[] = [];
 
   for (const row of results) {
-    done.push({ topic: row.topic, ruleId: row.rule_id, dueAt: row.due_at });
+    let devices = 0;
+    let sent = 0;
+    let detail: string | null = null;
 
-    // Long overdue: the device's own catch-up has dealt with this by now, and
-    // pushing it would re-deliver something the user already saw.
-    if (now - row.due_at > STALE_AFTER_MS) continue;
+    if (now - row.due_at > STALE_AFTER_MS) {
+      // Long overdue: the device's own catch-up has dealt with this by now,
+      // and pushing it would re-deliver something the user already saw.
+      detail = 'skipped: stale';
+    } else {
+      // Per row, so one failure cannot strand the rows after it - previously a
+      // throw here skipped the delete for rows already sent, and they went out
+      // again the next minute.
+      try {
+        accessToken ??= await getAccessToken(env);
+        const outcome = await pushToTopic(env, accessToken, row.topic, row.payload, 'scheduled');
+        devices = outcome.devices;
+        sent = outcome.sent;
+        staleTokens.push(...outcome.stale);
+        if (devices === 0) detail = 'no device registered for topic';
+        else if (outcome.errors.length > 0) detail = outcome.errors.join(' | ');
+      } catch (e) {
+        detail = `error: ${String(e).slice(0, 200)}`;
+      }
+    }
 
-    accessToken ??= await getAccessToken(env);
-    const { stale } = await pushToTopic(env, accessToken, row.topic, row.payload, 'scheduled');
-    staleTokens.push(...stale);
-  }
+    console.log(
+      `scheduled ${row.rule_id} due=${new Date(row.due_at).toISOString()} ` +
+        `devices=${devices} sent=${sent}${detail ? ` detail=${detail}` : ''}`,
+    );
 
-  // Delete after attempting, not before: a row that fails to send is one the
-  // device will still catch up on, and retrying it every minute for a day
-  // would be worse than dropping it.
-  if (done.length > 0) {
-    await env.DB.batch(
-      done.map((d) =>
-        env.DB.prepare(
-          `DELETE FROM schedules WHERE topic = ?1 AND rule_id = ?2 AND due_at = ?3`,
-        ).bind(d.topic, d.ruleId, d.dueAt),
-      ),
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO deliveries (topic, rule_id, due_at, fired_at, devices, sent, detail)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+      ).bind(row.topic, row.rule_id, row.due_at, Date.now(), devices, sent, detail),
+      env.DB.prepare(
+        `DELETE FROM schedules WHERE topic = ?1 AND rule_id = ?2 AND due_at = ?3`,
+      ).bind(row.topic, row.rule_id, row.due_at),
     );
   }
 
+  statements.push(
+    env.DB.prepare(`DELETE FROM deliveries WHERE fired_at < ?1`).bind(
+      now - DELIVERY_LOG_RETENTION_MS,
+    ),
+  );
+  await env.DB.batch(statements);
   await pruneTokens(env, staleTokens);
+}
+
+/**
+ * Everything the server knows about one topic, for the app's diagnostics panel.
+ *
+ * Answers the three questions a missed scheduled directive raises: is this
+ * device registered, is anything staged, and what did the cron actually do.
+ * Returns no tokens and no payloads. The topic is already a hash of the pairing
+ * code, and the same hash is visible on the public relay.
+ */
+async function handleDiag(url: URL, env: Env): Promise<Response> {
+  const topic = url.searchParams.get('topic');
+  if (!topic) return json({ error: 'topic is required' }, 400);
+
+  const [devices, staged, deliveries] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT platform, updated_at FROM devices WHERE topic = ?1 ORDER BY updated_at DESC`,
+    ).bind(topic),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS count, MIN(due_at) AS next_due FROM schedules WHERE topic = ?1`,
+    ).bind(topic),
+    env.DB.prepare(
+      `SELECT rule_id, due_at, fired_at, devices, sent, detail FROM deliveries
+       WHERE topic = ?1 ORDER BY fired_at DESC LIMIT 15`,
+    ).bind(topic),
+  ]);
+
+  const stagedRow = (staged.results?.[0] ?? {}) as { count?: number; next_due?: number | null };
+  return json({
+    now: Date.now(),
+    devices: devices.results ?? [],
+    staged: stagedRow.count ?? 0,
+    nextDue: stagedRow.next_due ?? null,
+    deliveries: deliveries.results ?? [],
+  });
 }
 
 export default {
@@ -430,6 +497,10 @@ export default {
       } catch (e) {
         return json({ ok: false, error: String(e) }, 500);
       }
+    }
+
+    if (request.method === 'GET' && url.pathname === '/diag') {
+      return handleDiag(url, env).catch((e) => json({ error: String(e) }, 500));
     }
 
     if (request.method === 'POST' && url.pathname === '/register') {

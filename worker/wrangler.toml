@@ -26,3 +26,9 @@ id = "b2662ab7352f46e5bed49c37560e1578"
 # infinitely more than a frozen foreground service was providing.
 [triggers]
 crons = ["* * * * *"]
+
+# Retained invocation logs (dashboard > Workers > subtask-push > Logs). Without
+# it, whatever the cron did at 3am is gone unless someone was running
+# `wrangler tail` at the time.
+[observability]
+enabled = true

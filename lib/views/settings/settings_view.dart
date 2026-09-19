@@ -713,6 +713,16 @@ class _SettingsViewState extends State<SettingsView> {
                           },
                         ),
                         const SizedBox(height: 10),
+                        // End-to-end evidence for scheduled pushes: what the
+                        // server did, and what this device received. When a
+                        // scheduled directive goes missing, these two lists
+                        // say which link broke.
+                        _PushDeliveryEvidence(
+                          topic: sync.pairingCode.isEmpty
+                              ? ''
+                              : SyncService.getHashedTopic(sync.pairingCode),
+                        ),
+                        const SizedBox(height: 10),
                         // Outbound send status lives outside the background
                         // service section on purpose: it is the only signal the
                         // dispatching device has, and on desktop there is no
@@ -829,12 +839,41 @@ class _SettingsViewState extends State<SettingsView> {
                                           ? Colors.red
                                           : null,
                                     )),
-                                Text('Last service tick: ${d['lastTick'] ?? 'Never'} (${d['tickCount'] ?? '0'} ticks)',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontFamily: 'monospace',
-                                      color: (d['lastTick'] ?? 'Never') == 'Never' ? Colors.red : null,
-                                    )),
+                                Builder(builder: (_) {
+                                  // A RUNNING badge beside a tick from hours
+                                  // ago means the process is alive but frozen,
+                                  // and it read as healthy until now.
+                                  final tick = DateTime.tryParse(d['lastTick'] ?? '');
+                                  final age = tick == null ? null : DateTime.now().difference(tick);
+                                  final stale = age == null || age > const Duration(minutes: 5);
+                                  final ageText = age == null
+                                      ? ''
+                                      : ' - ${age.inHours}h ${age.inMinutes % 60}m ago${stale ? ', NOT TICKING' : ''}';
+                                  return Text(
+                                      'Last service tick: ${d['lastTick'] ?? 'Never'} (${d['tickCount'] ?? '0'} ticks)$ageText',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontFamily: 'monospace',
+                                        color: stale ? Colors.red : null,
+                                      ));
+                                }),
+                                if (d['batteryExempt'] != null)
+                                  Text(
+                                      'Battery optimisation: ${d['batteryExempt'] == 'true' ? 'exempt' : 'NOT EXEMPT'}'
+                                      ' | Restricted: ${d['bgRestricted']}'
+                                      ' | Bucket: ${d['standbyBucket']}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontFamily: 'monospace',
+                                        color: (d['batteryExempt'] != 'true' ||
+                                                d['bgRestricted'] == 'true' ||
+                                                d['standbyBucket'] == 'RESTRICTED')
+                                            ? Colors.red
+                                            : null,
+                                      )),
+                                if (d['device'] != null)
+                                  Text('Device: ${d['device']}',
+                                      style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
                                 if (lastError != 'None' && lastError.isNotEmpty)
                                   Padding(
                                     padding: const EdgeInsets.only(top: 4),
@@ -1416,6 +1455,91 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ],
       ),
+    );
+  }
+}
+
+
+/// Server and device records of scheduled push delivery, side by side.
+class _PushDeliveryEvidence extends StatelessWidget {
+  const _PushDeliveryEvidence({required this.topic});
+
+  final String topic;
+
+  static const _mono = TextStyle(fontSize: 12, fontFamily: 'monospace');
+
+  static String _hm(Object? ms) {
+    if (ms is! num) return '?';
+    final t = DateTime.fromMillisecondsSinceEpoch(ms.toInt());
+    return '${t.month}/${t.day} ${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}';
+  }
+
+  static String _hmIso(Object? iso) {
+    final t = DateTime.tryParse('${iso ?? ''}');
+    return t == null ? '?' : _hm(t.millisecondsSinceEpoch);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Object>>(
+      future: Future.wait<Object>([
+        PushService.fetchServerDiag(topic),
+        PushService.recentReceipts(),
+      ]),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Text('Push delivery: checking...', style: _mono);
+        }
+        final server = snap.data![0] as Map<String, dynamic>;
+        final receipts = snap.data![1] as List<Map<String, dynamic>>;
+        final lines = <Widget>[];
+
+        if (server['error'] != null) {
+          lines.add(Text('Server: unavailable (${server['error']})',
+              style: _mono.copyWith(color: Colors.orange)));
+        } else {
+          final devices = (server['devices'] as List?) ?? const [];
+          lines.add(Text(
+              devices.isEmpty
+                  ? 'Server: NO DEVICE REGISTERED for this code'
+                  : 'Server: ${devices.length} device(s) registered, last ${_hm((devices.first as Map)['updated_at'])}',
+              style: _mono.copyWith(color: devices.isEmpty ? Colors.red : null)));
+          lines.add(Text(
+              'Staged: ${server['staged']}'
+              '${server['nextDue'] != null ? ', next ${_hm(server['nextDue'])}' : ''}',
+              style: _mono));
+          final deliveries = (server['deliveries'] as List?) ?? const [];
+          if (deliveries.isEmpty) {
+            lines.add(const Text('Server sends: none recorded yet', style: _mono));
+          }
+          for (final raw in deliveries.take(6)) {
+            final d = raw as Map;
+            final ok = (d['sent'] as num? ?? 0) > 0;
+            lines.add(Text(
+                'Sent ${_hm(d['fired_at'])} (due ${_hm(d['due_at'])}) '
+                '${d['sent']}/${d['devices']}'
+                '${d['detail'] != null ? ' ${d['detail']}' : ''}',
+                style: _mono.copyWith(color: ok ? null : Colors.red)));
+          }
+        }
+
+        if (receipts.isEmpty) {
+          lines.add(const Text('Received: none recorded yet', style: _mono));
+        }
+        for (final r in receipts.take(6)) {
+          final received = DateTime.tryParse('${r['r'] ?? ''}');
+          final sent = DateTime.tryParse('${r['s'] ?? ''}');
+          final delay = (received != null && sent != null) ? received.difference(sent) : null;
+          final late = delay != null && delay > const Duration(minutes: 2);
+          lines.add(Text(
+              'Received ${_hmIso(r['r'])} ${r['k']}${r['bg'] == true ? ' [bg]' : ''}'
+              '${delay != null ? ' +${delay.inMinutes >= 1 ? '${delay.inMinutes}m' : '${delay.inSeconds}s'}' : ''}',
+              style: _mono.copyWith(color: late ? Colors.red : null)));
+        }
+
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: lines);
+      },
     );
   }
 }

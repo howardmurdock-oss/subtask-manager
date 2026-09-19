@@ -31,3 +31,22 @@ CREATE TABLE IF NOT EXISTS schedules (
 );
 
 CREATE INDEX IF NOT EXISTS idx_schedules_due_at ON schedules (due_at);
+
+-- What the cron actually did with each staged row.
+--
+-- Without this a missed scheduled directive is indistinguishable from end to
+-- end: the row is deleted once attempted, FCM's answer was discarded, and the
+-- device keeps no note of what arrived. Several days of testing produced only
+-- "it didn't come", with no way to say which link broke. No payloads here -
+-- timing and outcome only.
+CREATE TABLE IF NOT EXISTS deliveries (
+  topic    TEXT NOT NULL,
+  rule_id  TEXT NOT NULL,
+  due_at   INTEGER NOT NULL,
+  fired_at INTEGER NOT NULL,
+  devices  INTEGER NOT NULL,
+  sent     INTEGER NOT NULL,
+  detail   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_deliveries_topic ON deliveries (topic, fired_at);

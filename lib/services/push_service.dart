@@ -49,6 +49,23 @@ class PushService {
   static const String announcedByPushKey = 'push_announced_ids_v1';
   static const int _maxAnnouncedIds = 100;
 
+  /// Every push this device actually received, with when Google sent it.
+  ///
+  /// The gap between the two is the whole diagnosis: a push received seconds
+  /// after it was sent means delivery works and any silence is ours; one
+  /// received hours later, at the moment the app was opened, means the OS held
+  /// it; one never received at all, against a server record saying it was
+  /// sent, means it was dropped before reaching the app.
+  static const String receiptsKey = 'push_receipts_v1';
+  static const int _maxReceipts = 20;
+
+  /// When registration last succeeded. An unchanged token used to skip
+  /// re-registering forever, so a row the Worker had pruned was never put
+  /// back: the device believed it was registered and silently received
+  /// nothing. Re-registering daily costs one request and heals that.
+  static const String _registeredAtKey = 'push_registered_at_v1';
+  static const Duration _reregisterAfter = Duration(hours: 24);
+
   /// Whether this platform can *receive* pushes. Registration and the Firebase
   /// SDK are Android-only.
   static bool get isSupported => !kIsWeb && Platform.isAndroid;
@@ -95,6 +112,7 @@ class PushService {
       // Foreground arrivals still come through here rather than the background
       // handler, so they need the same routing.
       FirebaseMessaging.onMessage.listen((message) {
+        _recordReceipt(message, background: false);
         _enqueue(message.data);
       });
     } catch (e) {
@@ -125,10 +143,15 @@ class PushService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
+      final registeredAt =
+          DateTime.tryParse(prefs.getString(_registeredAtKey) ?? '');
+      final recent = registeredAt != null &&
+          DateTime.now().difference(registeredAt) < _reregisterAfter;
       if (!force &&
+          recent &&
           prefs.getString(_registeredTokenKey) == token &&
           prefs.getString(_registeredTopicKey) == topic) {
-        return; // Already registered under this exact pairing.
+        return; // Registered under this exact pairing, and recently.
       }
 
       final response = await _post('/register', {
@@ -140,6 +163,7 @@ class PushService {
       if (response == 200) {
         await prefs.setString(_registeredTokenKey, token);
         await prefs.setString(_registeredTopicKey, topic);
+        await prefs.setString(_registeredAtKey, DateTime.now().toIso8601String());
         await _recordStatus('registered');
       } else {
         await _recordStatus('register failed: HTTP $response');
@@ -201,6 +225,67 @@ class PushService {
     } catch (e) {
       await _recordStatus('schedule upload error: $e');
       return false;
+    }
+  }
+
+  static Future<void> _recordReceipt(RemoteMessage message,
+      {required bool background}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final list =
+          List<String>.from(prefs.getStringList(receiptsKey) ?? const <String>[]);
+      list.add(jsonEncode({
+        'r': DateTime.now().toIso8601String(),
+        's': message.sentTime?.toIso8601String(),
+        'k': message.data['k'] ?? '',
+        'bg': background,
+      }));
+      if (list.length > _maxReceipts) {
+        list.removeRange(0, list.length - _maxReceipts);
+      }
+      await prefs.setStringList(receiptsKey, list);
+    } catch (_) {}
+  }
+
+  /// Received pushes, newest first.
+  static Future<List<Map<String, dynamic>>> recentReceipts() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final out = <Map<String, dynamic>>[];
+      for (final raw in (prefs.getStringList(receiptsKey) ?? const <String>[]).reversed) {
+        try {
+          out.add(Map<String, dynamic>.from(jsonDecode(raw) as Map));
+        } catch (_) {}
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// What the Worker knows about [topic]: registered devices, staged rows, and
+  /// what the cron did with each recent one. Never throws - the diagnostics
+  /// panel must render whatever the network does.
+  static Future<Map<String, dynamic>> fetchServerDiag(String topic) async {
+    if (!canSend) return {'error': 'not available on this platform'};
+    if (topic.isEmpty) return {'error': 'no pairing code'};
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+    try {
+      final uri = Uri.parse('$workerBaseUrl/diag')
+          .replace(queryParameters: {'topic': topic});
+      final request = await client.getUrl(uri).timeout(const Duration(seconds: 10));
+      final response = await request.close().timeout(const Duration(seconds: 15));
+      final body = await response.transform(utf8.decoder).join();
+      if (response.statusCode != 200) {
+        return {'error': 'HTTP ${response.statusCode}'};
+      }
+      return Map<String, dynamic>.from(jsonDecode(body) as Map);
+    } catch (e) {
+      return {'error': '$e'};
+    } finally {
+      client.close(force: true);
     }
   }
 
@@ -388,6 +473,9 @@ Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
   } catch (_) {
     // Already initialised in this isolate; harmless.
   }
+  // First, before anything that could fail: the fact of arrival is the one
+  // piece of evidence nothing else can reconstruct later.
+  await PushService._recordReceipt(message, background: true);
   await PushService._enqueue(message.data);
 
   // The queue alone is not enough. With the app swiped away there is no UI

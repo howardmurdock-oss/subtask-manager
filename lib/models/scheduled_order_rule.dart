@@ -153,12 +153,32 @@ class ScheduledOrderRule {
     return computeRandomWindowTrigger(startH, startM, endH, endM, fromTime: current);
   }
 
+  /// FNV-1a. String.hashCode is not guaranteed stable across runs or
+  /// isolates, and this has to agree between all of them.
+  static int _stableSeed(String key) {
+    var hash = 0x811c9dc5;
+    for (final unit in key.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    return hash;
+  }
+
+  /// With [seedKey], an occurrence whose window lies wholly ahead lands at the
+  /// same moment every time it is computed.
+  ///
+  /// Without it, every computation re-rolled the dice: the local alarm, the
+  /// staged server push and the rule's own next-trigger time each held a
+  /// *different* time for the same day, and every re-stage reshuffled all of
+  /// them. Occurrence dedup keys on that time, so the two delivery paths could
+  /// never recognise each other.
   static DateTime computeRandomWindowTrigger(
     int startHour,
     int startMinute,
     int endHour,
     int endMinute, {
     DateTime? fromTime,
+    String? seedKey,
   }) {
     final now = fromTime ?? DateTime.now();
     var windowStart = DateTime(now.year, now.month, now.day, startHour, startMinute);
@@ -181,6 +201,12 @@ class ScheduledOrderRule {
 
     if (totalSpanSeconds <= 60) {
       return windowEnd;
+    }
+
+    if (seedKey != null && !effectiveStart.isAfter(windowStart)) {
+      final day = '${windowStart.year}-${windowStart.month}-${windowStart.day}';
+      final seeded = Random(_stableSeed('$seedKey|$day'));
+      return windowStart.add(Duration(seconds: seeded.nextInt(totalSpanSeconds)));
     }
 
     final rand = Random();
@@ -208,6 +234,7 @@ class ScheduledOrderRule {
             windowEndHour ?? 21,
             windowEndMinute ?? 0,
             fromTime: DateTime(nextDay.year, nextDay.month, nextDay.day, 0, 0),
+            seedKey: id,
           );
         }
         if (specificScheduledTime != null) {
@@ -230,6 +257,7 @@ class ScheduledOrderRule {
             windowEndHour ?? 21,
             windowEndMinute ?? 0,
             fromTime: DateTime(nextWeek.year, nextWeek.month, nextWeek.day, 0, 0),
+            seedKey: id,
           );
         }
         if (specificScheduledTime != null) {
