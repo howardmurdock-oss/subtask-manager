@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:orders_app/core/security/encryption_helper.dart';
+import 'package:orders_app/models/active_order.dart';
 import 'package:orders_app/models/order_item.dart';
 import 'package:orders_app/models/order_pack.dart';
 import 'package:orders_app/models/scheduled_order_rule.dart';
@@ -149,5 +150,52 @@ void main() {
 
     expect(ScheduleCoordinator.activeOrderIdFor(ruleId, today),
         isNot(ScheduleCoordinator.activeOrderIdFor(ruleId, tomorrow)));
+  });
+
+  test('a pushed scheduled self-draw is self-assigned, so it runs on honour', () async {
+    // Mounting it as director-assigned hid the self-verify option and routed
+    // submitted proof to the first contact in the list.
+    final (sync, engine, _) = await device();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('pending_background_push_v1',
+        [stagedPayloadFor(DateTime.now().subtract(const Duration(minutes: 1)))]);
+    await sync.processPendingBackgroundMessages();
+
+    expect(engine.activeOrders.single.assignedByDirector, isFalse);
+  });
+
+  test('scheduled tasks mounted as director-assigned by older builds are repaired', () async {
+    SharedPreferences.setMockInitialValues({});
+    final storage = StorageService();
+    await storage.saveActiveOrders([
+      ActiveOrder(
+        id: 'sched_stuck',
+        order: task(),
+        assignedAt: DateTime.now(),
+        status: OrderStatus.underReview,
+        assignedByDirector: true,
+        assignedByPartnerId: 'scheduled',
+        assignedByPartnerName: 'Scheduled Task',
+      ),
+      ActiveOrder(
+        id: 'real_director',
+        order: task(),
+        assignedAt: DateTime.now(),
+        status: OrderStatus.active,
+        assignedByDirector: true,
+        assignedByPartnerId: 'partner-1',
+        assignedByPartnerName: 'Director',
+      ),
+    ]);
+
+    final engine = OrderEngine(storage: storage);
+    await engine.init();
+
+    final byId = {for (final o in engine.activeOrders) o.id: o};
+    expect(byId['sched_stuck']!.assignedByDirector, isFalse);
+    expect(byId['sched_stuck']!.status, OrderStatus.underReview,
+        reason: 'left in review, but now completable by the player');
+    expect(byId['real_director']!.assignedByDirector, isTrue,
+        reason: 'a real director assignment is untouched');
   });
 }

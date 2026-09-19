@@ -409,9 +409,16 @@ class OrderCard extends StatelessWidget {
                     order.verificationType == VerificationType.photoProof ||
                     activeOrder.assignedByDirector)
                   ElevatedButton.icon(
+                    // Same dialog either way. For a task nobody else assigned,
+                    // it defaults to self-verifying, with the note and photo
+                    // kept as a record rather than sent for approval.
                     onPressed: onSubmitProof,
-                    icon: const Icon(Icons.edit_note_rounded, size: 18),
-                    label: const Text('Submit Proof'),
+                    icon: Icon(
+                        activeOrder.assignedByDirector
+                            ? Icons.edit_note_rounded
+                            : Icons.check_circle_outline_rounded,
+                        size: 18),
+                    label: Text(activeOrder.assignedByDirector ? 'Submit Proof' : 'Complete Task'),
                   )
                 else
                   ElevatedButton.icon(

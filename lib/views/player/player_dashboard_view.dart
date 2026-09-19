@@ -275,8 +275,8 @@ class PlayerDashboardView extends StatelessWidget {
                           child: Column(
                             children: [
                               RadioListTile<String>(
-                                title: const Text('Self-Verify / Skip Director Verification', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                                subtitle: const Text('Complete task instantly and award tokens immediately.', style: TextStyle(fontSize: 11)),
+                                title: const Text('Honour System: Self-Verify', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                subtitle: const Text('Mark it complete yourself and award tokens now. Your note is kept with the record.', style: TextStyle(fontSize: 11)),
                                 value: 'skip',
                                 groupValue: selectedMode,
                                 onChanged: (val) => setDialogState(() => selectedMode = val ?? 'skip'),

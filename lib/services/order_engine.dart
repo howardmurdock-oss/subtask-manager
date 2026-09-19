@@ -70,6 +70,12 @@ class OrderEngine extends ChangeNotifier {
             StorageService.getDefaultPacks().first.orders.first;
         return active.copyWith(order: genuine);
       }
+      // Self-assigned tasks mounted as director-assigned by earlier builds,
+      // including any sitting in review with nobody able to approve them.
+      if (active.assignedByDirector && ActiveOrder.isSelfSender(active.assignedByPartnerId)) {
+        hadReplacements = true;
+        return active.copyWith(assignedByDirector: false);
+      }
       return active;
     }).toList();
     if (hadReplacements) {

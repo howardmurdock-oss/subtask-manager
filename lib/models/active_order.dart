@@ -28,6 +28,12 @@ class ActiveOrder {
   final String? proofImageBase64;
   final String? directorNote;
   final bool assignedByDirector;
+
+  /// Sender ids that mean "this device assigned it to itself": `scheduled` for
+  /// a self-draw the Worker delivered, `__self__` for a rule firing on this
+  /// device. Neither is a person who could review proof.
+  static bool isSelfSender(String? senderId) =>
+      senderId == 'scheduled' || senderId == '__self__';
   final String? assignedByPartnerCode;
   final String? assignedByPartnerId;
   final String? assignedByPartnerName;

@@ -449,7 +449,12 @@ class SyncService extends ChangeNotifier {
                 : _engine.stats.history.any((h) =>
                     h.orderTitle.trim().toLowerCase() == order.title.trim().toLowerCase());
 
-            final isDirectorAssigned = data['assignedByDirector'] as bool? ?? (senderName != 'Self');
+            // A director rule aimed at "Myself (This Device)" is flagged
+            // director-assigned, but the director and the player are the same
+            // person - there is no one else to review it.
+            final isDirectorAssigned =
+                (data['assignedByDirector'] as bool? ?? (senderName != 'Self')) &&
+                    !ActiveOrder.isSelfSender(senderId);
             DateTime? parsedAssignedAt;
             if (data['assignedAt'] is String) {
               parsedAssignedAt = DateTime.tryParse(data['assignedAt'] as String);
@@ -2630,10 +2635,18 @@ class SyncService extends ChangeNotifier {
               parsedAssignedAt = DateTime.tryParse(msg.payload['assignedAt'] as String);
             }
 
+            // A scheduled self-draw now arrives down this same path, by push.
+            // Hardcoding director-assigned here made it look as though a
+            // director called "Scheduled Task" had set it: the self-verify
+            // option disappeared, and submitting proof fell back to whichever
+            // contact happened to be first in the list. There is nobody to
+            // review a task you assigned yourself, so it runs on honour.
+            final selfAssigned = msg.payload['assignedByDirector'] == false ||
+                ActiveOrder.isSelfSender(senderId);
             final assigned = _engine.assignOrder(
               order,
               id: activeOrderId,
-              assignedByDirector: true,
+              assignedByDirector: !selfAssigned,
               assignedByPartnerCode: senderCode,
               assignedByPartnerId: senderId,
               assignedByPartnerName: senderName,
