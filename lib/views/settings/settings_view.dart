@@ -17,6 +17,7 @@ import '../../services/worker_socket_service.dart';
 import '../../services/debug_settings.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/update_service.dart';
+import '../player/stats_view.dart';
 import '../../services/schedule_service.dart';
 import '../../services/sync_service.dart';
 import '../../services/background_link_service.dart';
@@ -621,6 +622,31 @@ class _SettingsViewState extends State<SettingsView> {
           // Personal Pairing Identity Section
           _buildPersonalIdentitySection(context, sync, theme),
 
+          // Stats live here rather than in the navigation bar: the record is
+          // something you go and look at now and then, and the bar had more
+          // destinations than fit a phone.
+          Card(
+            margin: const EdgeInsets.only(bottom: 20),
+            child: ListTile(
+              leading: CircleAvatar(
+                backgroundColor: theme.colorScheme.primary.withOpacity(0.18),
+                child: Icon(Icons.bar_chart_rounded, color: theme.colorScheme.primary),
+              ),
+              title: const Text('Statistics & Record',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(
+                'Tokens, streaks, completion history and your discipline log.',
+                style:
+                    TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.65)),
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StatsView()),
+              ),
+            ),
+          ),
+
           // Version & updates. The app is distributed outside any store, so
           // nothing else would tell someone they are running an old build.
           if (UpdateService.isSupported) ...[
@@ -774,6 +800,30 @@ class _SettingsViewState extends State<SettingsView> {
                     onChanged: (on) async {
                       await DebugSettings.instance.setShowPlayerOverrides(on);
                       if (mounted) setState(() {});
+                    },
+                  ),
+                  SwitchListTile(
+                    secondary: Icon(Icons.system_update_alt_rounded,
+                        color: theme.colorScheme.onSurface.withOpacity(0.7)),
+                    title: const Text('Use the test update manifest',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(
+                      'Checks against latest-test.json instead of the published manifest, so the '
+                      'update prompt can be seen without announcing a version that does not exist. '
+                      'Restart the app after changing this.',
+                      style: TextStyle(
+                          fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.65)),
+                    ),
+                    value: DebugSettings.instance.updateManifestUrl != null,
+                    onChanged: (on) async {
+                      await DebugSettings.instance
+                          .setUpdateManifestUrl(on ? DebugSettings.testManifestUrl : null);
+                      if (mounted) {
+                        setState(() {
+                          _update = null;
+                          _updateCheckMessage = null;
+                        });
+                      }
                     },
                   ),
                 ],

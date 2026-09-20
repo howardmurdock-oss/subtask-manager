@@ -81,10 +81,11 @@ void main() {
     expect(prefs.getBool(DebugSettings.showPlayerOverridesKey), isTrue);
   });
 
-  testWidgets('partners and chat are one panel with both tabs', (tester) async {
+  testWidgets('contacts is one panel with both tabs', (tester) async {
     await harness(tester, const PartnersAndChatView());
 
-    expect(find.text('Partners & Chat'), findsOneWidget);
+    // The destination is called Contacts; partners and chat are its two tabs.
+    expect(find.text('Contacts'), findsOneWidget);
     expect(find.text('Partners'), findsOneWidget);
     expect(find.text('Chat'), findsOneWidget);
   });

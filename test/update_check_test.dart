@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:orders_app/services/debug_settings.dart';
 import 'package:orders_app/services/update_service.dart';
 
 /// The app is distributed outside any store, so nothing tells a user they are
@@ -96,6 +97,19 @@ void main() {
       expect(parse('{}'), isNull);
       expect(parse('[]'), isNull);
       expect(parse(jsonEncode({'version': 42})), isNull);
+    });
+  });
+
+  group('where it checks', () {
+    test('uses the published manifest unless the debug panel redirects it', () async {
+      await DebugSettings.instance.setUpdateManifestUrl(null);
+      expect(UpdateService.manifestUrl, UpdateService.publishedManifestUrl);
+
+      await DebugSettings.instance.setUpdateManifestUrl(DebugSettings.testManifestUrl);
+      expect(UpdateService.manifestUrl, DebugSettings.testManifestUrl);
+
+      await DebugSettings.instance.setUpdateManifestUrl(null);
+      expect(UpdateService.manifestUrl, UpdateService.publishedManifestUrl);
     });
   });
 

@@ -9,7 +9,6 @@ import '../models/order_item.dart';
 import '../services/sync_service.dart';
 import '../services/partner_service.dart';
 import 'player/player_dashboard_view.dart';
-import 'player/stats_view.dart';
 import 'player/inventory_view.dart';
 import 'player/rewards_shop_view.dart';
 import 'director/director_dashboard_view.dart';
@@ -409,7 +408,8 @@ class _HomeScreenState extends State<HomeScreen> {
       const InventoryView(),
       const RewardsShopView(),
       const PartnersAndChatView(),
-      const StatsView(),
+      // Stats moved into Settings: seven destinations did not fit a phone, and
+      // the record is something you go and look at, not somewhere you work.
       const SettingsView(),
     ];
 
@@ -583,12 +583,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           NavigationRailDestination(
                             icon: _peopleIcon(false, peopleBadge),
                             selectedIcon: _peopleIcon(true, peopleBadge),
-                            label: const Text('Partners & Chat'),
-                          ),
-                          const NavigationRailDestination(
-                            icon: Icon(Icons.bar_chart_outlined),
-                            selectedIcon: Icon(Icons.bar_chart_rounded),
-                            label: Text('Stats'),
+                            label: const Text('Contacts'),
                           ),
                           const NavigationRailDestination(
                             icon: Icon(Icons.tune_outlined),
@@ -615,7 +610,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           NavigationRailDestination(
                             icon: _peopleIcon(false, peopleBadge),
                             selectedIcon: _peopleIcon(true, peopleBadge),
-                            label: const Text('Partners & Chat'),
+                            label: const Text('Contacts'),
                           ),
                           const NavigationRailDestination(
                             icon: Icon(Icons.tune_outlined),
@@ -670,12 +665,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       NavigationDestination(
                         icon: _peopleIcon(false, peopleBadge),
                         selectedIcon: _peopleIcon(true, peopleBadge),
-                        label: 'Partners & Chat',
-                      ),
-                      const NavigationDestination(
-                        icon: Icon(Icons.bar_chart_outlined),
-                        selectedIcon: Icon(Icons.bar_chart_rounded),
-                        label: 'Stats',
+                        label: 'Contacts',
                       ),
                       const NavigationDestination(
                         icon: Icon(Icons.tune_outlined),
@@ -702,7 +692,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       NavigationDestination(
                         icon: _peopleIcon(false, peopleBadge),
                         selectedIcon: _peopleIcon(true, peopleBadge),
-                        label: 'Partners & Chat',
+                        label: 'Contacts',
                       ),
                       const NavigationDestination(
                         icon: Icon(Icons.tune_outlined),

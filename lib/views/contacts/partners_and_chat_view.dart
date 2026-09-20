@@ -48,7 +48,7 @@ class _PartnersAndChatViewState extends State<PartnersAndChatView>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Partners & Chat'),
+        title: const Text('Contacts'),
         actions: [
           IconButton(
             tooltip: 'Add Partner',
