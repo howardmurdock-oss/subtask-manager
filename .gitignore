@@ -69,3 +69,7 @@ worker/.dev.vars
 *adminsdk*.json
 *service-account*.json
 *serviceAccount*.json
+
+# Local wrangler dev state. cf.json caches the request metadata of the
+# machine that ran it - city, postcode, lat/long, ISP - and this repo is public.
+.wrangler/
