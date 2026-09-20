@@ -22,6 +22,7 @@
 export interface Env {
   DB: D1Database;
   TOKEN_CACHE: KVNamespace;
+  TOPIC_HUB: DurableObjectNamespace;
   FCM_PROJECT_ID: string;
   FCM_SERVICE_ACCOUNT: string; // service-account JSON, set via `wrangler secret put`
 }
@@ -59,6 +60,183 @@ const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /** How long delivery records are kept for /diag. */
 const DELIVERY_LOG_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * How long a hub keeps messages for devices that were switched off, and how
+ * many. A desktop reconnects with the last sequence it saw and collects what
+ * it missed; beyond this it falls back to its own catch-up.
+ */
+const HUB_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const HUB_MAX_MESSAGES = 500;
+const HUB_MAX_BACKLOG_PER_CONNECT = 200;
+
+/** A desktop that has not reconnected in this long is no longer listening. */
+const DESKTOP_REGISTRATION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * How recently a desktop must have claimed its topic to be treated as
+ * reachable. A connected client re-claims twice a day, so this only lapses for
+ * a machine that has genuinely been away - at which point senders go back to
+ * the relay rather than posting into a hub nobody is reading. Without it, a
+ * device that stopped using the hub (an uninstall, a downgrade) would have its
+ * messages delivered nowhere until the registration aged out.
+ */
+const DESKTOP_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * One hub per topic: live delivery for devices FCM cannot reach.
+ *
+ * Windows and Linux have no FCM implementation, so desktop has been receiving
+ * over a shared public relay this project does not control. A hub holds a
+ * WebSocket per connected device and pushes to it the moment something is
+ * sent.
+ *
+ * It also keeps a short backlog, which is what makes this a replacement for
+ * that relay rather than a live-only channel: a PC that was switched off
+ * reconnects with the last sequence number it saw and collects what it missed.
+ *
+ * Connections are accepted through the hibernation API, so an idle desktop
+ * costs nothing while connected - the object leaves memory and is revived when
+ * a message actually arrives.
+ *
+ * Payloads are ciphertext, as everywhere else here.
+ */
+export class TopicHub {
+  private readonly sql: SqlStorage;
+
+  constructor(private readonly ctx: DurableObjectState, _env: Env) {
+    this.sql = ctx.storage.sql;
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS messages (
+         seq INTEGER PRIMARY KEY AUTOINCREMENT,
+         payload TEXT NOT NULL,
+         kind TEXT NOT NULL,
+         created_at INTEGER NOT NULL)`,
+    );
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (request.method === 'POST' && url.pathname === '/publish') {
+      const body = (await request.json().catch(() => null)) as {
+        payload?: string;
+        kind?: string;
+      } | null;
+      if (!body?.payload) return json({ error: 'payload is required' }, 400);
+      return json(this.publish(body.payload, body.kind ?? 'sync'));
+    }
+
+    if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
+      return json({ error: 'expected a websocket upgrade' }, 426);
+    }
+
+    const since = Number(url.searchParams.get('since') ?? '0');
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    this.ctx.acceptWebSocket(server);
+
+    // Whatever this device missed while it was away, oldest first.
+    const backlog = this.sql
+      .exec(
+        `SELECT seq, payload, kind FROM messages WHERE seq > ? ORDER BY seq LIMIT ?`,
+        Number.isFinite(since) ? since : 0,
+        HUB_MAX_BACKLOG_PER_CONNECT,
+      )
+      .toArray() as Array<{ seq: number; payload: string; kind: string }>;
+
+    for (const row of backlog) {
+      server.send(JSON.stringify({ seq: row.seq, p: row.payload, k: row.kind }));
+    }
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private publish(payload: string, kind: string): { seq: number; delivered: number } {
+    const now = Date.now();
+    const inserted = this.sql
+      .exec(
+        `INSERT INTO messages (payload, kind, created_at) VALUES (?, ?, ?) RETURNING seq`,
+        payload,
+        kind,
+        now,
+      )
+      .one() as { seq: number };
+
+    const frame = JSON.stringify({ seq: inserted.seq, p: payload, k: kind });
+    let delivered = 0;
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.send(frame);
+        delivered++;
+      } catch {
+        // Gone; the device will collect it from the backlog on reconnect.
+      }
+    }
+
+    this.sql.exec(`DELETE FROM messages WHERE created_at < ?`, now - HUB_RETENTION_MS);
+    this.sql.exec(
+      `DELETE FROM messages WHERE seq <= (
+         SELECT COALESCE(MAX(seq), 0) - ? FROM messages)`,
+      HUB_MAX_MESSAGES,
+    );
+
+    return { seq: inserted.seq, delivered };
+  }
+
+  // Hibernation handlers. Without these an idle connection would keep the
+  // object resident, which is what makes staying connected all day free.
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (message === 'ping') ws.send('pong');
+  }
+
+  async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    try {
+      // 1006 is "abnormal closure" and may not be sent back.
+      ws.close(code === 1006 ? 1000 : code, reason);
+    } catch {
+      // Already gone.
+    }
+  }
+
+  async webSocketError(): Promise<void> {}
+}
+
+/** Hands a payload to a topic's hub for any desktop listening on it. */
+async function publishToHub(
+  env: Env,
+  topic: string,
+  payload: string,
+  kind: string,
+): Promise<boolean> {
+  try {
+    const stub = env.TOPIC_HUB.get(env.TOPIC_HUB.idFromName(topic));
+    const response = await stub.fetch('https://hub.internal/publish', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ payload, kind }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Which kinds of device hold a topic. */
+async function devicesOn(env: Env, topic: string): Promise<{ android: boolean; desktop: boolean }> {
+  const { results } = await env.DB.prepare(
+    `SELECT platform, updated_at FROM devices WHERE topic = ?1`,
+  )
+    .bind(topic)
+    .all<{ platform: string; updated_at: number }>();
+  const rows = results ?? [];
+  const now = Date.now();
+  return {
+    android: rows.some((r) => r.platform === 'android'),
+    desktop: rows.some((r) => r.platform !== 'android' && now - r.updated_at < DESKTOP_FRESH_MS),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // encoding helpers
@@ -215,8 +393,11 @@ async function pushToTopic(
   payload: string,
   kind: string,
 ): Promise<{ devices: number; sent: number; stale: string[]; errors: string[] }> {
+  // Android only: a desktop registration is a client id, not an FCM token, and
+  // sending it to FCM would fail and prune a live registration.
   const { results } = await env.DB.prepare(
-    `SELECT push_token FROM devices WHERE topic = ?1 ORDER BY updated_at DESC LIMIT ?2`,
+    `SELECT push_token FROM devices WHERE topic = ?1 AND platform = 'android'
+     ORDER BY updated_at DESC LIMIT ?2`,
   )
     .bind(topic, MAX_TOKENS_PER_TOPIC)
     .all<{ push_token: string }>();
@@ -343,30 +524,39 @@ async function handleSend(request: Request, env: Env): Promise<Response> {
     return json({ error: 'payload too large for a data message', limit: MAX_PAYLOAD_BYTES }, 413);
   }
 
-  // Checked before minting a token: a desktop target should cost nothing.
-  const { results } = await env.DB.prepare(
-    `SELECT 1 FROM devices WHERE topic = ?1 LIMIT 1`,
-  )
-    .bind(body.topic)
-    .all();
-
-  if (!results || results.length === 0) {
-    // No Android device has claimed this topic. The caller should fall back to
-    // its existing transport rather than treat this as a delivery failure.
+  // Checked before minting a token, which is the expensive part: a topic
+  // nobody has claimed should cost nothing.
+  const { android, desktop } = await devicesOn(env, body.topic);
+  if (!android && !desktop) {
+    // Nobody registered here - an older build, or a device that has never run
+    // this version. The caller should fall back to its existing transport
+    // rather than treat this as a delivery failure.
     return json({ sent: 0, unregistered: true }, 404);
   }
 
-  const accessToken = await getAccessToken(env);
-  const { sent, stale, errors } = await pushToTopic(
-    env,
-    accessToken,
-    body.topic,
-    body.payload,
-    body.kind ?? 'sync',
-  );
-  await pruneTokens(env, stale);
+  let sent = 0;
+  let pruned = 0;
+  let errors: string[] = [];
+  if (android) {
+    const accessToken = await getAccessToken(env);
+    const outcome = await pushToTopic(
+      env,
+      accessToken,
+      body.topic,
+      body.payload,
+      body.kind ?? 'sync',
+    );
+    sent = outcome.sent;
+    errors = outcome.errors;
+    await pruneTokens(env, outcome.stale);
+    pruned = outcome.stale.length;
+  }
 
-  return json({ sent, pruned: stale.length, errors }, sent > 0 ? 200 : 502);
+  const hub = desktop
+    ? await publishToHub(env, body.topic, body.payload, body.kind ?? 'sync')
+    : false;
+
+  return json({ sent, hub, pruned, errors }, sent > 0 || hub ? 200 : 502);
 }
 
 /**
@@ -435,13 +625,24 @@ async function runDueSchedules(env: Env): Promise<void> {
       // throw here skipped the delete for rows already sent, and they went out
       // again the next minute.
       try {
-        accessToken ??= await getAccessToken(env);
-        const outcome = await pushToTopic(env, accessToken, row.topic, row.payload, 'scheduled');
-        devices = outcome.devices;
-        sent = outcome.sent;
-        staleTokens.push(...outcome.stale);
+        const holders = await devicesOn(env, row.topic);
+        if (holders.android) {
+          accessToken ??= await getAccessToken(env);
+          const outcome = await pushToTopic(env, accessToken, row.topic, row.payload, 'scheduled');
+          devices = outcome.devices;
+          sent = outcome.sent;
+          staleTokens.push(...outcome.stale);
+          if (outcome.errors.length > 0) detail = outcome.errors.join(' | ');
+        }
+        // Desktop hears about scheduled directives too. Until the hub existed
+        // the cron could only reach Android, so a PC got no server-side
+        // scheduling at all.
+        if (holders.desktop) {
+          devices++;
+          if (await publishToHub(env, row.topic, row.payload, 'scheduled')) sent++;
+          else if (detail == null) detail = 'hub publish failed';
+        }
         if (devices === 0) detail = 'no device registered for topic';
-        else if (outcome.errors.length > 0) detail = outcome.errors.join(' | ');
       } catch (e) {
         detail = `error: ${String(e).slice(0, 200)}`;
       }
@@ -466,6 +667,12 @@ async function runDueSchedules(env: Env): Promise<void> {
   statements.push(
     env.DB.prepare(`DELETE FROM deliveries WHERE fired_at < ?1`).bind(
       now - DELIVERY_LOG_RETENTION_MS,
+    ),
+    // Desktop registrations are client ids, so FCM never reports them dead and
+    // nothing else would ever remove one. A machine still in use re-claims its
+    // topic whenever it reconnects.
+    env.DB.prepare(`DELETE FROM devices WHERE platform != 'android' AND updated_at < ?1`).bind(
+      now - DESKTOP_REGISTRATION_TTL_MS,
     ),
   );
   await env.DB.batch(statements);
@@ -574,6 +781,15 @@ export default {
       } catch (e) {
         return json({ ok: false, error: String(e) }, 500);
       }
+    }
+
+    // Desktop's live channel. The hub is addressed by topic, which is already
+    // a hash of the pairing code.
+    if (url.pathname === '/subscribe') {
+      const topic = url.searchParams.get('topic');
+      if (!topic) return json({ error: 'topic is required' }, 400);
+      const stub = env.TOPIC_HUB.get(env.TOPIC_HUB.idFromName(topic));
+      return stub.fetch(request);
     }
 
     if (request.method === 'GET' && url.pathname === '/diag') {

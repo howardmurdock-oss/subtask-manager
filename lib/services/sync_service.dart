@@ -20,6 +20,7 @@ import '../core/sound/sound_service.dart';
 import 'order_engine.dart';
 import 'partner_service.dart';
 import 'push_service.dart';
+import 'worker_socket_service.dart';
 import 'chat_service.dart';
 import 'quest_service.dart';
 
@@ -345,7 +346,27 @@ class SyncService extends ChangeNotifier {
         _ensureInboxListener();
       }
       pollMissedMessages();
+      startHubTransport();
     }
+  }
+
+  /// Desktop's live channel to the Worker.
+  ///
+  /// Android receives over FCM; Windows and Linux have no implementation of it,
+  /// so without this they depend on a shared public relay. Payloads arrive
+  /// here in exactly the form the relay carries them, and go through the same
+  /// decode path - the relay stays up alongside it until this is proven.
+  void startHubTransport() {
+    if (!WorkerSocketService.isSupported || _pairingCode.isEmpty) return;
+    // Widget tests build the real service on a desktop host, where a genuine
+    // connect attempt leaves a timer pending past the end of the test. The
+    // transport's own tests drive it directly with a fake channel.
+    if (Platform.environment.containsKey('FLUTTER_TEST')) return;
+    unawaited(_hub.start(
+      topic: _getHashedTopic(_pairingCode),
+      clientId: _deviceId,
+      onPayload: _processIncomingRaw,
+    ));
   }
 
   /// Called when app is brought back to the foreground from RAM / background on mobile / desktop
@@ -1376,6 +1397,8 @@ class SyncService extends ChangeNotifier {
   /// Re-evaluates all topic subscriptions and reconnects the WebSocket with updated partner channels
   Future<void> resubscribeAllTopics() async {
     if (_pairingCode.isEmpty) return;
+    // Our own topic may have changed (identity migration); the hub follows it.
+    startHubTransport();
     if (_transport == ConnectionTransport.cloudRelay && _cloudSocket != null) {
       try {
         final topics = <String>{_getHashedTopic(_pairingCode)};
@@ -3565,6 +3588,8 @@ class SyncService extends ChangeNotifier {
     return true;
   }
 
+  final WorkerSocketService _hub = WorkerSocketService();
+
   /// Codes that outbound relay messages were addressed to, oldest first.
   /// A `SELF:` entry marks an undirected publish to our own topic.
   @visibleForTesting
@@ -4336,6 +4361,7 @@ class SyncService extends ChangeNotifier {
   @override
   void dispose() {
     _isDisposed = true;
+    unawaited(_hub.stop());
     _reconnectTimer?.cancel();
     _bgDrainTimer?.cancel();
     if (_saveProcessedIdsTimer?.isActive == true) {

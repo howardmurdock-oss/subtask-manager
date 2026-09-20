@@ -32,3 +32,14 @@ crons = ["* * * * *"]
 # `wrangler tail` at the time.
 [observability]
 enabled = true
+
+# Live delivery for devices FCM cannot reach (Windows, Linux, macOS). One hub
+# per topic, holding each connected device's WebSocket plus a short backlog.
+[[durable_objects.bindings]]
+name = "TOPIC_HUB"
+class_name = "TopicHub"
+
+# SQLite-backed, which is what puts Durable Objects on the free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TopicHub"]

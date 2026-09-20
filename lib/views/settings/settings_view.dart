@@ -13,6 +13,7 @@ import '../../core/sound/sound_generator.dart';
 import '../../models/order_item.dart';
 import '../../services/order_engine.dart';
 import '../../services/push_service.dart';
+import '../../services/worker_socket_service.dart';
 import '../../services/schedule_service.dart';
 import '../../services/sync_service.dart';
 import '../../services/background_link_service.dart';
@@ -712,6 +713,24 @@ class _SettingsViewState extends State<SettingsView> {
                                 ));
                           },
                         ),
+                        // Desktop's live link to the Worker. Android has push;
+                        // without this line a PC that had silently fallen back
+                        // to the relay looked identical to a healthy one.
+                        if (WorkerSocketService.isSupported) ...[
+                          FutureBuilder<String>(
+                            future: WorkerSocketService.lastStatus(),
+                            builder: (wctx, wsnap) {
+                              final st = wsnap.data ?? 'checking...';
+                              return Text('Worker link: $st',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                    color: st.contains('disconnected') ? Colors.red : null,
+                                  ));
+                            },
+                          ),
+                          const SizedBox(height: 10),
+                        ],
                         const SizedBox(height: 10),
                         // End-to-end evidence for scheduled pushes: what the
                         // server did, and what this device received. When a
