@@ -266,6 +266,17 @@ Write-Host "  [OK] Cloudflare R2 release storage updated." -ForegroundColor Gree
 # 8. GitHub Releases Publishing
 # ---------------------------------------------------------------------------
 Write-Host "`n==> Step 10: Publishing to GitHub Releases ($releaseTag)..." -ForegroundColor Cyan
+# The cloud build produces each desktop artifact under two names. Prefer the
+# SubTaskManager-* ones: they are what the website and the in-app updater link
+# to, and GitHub treats asset names case-insensitively, so a third spelling
+# cannot be added alongside them.
+$macDmgCanonical = Get-ChildItem -Recurse dist -Filter "SubTaskManager-macOS.dmg" | Select-Object -First 1
+$macZipCanonical = Get-ChildItem -Recurse dist -Filter "SubTaskManager-macOS.zip" | Select-Object -First 1
+$linuxCanonical = Get-ChildItem -Recurse dist -Filter "SubTaskManager-Linux-x64.tar.gz" | Select-Object -First 1
+if (-not $macDmgCanonical) { $macDmgCanonical = $macDmg }
+if (-not $macZipCanonical) { $macZipCanonical = $macZip }
+if (-not $linuxCanonical) { $linuxCanonical = $linuxTar }
+
 $releaseAssets = @(
     "subTaskManager-Windows-Release.zip",
     "subTaskManager-Android-Release.apk",
@@ -274,6 +285,10 @@ $releaseAssets = @(
 if ($macDmg) { $releaseAssets += $macDmg.FullName }
 if ($macZip) { $releaseAssets += $macZip.FullName }
 if ($linuxTar) { $releaseAssets += $linuxTar.FullName }
+if ($macDmgCanonical) { $releaseAssets += $macDmgCanonical.FullName }
+if ($macZipCanonical) { $releaseAssets += $macZipCanonical.FullName }
+if ($linuxCanonical) { $releaseAssets += $linuxCanonical.FullName }
+$releaseAssets = $releaseAssets | Select-Object -Unique
 
 # Check if release tag already exists, update or create.
 # `gh release view` writes to stderr when the tag does not exist yet, and under
@@ -296,6 +311,64 @@ if ($releaseAlreadyExists) {
     gh release create $releaseTag $releaseAssets --title "SubTask Manager $releaseTag" --notes "Automated release build supporting Windows, Android, macOS, Linux, Steam Deck, and Web."
 }
 Write-Host "  [OK] GitHub Release published at https://github.com/howardmurdock-oss/subtask-manager/releases/tag/$releaseTag" -ForegroundColor Green
+
+# ---------------------------------------------------------------------------
+# 8b. Update manifest + website download links
+# ---------------------------------------------------------------------------
+# What the in-app updater reads. Served from the website, so a device can ask
+# "is there a newer version" without the app knowing anything about GitHub.
+Write-Host "`n==> Step 10b: Writing update manifest..." -ForegroundColor Cyan
+
+function Add-Download($map, $key, $file, $assetName) {
+    if (-not (Test-Path $file)) { return }
+    $map[$key] = @{
+        url    = "https://github.com/howardmurdock-oss/subtask-manager/releases/latest/download/$assetName"
+        sha256 = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+        size   = (Get-Item $file).Length
+        name   = $assetName
+    }
+}
+
+$downloads = @{}
+Add-Download $downloads 'windows' "subTaskManager-Windows-Release.zip" "subTaskManager-Windows-Release.zip"
+Add-Download $downloads 'android' "subTaskManager-Android-Release.apk" "subTaskManager-Android-Release.apk"
+Add-Download $downloads 'web'     "subTaskManager-Web-Release.zip"     "subTaskManager-Web-Release.zip"
+if ($macDmgCanonical) { Add-Download $downloads 'macos' $macDmgCanonical.FullName "SubTaskManager-macOS.dmg" }
+if ($linuxCanonical) { Add-Download $downloads 'linux' $linuxCanonical.FullName "SubTaskManager-Linux-x64.tar.gz" }
+
+$manifest = [ordered]@{
+    version   = $targetVersion
+    build     = $newBuild
+    released  = (Get-Date).ToString('yyyy-MM-dd')
+    notesUrl  = "https://github.com/howardmurdock-oss/subtask-manager/releases/tag/$releaseTag"
+    downloads = $downloads
+}
+$manifestJson = $manifest | ConvertTo-Json -Depth 5
+# WriteAllText with a BOM-less encoding, not Set-Content -Encoding utf8: PS 5.1
+# writes a byte-order mark, and the app's JSON parser rejects one - which would
+# have made every update check fail silently.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText((Join-Path $PWD "website\latest.json"), $manifestJson, $utf8NoBom)
+Write-Host "  [OK] website\latest.json -> $targetVersion ($($downloads.Keys.Count) platforms)" -ForegroundColor Green
+
+# The site's download buttons and badge were pinned to whichever version was
+# current when they were written - v1.1.0, for four releases running. Point
+# them at "latest" so they never go stale again.
+$indexPath = "website\index.html"
+if (Test-Path $indexPath) {
+    $index = Get-Content $indexPath -Raw
+    $index = $index -replace 'releases/download/v[0-9]+\.[0-9]+\.[0-9]+/', 'releases/latest/download/'
+    $index = $index -replace '>v[0-9]+\.[0-9]+\.[0-9]+ Release<', ">v$targetVersion Release<"
+    [System.IO.File]::WriteAllText((Join-Path $PWD $indexPath), $index, $utf8NoBom)
+    Write-Host "  [OK] Website download links point at the latest release." -ForegroundColor Green
+}
+
+$previousEap3 = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+git add website/latest.json website/index.html
+git commit -m "Publish update manifest for $releaseTag" | Out-Null
+git push origin main | Out-Null
+$ErrorActionPreference = $previousEap3
 
 # ---------------------------------------------------------------------------
 # 9. Cloudflare Pages Deployment

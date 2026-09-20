@@ -15,6 +15,8 @@ import '../../services/order_engine.dart';
 import '../../services/push_service.dart';
 import '../../services/worker_socket_service.dart';
 import '../../services/debug_settings.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../services/update_service.dart';
 import '../../services/schedule_service.dart';
 import '../../services/sync_service.dart';
 import '../../services/background_link_service.dart';
@@ -38,6 +40,26 @@ class _SettingsViewState extends State<SettingsView> {
   /// Diagnostics are for working out why something did not arrive. They are
   /// noise the rest of the time, so the panel starts closed.
   bool _showDebugPanel = false;
+
+  /// Result of the last explicit check, so the card can report back.
+  AppUpdate? _update;
+  bool _checkingForUpdate = false;
+  String? _updateCheckMessage;
+
+  Future<void> _checkForUpdateNow() async {
+    setState(() {
+      _checkingForUpdate = true;
+      _updateCheckMessage = null;
+    });
+    final update = await UpdateService.check(force: true);
+    if (!mounted) return;
+    setState(() {
+      _checkingForUpdate = false;
+      _update = update;
+      _updateCheckMessage =
+          update == null ? 'You are on the latest version.' : null;
+    });
+  }
 
   @override
   void initState() {
@@ -598,6 +620,69 @@ class _SettingsViewState extends State<SettingsView> {
         children: [
           // Personal Pairing Identity Section
           _buildPersonalIdentitySection(context, sync, theme),
+
+          // Version & updates. The app is distributed outside any store, so
+          // nothing else would tell someone they are running an old build.
+          if (UpdateService.isSupported) ...[
+            Text(
+              'APP VERSION',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Card(
+              margin: const EdgeInsets.only(bottom: 20),
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: _update != null
+                      ? theme.colorScheme.primary.withOpacity(0.2)
+                      : theme.colorScheme.onSurface.withOpacity(0.08),
+                  child: Icon(
+                    _update != null ? Icons.system_update_rounded : Icons.verified_rounded,
+                    color: _update != null
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                ),
+                title: Text(
+                  _update != null
+                      ? 'Version ${_update!.version} available'
+                      : 'Version ${UpdateService.currentVersion}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(
+                  _update != null
+                      ? 'You are on ${UpdateService.currentVersion}.'
+                          '${_update!.sizeLabel != null ? ' Download is ${_update!.sizeLabel}.' : ''}'
+                      : (_updateCheckMessage ?? 'Checked against subtaskmanager.com.'),
+                  style: TextStyle(
+                      fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.65)),
+                ),
+                trailing: _checkingForUpdate
+                    ? const SizedBox(
+                        width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : (_update != null
+                        ? FilledButton(
+                            onPressed: () {
+                              final target = _update!.downloadUrl ?? _update!.notesUrl;
+                              if (target != null) {
+                                launchUrl(Uri.parse(target),
+                                    mode: LaunchMode.externalApplication);
+                              }
+                            },
+                            child: Text(_update!.downloadUrl != null ? 'Download' : 'Details'),
+                          )
+                        : TextButton(
+                            onPressed: _checkForUpdateNow,
+                            child: const Text('Check now'),
+                          )),
+              ),
+            ),
+          ],
 
           // Background Connection & Battery Optimization Section
           Text(

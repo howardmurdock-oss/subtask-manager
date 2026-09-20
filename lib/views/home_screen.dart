@@ -15,6 +15,8 @@ import 'player/rewards_shop_view.dart';
 import 'director/director_dashboard_view.dart';
 import 'director/pack_manager_view.dart';
 import 'contacts/partners_and_chat_view.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../services/update_service.dart';
 import 'pairing/pairing_view.dart';
 import 'settings/settings_view.dart';
 import 'quests/quests_hub_view.dart';
@@ -32,6 +34,9 @@ class _HomeScreenState extends State<HomeScreen> {
   AppRole _currentRole = AppRole.player;
   int _playerIndex = 0;
   int _directorIndex = 0;
+
+  /// A published version newer than this one, once the check has run.
+  AppUpdate? _update;
   bool _isRequestDialogShowing = false;
   StreamSubscription<ActiveOrder>? _orderSubscription;
 
@@ -337,6 +342,52 @@ class _HomeScreenState extends State<HomeScreen> {
     return Badge.count(count: count, child: icon);
   }
 
+  /// Nothing tells someone running a sideloaded build that a new one exists,
+  /// so the app asks - once a day, quietly, and never on its own initiative
+  /// beyond saying so.
+  Future<void> _checkForUpdate() async {
+    final update = await UpdateService.check();
+    if (update == null || !mounted) return;
+    if (await UpdateService.isSkipped(update.version)) return;
+    if (mounted) setState(() => _update = update);
+  }
+
+  Widget _buildUpdateBanner(BuildContext context, AppUpdate update) {
+    final theme = Theme.of(context);
+    final size = update.sizeLabel;
+    return MaterialBanner(
+      backgroundColor: theme.colorScheme.primary.withOpacity(0.12),
+      leading: Icon(Icons.system_update_rounded, color: theme.colorScheme.primary),
+      content: Text(
+        'Version ${update.version} is available'
+        '${size != null ? ' ($size)' : ''}. You are on ${UpdateService.currentVersion}.',
+        style: const TextStyle(fontSize: 13),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () async {
+            await UpdateService.skip(update.version);
+            if (mounted) setState(() => _update = null);
+          },
+          child: const Text('Skip'),
+        ),
+        TextButton(
+          onPressed: () => setState(() => _update = null),
+          child: const Text('Later'),
+        ),
+        FilledButton(
+          onPressed: () async {
+            final target = update.downloadUrl ?? update.notesUrl;
+            if (target == null) return;
+            await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+            if (mounted) setState(() => _update = null);
+          },
+          child: Text(update.downloadUrl != null ? 'Download' : 'What\'s new'),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final security = Provider.of<SecurityService>(context);
@@ -488,7 +539,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: isDesktop
+      body: Column(
+        children: [
+          if (_update != null) _buildUpdateBanner(context, _update!),
+          Expanded(
+            child: isDesktop
           ? Row(
               children: [
                 NavigationRail(
@@ -573,7 +628,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(child: activeBody),
               ],
             )
-          : activeBody,
+                : activeBody,
+          ),
+        ],
+      ),
       bottomNavigationBar: isDesktop
           ? null
           : NavigationBar(
