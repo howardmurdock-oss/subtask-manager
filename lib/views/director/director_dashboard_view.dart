@@ -1806,6 +1806,21 @@ class DirectorDashboardView extends StatelessWidget {
                   ],
                 ),
                 TextButton.icon(
+                  icon: const Icon(Icons.close_rounded, size: 14),
+                  label: const Text('Clear', style: TextStyle(fontSize: 11)),
+                  style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+                  onPressed: () {
+                    Provider.of<QuestService>(context, listen: false)
+                        .clearRemotePlayerQuestById(quest.id);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Cleared "${quest.quest.title}" from your dashboard.'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  },
+                ),
+                TextButton.icon(
                   icon: const Icon(Icons.send_rounded, size: 14),
                   label: const Text('Re-send Quest', style: TextStyle(fontSize: 11)),
                   onPressed: () {

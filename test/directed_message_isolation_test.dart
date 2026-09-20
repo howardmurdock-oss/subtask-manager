@@ -89,7 +89,14 @@ void main() {
       final target = partners.contacts.firstWhere((c) => c.pairingCode == targetCode);
 
       sync.dispatchQuestToPlayer(
-        Quest(id: 'q1', title: 'A Quest', description: 'Do things'),
+        // A quest needs a step to be dispatchable at all; this test is about
+        // where it goes, not what it contains.
+        Quest(
+          id: 'q1',
+          title: 'A Quest',
+          description: 'Do things',
+          steps: [QuestStep(id: 's1', orderIndex: 0, title: 'Step one')],
+        ),
         targetPartner: target,
       );
 

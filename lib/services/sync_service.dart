@@ -3879,6 +3879,9 @@ class SyncService extends ChangeNotifier {
   }
 
   bool dispatchQuestToPlayer(Quest quest, {PartnerContact? targetPartner}) {
+    // A quest with no steps cannot be completed by anyone, and once sent it
+    // could not be cleared from either dashboard.
+    if (!QuestService.isRunnable(quest)) return false;
     final myDisplayName = _nickname.isNotEmpty
         ? _nickname
         : (_role == ConnectionRole.director ? 'Director' : 'Dominant');

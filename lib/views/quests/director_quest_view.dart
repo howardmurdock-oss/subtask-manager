@@ -765,6 +765,18 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
                     foregroundColor: theme.colorScheme.brightness == Brightness.dark ? Colors.black : Colors.white,
                   ),
                   onPressed: () {
+                    if (!QuestService.isRunnable(quest)) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                              'Add at least one step to "${quest.title}" before dispatching it - '
+                              'a quest with no steps can never be completed.'),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                      return;
+                    }
                     sync.dispatchQuestToPlayer(quest, targetPartner: selectedPartner);
                     Navigator.pop(ctx);
                     ScaffoldMessenger.of(context).showSnackBar(

@@ -13,7 +13,7 @@ import 'order_engine.dart';
 import 'sync_service.dart';
 
 class QuestService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.3.6';
+  static const String appCurrentBuildVersion = '1.3.7';
 
   // Valid Patreon Unlock Code hashes (stored securely as SHA-256 digests)
   // Included default codes: 'PATREON-VIP', 'QUESTS-2026', 'DIRECTIVE-CHAIN', 'PATREON-SUPPORTER', 'QUEST'
@@ -70,10 +70,13 @@ class QuestService extends ChangeNotifier {
 
   QuestService() {
     _initPresets();
-    _loadFromStorage();
+    loadFromStorage();
   }
 
-  Future<void> _loadFromStorage() async {
+  /// Reads stored quests. The constructor starts this and cannot await it, so
+  /// it is public for callers - tests among them - that need to know it has
+  /// finished.
+  Future<void> loadFromStorage() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       
@@ -103,7 +106,17 @@ class QuestService extends ChangeNotifier {
       // 4. Load active quest
       final activeQuestJson = prefs.getString('player_active_quest_v1');
       if (activeQuestJson != null && activeQuestJson.isNotEmpty) {
-        _activeQuest = ActiveQuest.fromJson(Map<String, dynamic>.from(jsonDecode(activeQuestJson) as Map));
+        final loaded =
+            ActiveQuest.fromJson(Map<String, dynamic>.from(jsonDecode(activeQuestJson) as Map));
+        // A quest with no steps can never finish: completion only happens on
+        // finishing the last step, and there is no step to finish. One
+        // dispatched by mistake sat on both dashboards permanently, showing
+        // "Step 1 of 0", with nothing in the app able to clear it.
+        if (loaded.quest.steps.isEmpty) {
+          await prefs.remove('player_active_quest_v1');
+        } else {
+          _activeQuest = loaded;
+        }
       }
 
       // 5. Load completed quests history
@@ -121,11 +134,25 @@ class QuestService extends ChangeNotifier {
       if (remoteQuestsJson != null && remoteQuestsJson.isNotEmpty) {
         final Map<String, dynamic> decoded = jsonDecode(remoteQuestsJson);
         _remotePlayerQuests.clear();
+        var droppedStepless = false;
         decoded.forEach((key, val) {
           try {
-            _remotePlayerQuests[key] = ActiveQuest.fromJson(Map<String, dynamic>.from(val as Map));
+            final quest = ActiveQuest.fromJson(Map<String, dynamic>.from(val as Map));
+            // As above: unfinishable, so it is dropped rather than shown for
+            // ever on the director's dashboard.
+            if (quest.quest.steps.isEmpty) {
+              droppedStepless = true;
+              return;
+            }
+            _remotePlayerQuests[key] = quest;
           } catch (_) {}
         });
+        if (droppedStepless) {
+          await prefs.setString(
+            'director_remote_player_quests_v1',
+            jsonEncode(_remotePlayerQuests.map((k, v) => MapEntry(k, v.toJson()))),
+          );
+        }
       }
 
       notifyListeners();
@@ -434,7 +461,12 @@ class QuestService extends ChangeNotifier {
 
   // ---- Active Quest Management (Player) ----
 
+  /// Whether [quest] can be run at all. A quest with no steps cannot: there is
+  /// nothing to complete, so it would never end.
+  static bool isRunnable(Quest quest) => quest.steps.isNotEmpty;
+
   void startQuest(Quest quest, {String? assignerName, String? assignerCode}) {
+    if (!isRunnable(quest)) return;
     _activeQuest = ActiveQuest(
       quest: quest,
       assignedByPartnerName: assignerName,
@@ -650,6 +682,15 @@ class QuestService extends ChangeNotifier {
       existing.isCompleted = true;
       existing.completedAt = DateTime.now();
     }
+    _saveToStorage();
+    notifyListeners();
+  }
+
+  /// Removes a quest from the director's dashboard, under whichever partner
+  /// keys it was filed. One dispatch is recorded under several keys (contact
+  /// id and pairing code), so removing one of them leaves the card in place.
+  void clearRemotePlayerQuestById(String activeQuestId) {
+    _remotePlayerQuests.removeWhere((_, quest) => quest.id == activeQuestId);
     _saveToStorage();
     notifyListeners();
   }
