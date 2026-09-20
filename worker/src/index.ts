@@ -558,10 +558,16 @@ export default {
       const startedAt = Date.now();
       try {
         const token = await getAccessToken(env);
+        // Enough of the key id to tell one credential from another, which is
+        // what a rotation has to prove. This endpoint is public, so no more
+        // than that: not the whole id, not the account it belongs to, and
+        // never the key.
+        const account = JSON.parse(env.FCM_SERVICE_ACCOUNT) as { private_key_id?: string };
         return json({
           ok: true,
           // Never the token itself; its shape is enough to confirm success.
           tokenLength: token.length,
+          keyIdPrefix: account.private_key_id?.slice(0, 8) ?? null,
           elapsedMs: Date.now() - startedAt,
           note: 'JWT signed, exchanged for an access token, cached in KV',
         });
