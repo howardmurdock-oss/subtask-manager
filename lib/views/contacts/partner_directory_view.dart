@@ -6,7 +6,15 @@ import '../../services/sync_service.dart';
 import '../messenger/chat_conversation_view.dart';
 
 class PartnerDirectoryView extends StatelessWidget {
-  const PartnerDirectoryView({super.key});
+  /// When embedded, this is one tab of the Partners & Chat panel and the
+  /// surrounding scaffold belongs to that panel.
+  final bool embedded;
+  const PartnerDirectoryView({super.key, this.embedded = false});
+
+  /// Opens the add-partner dialog from outside this view - the Partners & Chat
+  /// panel owns the app bar when this is embedded, so the action lives there.
+  static void showAddPartner(BuildContext context) =>
+      const PartnerDirectoryView()._showAddEditPartnerDialog(context);
 
   void _showAddEditPartnerDialog(BuildContext context, {PartnerContact? existing}) {
     final partnerSvc = Provider.of<PartnerService>(context, listen: false);
@@ -205,18 +213,7 @@ class PartnerDirectoryView extends StatelessWidget {
     final activeId = partnerSvc.activePartnerId;
     final pendingRequests = partnerSvc.pendingRequests;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Partner Directory & Multi-Sync Hub'),
-        actions: [
-          IconButton(
-            tooltip: 'Add Partner',
-            icon: const Icon(Icons.person_add_rounded),
-            onPressed: () => _showAddEditPartnerDialog(context),
-          ),
-        ],
-      ),
-      body: ListView(
+    final body = ListView(
         padding: const EdgeInsets.all(16),
         children: [
           // Incoming Pairing Requests Alert Card
@@ -493,8 +490,23 @@ class PartnerDirectoryView extends StatelessWidget {
                 ),
               );
             }),
+      ],
+    );
+
+    if (embedded) return body;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Partner Directory & Multi-Sync Hub'),
+        actions: [
+          IconButton(
+            tooltip: 'Add Partner',
+            icon: const Icon(Icons.person_add_rounded),
+            onPressed: () => _showAddEditPartnerDialog(context),
+          ),
         ],
       ),
+      body: body,
     );
   }
 }

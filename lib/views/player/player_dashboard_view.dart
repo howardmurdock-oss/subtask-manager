@@ -19,6 +19,7 @@ import '../scheduling/schedule_order_dialog.dart';
 import '../../services/quest_service.dart';
 import '../../models/quest_item.dart';
 import '../quests/player_quest_view.dart';
+import '../../services/debug_settings.dart';
 
 class PlayerDashboardView extends StatelessWidget {
   const PlayerDashboardView({super.key});
@@ -819,6 +820,14 @@ class PlayerDashboardView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Rebuilds when the debug panel turns the override controls on or off.
+    return ListenableBuilder(
+      listenable: DebugSettings.instance,
+      builder: (context, _) => _buildDashboard(context),
+    );
+  }
+
+  Widget _buildDashboard(BuildContext context) {
     final engine = Provider.of<OrderEngine>(context);
     QuestService? questSvc;
     try {
@@ -865,12 +874,16 @@ class PlayerDashboardView extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                IconButton(
-                  tooltip: 'Clean / Override Tasks',
-                  icon: const Icon(Icons.cleaning_services_rounded, size: 20),
-                  onPressed: () => _showCleanDashboardDialog(context),
-                ),
+                // Clearing a directive without finishing or forfeiting it
+                // leaves no record, so these live behind the debug panel.
+                if (DebugSettings.instance.showPlayerOverrides) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Clean / Override Tasks',
+                    icon: const Icon(Icons.cleaning_services_rounded, size: 20),
+                    onPressed: () => _showCleanDashboardDialog(context),
+                  ),
+                ],
                 const SizedBox(width: 4),
                 TokenBadge(
                   tokens: engine.stats.tokens,
@@ -941,7 +954,9 @@ class PlayerDashboardView extends StatelessWidget {
               },
               onSubmitProof: () => _showProofSubmissionDialog(context, active),
               onForfeit: () => _showForfeitConfirmation(context, active),
-              onDismiss: () => _handleOrderDismiss(context, active),
+              onDismiss: DebugSettings.instance.showPlayerOverrides
+                  ? () => _handleOrderDismiss(context, active)
+                  : null,
             ),
           ),
         ],
@@ -1092,14 +1107,15 @@ class PlayerDashboardView extends StatelessWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        TextButton.icon(
-                          onPressed: () => _handleOrderDismiss(context, active),
-                          icon: const Icon(Icons.delete_outline_rounded, size: 16),
-                          label: const Text('Dismiss'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: theme.colorScheme.onSurface.withOpacity(0.5),
+                        if (DebugSettings.instance.showPlayerOverrides)
+                          TextButton.icon(
+                            onPressed: () => _handleOrderDismiss(context, active),
+                            icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                            label: const Text('Dismiss'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: theme.colorScheme.onSurface.withOpacity(0.5),
+                            ),
                           ),
-                        ),
                         const SizedBox(width: 8),
                         ElevatedButton.icon(
                           onPressed: () => _showProofSubmissionDialog(context, active),

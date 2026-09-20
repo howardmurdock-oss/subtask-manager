@@ -14,6 +14,7 @@ import '../../models/order_item.dart';
 import '../../services/order_engine.dart';
 import '../../services/push_service.dart';
 import '../../services/worker_socket_service.dart';
+import '../../services/debug_settings.dart';
 import '../../services/schedule_service.dart';
 import '../../services/sync_service.dart';
 import '../../services/background_link_service.dart';
@@ -33,6 +34,10 @@ class _SettingsViewState extends State<SettingsView> {
   bool _audioAlertsEnabled = SoundService.audioAlertsEnabled;
   bool _obscureMySecret = true;
   bool _isBatterySaver = BackgroundLinkService.isBatterySaver;
+
+  /// Diagnostics are for working out why something did not arrive. They are
+  /// noise the rest of the time, so the panel starts closed.
+  bool _showDebugPanel = false;
 
   @override
   void initState() {
@@ -648,10 +653,48 @@ class _SettingsViewState extends State<SettingsView> {
                     }
                   },
                 ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: Icon(Icons.bug_report_rounded,
+                      color: theme.colorScheme.onSurface.withOpacity(0.7)),
+                  title: const Text('Debug & Diagnostics',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    _showDebugPanel
+                        ? 'Delivery, background service and alarm state.'
+                        : 'Open if something did not arrive, or to turn on extra controls.',
+                    style: TextStyle(
+                        fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.65)),
+                  ),
+                  trailing: Icon(
+                      _showDebugPanel ? Icons.expand_less_rounded : Icons.expand_more_rounded),
+                  onTap: () => setState(() => _showDebugPanel = !_showDebugPanel),
+                ),
+                if (_showDebugPanel) ...[
+                  const Divider(height: 1),
+                  SwitchListTile(
+                    secondary: Icon(Icons.build_rounded,
+                        color: theme.colorScheme.onSurface.withOpacity(0.7)),
+                    title: const Text('Show override controls on Orders',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(
+                      'Adds Dismiss and Clean / Override Tasks to your dashboard. These clear a '
+                      'directive without completing or forfeiting it, so nothing is recorded and '
+                      'your director is not told.',
+                      style: TextStyle(
+                          fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.65)),
+                    ),
+                    value: DebugSettings.instance.showPlayerOverrides,
+                    onChanged: (on) async {
+                      await DebugSettings.instance.setShowPlayerOverrides(on);
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                ],
                 // Shown on every platform. The panel was Android-only, which left
                 // the director device — where dispatches originate — with no way
                 // to see that its own sends were failing.
-                if (!_isBatterySaver) ...[
+                if (!_isBatterySaver && _showDebugPanel) ...[
                   const Divider(height: 1),
                   Padding(
                     padding: const EdgeInsets.all(12),

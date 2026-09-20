@@ -13,6 +13,7 @@ import 'services/quest_service.dart';
 import 'services/schedule_service.dart';
 import 'services/background_link_service.dart';
 import 'services/push_service.dart';
+import 'services/debug_settings.dart';
 import 'views/home_screen.dart';
 import 'views/disguise/panic_decoy_view.dart';
 import 'views/security/pin_lock_screen.dart';
@@ -44,6 +45,7 @@ void main() async {
   final syncService = SyncService(orderEngine);
   syncService.attachServices(partnerService, chatService, questService: questService);
   final isPinLocked = securityService.isPinRequired && !securityService.isUnlocked;
+  await DebugSettings.instance.load();
   await syncService.init(deferNetwork: isPinLocked);
 
   // Register for push once the pairing code is loaded, so the Worker learns

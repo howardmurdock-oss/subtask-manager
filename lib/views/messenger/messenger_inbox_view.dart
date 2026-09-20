@@ -7,7 +7,13 @@ import 'chat_conversation_view.dart';
 import '../contacts/partner_directory_view.dart';
 
 class MessengerInboxView extends StatefulWidget {
-  const MessengerInboxView({super.key});
+  const MessengerInboxView({super.key, this.embedded = false, this.onOpenPartners});
+
+  /// When embedded, this is one tab of the Partners & Chat panel: the panel
+  /// owns the scaffold, and anything that used to open the partner directory
+  /// as a separate page switches to the sibling tab instead.
+  final bool embedded;
+  final VoidCallback? onOpenPartners;
 
   @override
   State<MessengerInboxView> createState() => _MessengerInboxViewState();
@@ -15,6 +21,17 @@ class MessengerInboxView extends StatefulWidget {
 
 class _MessengerInboxViewState extends State<MessengerInboxView> {
   String _filter = 'all'; // 'all', 'active', 'blocked'
+
+  void _openPartners() {
+    if (widget.onOpenPartners != null) {
+      widget.onOpenPartners!();
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const PartnerDirectoryView()),
+    );
+  }
 
   String _formatRelativeTime(DateTime? dt) {
     if (dt == null) return '';
@@ -46,30 +63,7 @@ class _MessengerInboxViewState extends State<MessengerInboxView> {
 
     final pendingCount = partnerSvc.pendingRequests.length;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Encrypted Direct Messenger'),
-        actions: [
-          IconButton(
-            tooltip: 'Partner Contacts Directory',
-            icon: pendingCount > 0
-                ? Badge.count(
-                    count: pendingCount,
-                    backgroundColor: Colors.amber,
-                    textColor: Colors.black,
-                    child: const Icon(Icons.people_alt_outlined),
-                  )
-                : const Icon(Icons.people_alt_outlined),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const PartnerDirectoryView()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: Column(
+    final body = Column(
         children: [
           // Pending Connection Requests Notification Banner
           if (pendingCount > 0)
@@ -108,12 +102,7 @@ class _MessengerInboxViewState extends State<MessengerInboxView> {
                       visualDensity: VisualDensity.compact,
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     ),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const PartnerDirectoryView()),
-                      );
-                    },
+                    onPressed: _openPartners,
                     child: const Text('VIEW', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                   ),
                 ],
@@ -172,12 +161,7 @@ class _MessengerInboxViewState extends State<MessengerInboxView> {
                           ElevatedButton.icon(
                             icon: const Icon(Icons.person_add_rounded, size: 18),
                             label: const Text('Add / Pair Partner'),
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => const PartnerDirectoryView()),
-                              );
-                            },
+                            onPressed: _openPartners,
                           ),
                       ],
                     ),
@@ -307,16 +291,33 @@ class _MessengerInboxViewState extends State<MessengerInboxView> {
                   ),
           ),
         ],
+    );
+
+    if (widget.embedded) return body;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Encrypted Direct Messenger'),
+        actions: [
+          IconButton(
+            tooltip: 'Partner Contacts Directory',
+            icon: pendingCount > 0
+                ? Badge.count(
+                    count: pendingCount,
+                    backgroundColor: Colors.amber,
+                    textColor: Colors.black,
+                    child: const Icon(Icons.people_alt_outlined),
+                  )
+                : const Icon(Icons.people_alt_outlined),
+            onPressed: _openPartners,
+          ),
+        ],
       ),
+      body: body,
       floatingActionButton: FloatingActionButton.extended(
         icon: const Icon(Icons.add_comment_rounded),
         label: const Text('New Chat / Contact'),
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const PartnerDirectoryView()),
-          );
-        },
+        onPressed: _openPartners,
       ),
     );
   }

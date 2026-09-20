@@ -14,8 +14,7 @@ import 'player/inventory_view.dart';
 import 'player/rewards_shop_view.dart';
 import 'director/director_dashboard_view.dart';
 import 'director/pack_manager_view.dart';
-import 'contacts/partner_directory_view.dart';
-import 'messenger/messenger_inbox_view.dart';
+import 'contacts/partners_and_chat_view.dart';
 import 'pairing/pairing_view.dart';
 import 'settings/settings_view.dart';
 import 'quests/quests_hub_view.dart';
@@ -311,6 +310,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               onPressed: () {
                 Navigator.pop(ctx);
+                // Switching the tab is not enough on its own: an open chat
+                // conversation is a pushed route sitting on top of the shell,
+                // so the Orders page changed underneath it and nothing
+                // appeared to happen.
+                Navigator.of(context).popUntil((route) => route.isFirst);
                 setState(() {
                   _currentRole = AppRole.player;
                   _playerIndex = 0; // Switch to Orders tab!
@@ -323,6 +327,14 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     );
+  }
+
+  /// Icon for the combined Partners & Chat destination, badged with unread
+  /// messages plus waiting pairing requests.
+  Widget _peopleIcon(bool selected, int count) {
+    final icon = Icon(selected ? Icons.forum_rounded : Icons.forum_outlined);
+    if (count <= 0) return icon;
+    return Badge.count(count: count, child: icon);
   }
 
   @override
@@ -345,7 +357,7 @@ class _HomeScreenState extends State<HomeScreen> {
       QuestsHubView(currentRole: _currentRole),
       const InventoryView(),
       const RewardsShopView(),
-      const MessengerInboxView(),
+      const PartnersAndChatView(),
       const StatsView(),
       const SettingsView(),
     ];
@@ -354,8 +366,10 @@ class _HomeScreenState extends State<HomeScreen> {
       const DirectorDashboardView(),
       QuestsHubView(currentRole: _currentRole),
       const PackManagerView(),
-      const PartnerDirectoryView(),
-      const MessengerInboxView(),
+      // One destination, not two. A director had Partners and Chat while a
+      // player had only Chat, which made the same subject look like different
+      // features depending on the side you were on.
+      const PartnersAndChatView(),
       const SettingsView(),
     ];
 
@@ -364,6 +378,8 @@ class _HomeScreenState extends State<HomeScreen> {
         : (_directorIndex < directorTabs.length ? directorTabs[_directorIndex] : directorTabs[0]);
 
     final unreadCount = partnerSvc.totalUnreadCount;
+    // One destination now covers both, so it carries both counts.
+    final peopleBadge = unreadCount + pendingRequestsCount;
 
     return Scaffold(
       appBar: AppBar(
@@ -510,13 +526,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             label: Text('Rewards'),
                           ),
                           NavigationRailDestination(
-                            icon: unreadCount > 0
-                                ? Badge.count(count: unreadCount, child: const Icon(Icons.forum_outlined))
-                                : const Icon(Icons.forum_outlined),
-                            selectedIcon: unreadCount > 0
-                                ? Badge.count(count: unreadCount, child: const Icon(Icons.forum_rounded))
-                                : const Icon(Icons.forum_rounded),
-                            label: const Text('Chat'),
+                            icon: _peopleIcon(false, peopleBadge),
+                            selectedIcon: _peopleIcon(true, peopleBadge),
+                            label: const Text('Partners & Chat'),
                           ),
                           const NavigationRailDestination(
                             icon: Icon(Icons.bar_chart_outlined),
@@ -546,32 +558,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             label: Text('Packs'),
                           ),
                           NavigationRailDestination(
-                            icon: pendingRequestsCount > 0
-                                ? Badge.count(
-                                    count: pendingRequestsCount,
-                                    backgroundColor: Colors.amber,
-                                    textColor: Colors.black,
-                                    child: const Icon(Icons.group_outlined),
-                                  )
-                                : const Icon(Icons.group_outlined),
-                            selectedIcon: pendingRequestsCount > 0
-                                ? Badge.count(
-                                    count: pendingRequestsCount,
-                                    backgroundColor: Colors.amber,
-                                    textColor: Colors.black,
-                                    child: const Icon(Icons.group_rounded),
-                                  )
-                                : const Icon(Icons.group_rounded),
-                            label: const Text('Partners'),
-                          ),
-                          NavigationRailDestination(
-                            icon: unreadCount > 0
-                                ? Badge.count(count: unreadCount, child: const Icon(Icons.forum_outlined))
-                                : const Icon(Icons.forum_outlined),
-                            selectedIcon: unreadCount > 0
-                                ? Badge.count(count: unreadCount, child: const Icon(Icons.forum_rounded))
-                                : const Icon(Icons.forum_rounded),
-                            label: const Text('Chat'),
+                            icon: _peopleIcon(false, peopleBadge),
+                            selectedIcon: _peopleIcon(true, peopleBadge),
+                            label: const Text('Partners & Chat'),
                           ),
                           const NavigationRailDestination(
                             icon: Icon(Icons.tune_outlined),
@@ -621,13 +610,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         label: 'Rewards',
                       ),
                       NavigationDestination(
-                        icon: unreadCount > 0
-                            ? Badge.count(count: unreadCount, child: const Icon(Icons.forum_outlined))
-                            : const Icon(Icons.forum_outlined),
-                        selectedIcon: unreadCount > 0
-                            ? Badge.count(count: unreadCount, child: const Icon(Icons.forum_rounded))
-                            : const Icon(Icons.forum_rounded),
-                        label: 'Chat',
+                        icon: _peopleIcon(false, peopleBadge),
+                        selectedIcon: _peopleIcon(true, peopleBadge),
+                        label: 'Partners & Chat',
                       ),
                       const NavigationDestination(
                         icon: Icon(Icons.bar_chart_outlined),
@@ -657,32 +642,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         label: 'Packs',
                       ),
                       NavigationDestination(
-                        icon: pendingRequestsCount > 0
-                            ? Badge.count(
-                                count: pendingRequestsCount,
-                                backgroundColor: Colors.amber,
-                                textColor: Colors.black,
-                                child: const Icon(Icons.group_outlined),
-                              )
-                            : const Icon(Icons.group_outlined),
-                        selectedIcon: pendingRequestsCount > 0
-                            ? Badge.count(
-                                count: pendingRequestsCount,
-                                backgroundColor: Colors.amber,
-                                textColor: Colors.black,
-                                child: const Icon(Icons.group_rounded),
-                              )
-                            : const Icon(Icons.group_rounded),
-                        label: 'Partners',
-                      ),
-                      NavigationDestination(
-                        icon: unreadCount > 0
-                            ? Badge.count(count: unreadCount, child: const Icon(Icons.forum_outlined))
-                            : const Icon(Icons.forum_outlined),
-                        selectedIcon: unreadCount > 0
-                            ? Badge.count(count: unreadCount, child: const Icon(Icons.forum_rounded))
-                            : const Icon(Icons.forum_rounded),
-                        label: 'Chat',
+                        icon: _peopleIcon(false, peopleBadge),
+                        selectedIcon: _peopleIcon(true, peopleBadge),
+                        label: 'Partners & Chat',
                       ),
                       const NavigationDestination(
                         icon: Icon(Icons.tune_outlined),
