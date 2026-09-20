@@ -214,7 +214,10 @@ class PartnerDirectoryView extends StatelessWidget {
     final pendingRequests = partnerSvc.pendingRequests;
 
     final body = ListView(
-        padding: const EdgeInsets.all(16),
+        // Clears the system navigation bar when this is opened as its own
+        // page. Inside the Contacts panel the app's bottom bar already
+        // reserves that space, and this resolves to zero.
+        padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
         children: [
           // Incoming Pairing Requests Alert Card
           if (pendingRequests.isNotEmpty) ...[

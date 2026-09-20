@@ -338,7 +338,7 @@ if ($linuxCanonical) { Add-Download $downloads 'linux' $linuxCanonical.FullName 
 
 $manifest = [ordered]@{
     version   = $targetVersion
-    build     = $newBuild
+    build     = if ($newBuild) { $newBuild } else { $currentBuild }
     released  = (Get-Date).ToString('yyyy-MM-dd')
     notesUrl  = "https://github.com/howardmurdock-oss/subtask-manager/releases/tag/$releaseTag"
     downloads = $downloads

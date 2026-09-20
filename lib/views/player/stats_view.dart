@@ -19,7 +19,11 @@ class StatsView extends StatelessWidget {
         title: const Text('Performance & History'),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        // Pad past the system navigation bar. As a tab this page sat above the
+        // app's own bottom bar, which reserved that space; opened as its own
+        // page nothing does, so the last card could never be scrolled clear of
+        // the gesture bar.
+        padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
         children: [
           // 1. Score Hero Card
           Card(

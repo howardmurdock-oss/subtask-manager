@@ -167,6 +167,10 @@ class _MessengerInboxViewState extends State<MessengerInboxView> {
                     ),
                   )
                 : ListView.separated(
+                    // Clears the system navigation bar when this is a page of
+                    // its own; zero inside the Contacts panel, where the app's
+                    // own bottom bar reserves the space.
+                    padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
                     itemCount: contacts.length,
                     separatorBuilder: (_, __) => const Divider(height: 1, indent: 70),
                     itemBuilder: (context, index) {
