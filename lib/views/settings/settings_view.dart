@@ -679,8 +679,9 @@ class _SettingsViewState extends State<SettingsView> {
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: Text(
                       'Adds Dismiss and Clean / Override Tasks to your dashboard. These clear a '
-                      'directive without completing or forfeiting it, so nothing is recorded and '
-                      'your director is not told.',
+                      'directive without completing or forfeiting it. Your director is told it was '
+                      'emergency-cleared, but no tokens are deducted and it is not logged as a '
+                      'failure.',
                       style: TextStyle(
                           fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.65)),
                     ),
