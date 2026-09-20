@@ -802,30 +802,6 @@ class _SettingsViewState extends State<SettingsView> {
                       if (mounted) setState(() {});
                     },
                   ),
-                  SwitchListTile(
-                    secondary: Icon(Icons.system_update_alt_rounded,
-                        color: theme.colorScheme.onSurface.withOpacity(0.7)),
-                    title: const Text('Use the test update manifest',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text(
-                      'Checks against latest-test.json instead of the published manifest, so the '
-                      'update prompt can be seen without announcing a version that does not exist. '
-                      'Restart the app after changing this.',
-                      style: TextStyle(
-                          fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.65)),
-                    ),
-                    value: DebugSettings.instance.updateManifestUrl != null,
-                    onChanged: (on) async {
-                      await DebugSettings.instance
-                          .setUpdateManifestUrl(on ? DebugSettings.testManifestUrl : null);
-                      if (mounted) {
-                        setState(() {
-                          _update = null;
-                          _updateCheckMessage = null;
-                        });
-                      }
-                    },
-                  ),
                 ],
                 // Shown on every platform. The panel was Android-only, which left
                 // the director device — where dispatches originate — with no way

@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'debug_settings.dart';
 import 'schedule_service.dart';
 
 /// A newer release, as described by the published manifest.
@@ -37,11 +36,7 @@ class AppUpdate {
 /// knowing. This reads a small manifest published with each release and says
 /// so. It downloads and installs nothing.
 class UpdateService {
-  static const String publishedManifestUrl = 'https://subtaskmanager.com/latest.json';
-
-  /// The published manifest, unless the debug panel points somewhere else.
-  static String get manifestUrl =>
-      DebugSettings.instance.updateManifestUrl ?? publishedManifestUrl;
+  static const String manifestUrl = 'https://subtaskmanager.com/latest.json';
 
   static const String lastCheckedKey = 'update_last_checked_v1';
   static const String skippedVersionKey = 'update_skipped_version_v1';
