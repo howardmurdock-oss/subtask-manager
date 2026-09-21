@@ -179,8 +179,13 @@ if (-not $SkipCloudBuild) {
                 break
             }
         }
-        if ($elapsed -gt 420) {
-            Write-Host "  [WARNING] Cloud build timed out after 7 minutes. Continuing..." -ForegroundColor Yellow
+        # The macOS runner has taken longer than seven minutes on three
+        # releases running, and v1.4.2 went out with no macOS build at all
+        # because of it. Waiting costs nothing but time; publishing an
+        # incomplete release costs a manual repair afterwards.
+        if ($elapsed -gt 1200) {
+            Write-Host "  [WARNING] Cloud build still running after 20 minutes. Continuing without it." -ForegroundColor Yellow
+            Write-Host "  [WARNING] macOS/Linux may be missing from this release - check the assets." -ForegroundColor Yellow
             break
         }
     }

@@ -27,6 +27,12 @@
                                       "name":  "subTaskManager-Windows-Release.zip",
                                       "sha256":  "9a287f8b77bb452b39ed915b219dd98f18b577abd97a62271d55c36c7bcf96da",
                                       "size":  15393358
-                                  }
+                                  },
+                      "macos":  {
+                                    "url":  "https://github.com/howardmurdock-oss/subtask-manager/releases/latest/download/SubTaskManager-macOS.dmg",
+                                    "sha256":  "009678b41768cc2d36be3d815e10aff769a24743151f7635d370783b7023ee60",
+                                    "size":  27182883,
+                                    "name":  "SubTaskManager-macOS.dmg"
+                                }
                   }
 }
