@@ -14,6 +14,7 @@ class AppUpdate {
     this.notesUrl,
     this.downloadUrl,
     this.sizeBytes,
+    this.sha256,
   });
 
   final String version;
@@ -24,6 +25,11 @@ class AppUpdate {
   /// somewhere we are not willing to send people.
   final String? downloadUrl;
   final int? sizeBytes;
+
+  /// Expected digest of the download, as published. Without one the file is
+  /// not installed: a hash is the only thing distinguishing the release from
+  /// whatever else might arrive over the wire.
+  final String? sha256;
 
   String? get sizeLabel =>
       sizeBytes == null ? null : '${(sizeBytes! / (1024 * 1024)).toStringAsFixed(1)} MB';
@@ -97,6 +103,14 @@ class UpdateService {
   static bool isNewer(String candidate, String current) =>
       compareVersions(candidate, current) > 0;
 
+  /// A 64-character hex string, or nothing. Anything else is not a digest and
+  /// is not treated as one.
+  static String? _hexDigest(Object? value) {
+    if (value is! String) return null;
+    final clean = value.trim().toLowerCase();
+    return RegExp(r'^[0-9a-f]{64}$').hasMatch(clean) ? clean : null;
+  }
+
   static String? _safeUrl(Object? value) {
     if (value is! String || value.isEmpty) return null;
     final uri = Uri.tryParse(value);
@@ -132,6 +146,7 @@ class UpdateService {
         notesUrl: _safeUrl(data['notesUrl']),
         downloadUrl: forPlatform is Map ? _safeUrl(forPlatform['url']) : null,
         sizeBytes: forPlatform is Map ? (forPlatform['size'] as num?)?.toInt() : null,
+        sha256: forPlatform is Map ? _hexDigest(forPlatform['sha256']) : null,
       );
     } catch (_) {
       return null;
