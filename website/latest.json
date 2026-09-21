@@ -1,38 +1,38 @@
 {
-    "version":  "1.4.2",
-    "build":  47,
+    "version":  "1.4.3",
+    "build":  48,
     "released":  "2026-09-21",
-    "notesUrl":  "https://github.com/howardmurdock-oss/subtask-manager/releases/tag/v1.4.2",
+    "notesUrl":  "https://github.com/howardmurdock-oss/subtask-manager/releases/tag/v1.4.3",
     "downloads":  {
                       "linux":  {
                                     "url":  "https://github.com/howardmurdock-oss/subtask-manager/releases/latest/download/SubTaskManager-Linux-x64.tar.gz",
                                     "name":  "SubTaskManager-Linux-x64.tar.gz",
-                                    "sha256":  "77731fcc7ca35607d6e954e59338a1c3ef5408bfe6afefdb728dab3c341db34a",
-                                    "size":  12451146
+                                    "sha256":  "76cb44c15c9bfc0703be1abded62f2a160de789cd698c1bfe71e8c4bb4cc94d1",
+                                    "size":  12451188
+                                },
+                      "macos":  {
+                                    "url":  "https://github.com/howardmurdock-oss/subtask-manager/releases/latest/download/SubTaskManager-macOS.dmg",
+                                    "name":  "SubTaskManager-macOS.dmg",
+                                    "sha256":  "caceba6ee39b11764579187359b22cbebdf0805633a7d3998e8c1c78260437c0",
+                                    "size":  27182883
                                 },
                       "web":  {
                                   "url":  "https://github.com/howardmurdock-oss/subtask-manager/releases/latest/download/subTaskManager-Web-Release.zip",
                                   "name":  "subTaskManager-Web-Release.zip",
-                                  "sha256":  "e7b0c7f18196dcd172909a9fb3400d59797e70ee87fca91d410f473fdbd7204f",
-                                  "size":  15305682
+                                  "sha256":  "20fc97c2728d257b5916b036015a1c6cf59bc408a8de66a8f032055982efc27e",
+                                  "size":  15305683
                               },
                       "android":  {
                                       "url":  "https://github.com/howardmurdock-oss/subtask-manager/releases/latest/download/subTaskManager-Android-Release.apk",
                                       "name":  "subTaskManager-Android-Release.apk",
-                                      "sha256":  "c3ee728d19d984358d2d4fa781f54f0f0c5e36cc7567900e9705ea6ec0438857",
-                                      "size":  68538508
+                                      "sha256":  "a9d007bc93a5427b020717fe13ac45346ac018834315c0c0eea09dfd6d3c5fd2",
+                                      "size":  68542600
                                   },
                       "windows":  {
                                       "url":  "https://github.com/howardmurdock-oss/subtask-manager/releases/latest/download/subTaskManager-Windows-Release.zip",
                                       "name":  "subTaskManager-Windows-Release.zip",
-                                      "sha256":  "9a287f8b77bb452b39ed915b219dd98f18b577abd97a62271d55c36c7bcf96da",
-                                      "size":  15393358
-                                  },
-                      "macos":  {
-                                    "url":  "https://github.com/howardmurdock-oss/subtask-manager/releases/latest/download/SubTaskManager-macOS.dmg",
-                                    "sha256":  "009678b41768cc2d36be3d815e10aff769a24743151f7635d370783b7023ee60",
-                                    "size":  27182883,
-                                    "name":  "SubTaskManager-macOS.dmg"
-                                }
+                                      "sha256":  "aed05e6040fd11d1f01d5e9fc544be4fbea8ac24c356071c0d48df016a6badcd",
+                                      "size":  15393313
+                                  }
                   }
 }
