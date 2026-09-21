@@ -53,6 +53,12 @@ android {
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
             }
+            // v3 carries a signing-key lineage, which is the only way to
+            // change this key later without every install having to be
+            // removed and replaced. It costs nothing to enable now and cannot
+            // be added retrospectively.
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 

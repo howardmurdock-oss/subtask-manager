@@ -4,7 +4,7 @@
 #
 # The keystore itself belongs outside the repository, alongside the Firebase
 # service-account key.
-storeFile=C:/Users/howar/Documents/antigravity/subtask-secrets/subtask-release.jks
+storeFile=C:/Users/howar/Documents/antigravity/subtask-secrets/subtask-release.p12
 storePassword=
 keyAlias=subtask
 keyPassword=
