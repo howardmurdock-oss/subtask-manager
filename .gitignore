@@ -73,3 +73,9 @@ worker/.dev.vars
 # Local wrangler dev state. cf.json caches the request metadata of the
 # machine that ran it - city, postcode, lat/long, ISP - and this repo is public.
 .wrangler/
+
+# Android signing. The keystore lives outside the repo; this points at it and
+# carries its passwords.
+android/key.properties
+*.jks
+*.keystore

@@ -1,3 +1,16 @@
+import java.io.File
+import java.util.Properties
+
+// Signing credentials live outside the repository, which is public. The file
+// is read if present; without it a release build falls back to the debug key,
+// so a checkout with no secrets still builds.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("key.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val hasReleaseKeystore =
+    keystoreProperties.getProperty("storeFile")?.let { path -> File(path).exists() } == true
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -32,11 +45,31 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            if (hasReleaseKeystore) {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // The debug key is machine-local and can be regenerated at any
+            // time; anything signed with it can only be updated for as long as
+            // that particular keystore survives. A release build uses the real
+            // key when key.properties points at one, and says so at build time
+            // when it does not - silently shipping a debug-signed build is how
+            // an app ends up unable to update itself.
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn("WARNING: no release keystore found (android/key.properties); signing with the debug key.")
+                signingConfigs.getByName("debug")
+            }
 
             // R8 shrinks release builds and strips the generic signatures Gson
             // relies on, which broke flutter_local_notifications' scheduled

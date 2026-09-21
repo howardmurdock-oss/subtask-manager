@@ -1,0 +1,10 @@
+# Copy to android/key.properties and fill in. That file is gitignored: this
+# repository is public, and these values plus the keystore are what let anyone
+# publish an update your users' devices will accept.
+#
+# The keystore itself belongs outside the repository, alongside the Firebase
+# service-account key.
+storeFile=C:/Users/howar/Documents/antigravity/subtask-secrets/subtask-release.jks
+storePassword=
+keyAlias=subtask
+keyPassword=
