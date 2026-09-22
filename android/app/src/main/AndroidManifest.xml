@@ -15,6 +15,10 @@
          over the lock screen. From Android 14 that requires this permission;
          without it the platform can refuse or demote the notification. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <!-- Handing a downloaded release to the system installer. The user still
+         approves the install itself, and must allow this app to request
+         installs at all; this only makes the request possible. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 
     <application
         android:label="(sub)Task Manager"
@@ -83,6 +87,18 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- The installer runs in another process, so it cannot read a file
+             by path. This hands out a temporary read grant for the one
+             downloaded file and nothing else. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_file_paths" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

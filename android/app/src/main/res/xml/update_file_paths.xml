@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the folder downloaded updates land in. Sharing anything wider would
+     hand read access to unrelated app data along with it. -->
+<paths>
+    <cache-path name="updates" path="updates/" />
+    <external-cache-path name="external-updates" path="updates/" />
+</paths>
