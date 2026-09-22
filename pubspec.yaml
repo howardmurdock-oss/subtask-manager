@@ -29,6 +29,9 @@ dependencies:
   url_launcher: ^6.3.2
   firebase_core: ^4.14.0
   firebase_messaging: ^16.6.0
+  # Already present transitively via `encrypt`; declared because the update
+  # manifest's signature is verified with it directly.
+  pointycastle: ^3.9.1
 
 dev_dependencies:
   flutter_test:

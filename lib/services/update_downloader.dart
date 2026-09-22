@@ -20,6 +20,10 @@ enum UpdateDownloadOutcome {
   /// Reached the end, but the bytes are not the release that was published.
   digestMismatch,
 
+  /// The manifest naming this download was not signed by the release key, so
+  /// nothing in it - including the digest - can be relied on.
+  unverifiedManifest,
+
   cancelled,
 }
 
@@ -86,6 +90,16 @@ class UpdateDownloader {
     void Function(int received, int? total)? onProgress,
     DownloadCancellation? cancellation,
   }) async {
+    // The digest below is only as trustworthy as the manifest that carried it:
+    // whoever could swap the file could swap the digest to match. Checked
+    // first, before anything is fetched.
+    if (!update.manifestVerified) {
+      return const UpdateDownloadResult(
+        UpdateDownloadOutcome.unverifiedManifest,
+        detail: 'the update manifest was not signed by the release key',
+      );
+    }
+
     final url = update.downloadUrl;
     final expected = update.sha256;
 

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,15 +29,18 @@ void main() {
         },
       });
 
+  Uint8List bytes(String body) => Uint8List.fromList(utf8.encode(body));
+
   AppUpdate? parse(String body, {String current = '1.3.9', String platform = 'windows'}) =>
       UpdateService.parseManifest(body, currentVersion: current, platformKey: platform);
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    UpdateService.fetch = (_) async => manifest();
+    UpdateService.fetch = (_) async => bytes(manifest());
   });
 
   tearDown(() => UpdateService.fetch = (_) async => null);
+
 
   group('version comparison', () {
     test('orders releases correctly', () {
@@ -102,9 +106,11 @@ void main() {
   group('checking', () {
     test('does not check again within the interval', () async {
       var fetches = 0;
-      UpdateService.fetch = (_) async {
-        fetches++;
-        return manifest();
+      UpdateService.fetch = (url) async {
+        // The signature is fetched alongside the manifest; count only the
+        // manifest itself.
+        if (!url.path.endsWith('.sig')) fetches++;
+        return bytes(manifest());
       };
 
       expect(await UpdateService.check(), isNotNull);

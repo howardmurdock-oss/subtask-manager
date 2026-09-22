@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'manifest_signature.dart';
 import 'schedule_service.dart';
 
 /// A newer release, as described by the published manifest.
@@ -15,6 +16,7 @@ class AppUpdate {
     this.downloadUrl,
     this.sizeBytes,
     this.sha256,
+    this.manifestVerified = false,
   });
 
   final String version;
@@ -30,6 +32,11 @@ class AppUpdate {
   /// not installed: a hash is the only thing distinguishing the release from
   /// whatever else might arrive over the wire.
   final String? sha256;
+
+  /// Whether the manifest this came from carried a valid signature from the
+  /// release key. Notifying about an update does not require it; installing
+  /// one does.
+  final bool manifestVerified;
 
   String? get sizeLabel =>
       sizeBytes == null ? null : '${(sizeBytes! / (1024 * 1024)).toStringAsFixed(1)} MB';
@@ -76,9 +83,14 @@ class UpdateService {
     return 'unknown';
   }
 
-  /// Swapped out in tests; the real one fetches over HTTPS.
+  /// Swapped out in tests; the real one fetches over HTTPS. Bytes rather than
+  /// text, because a signature covers bytes and re-encoding decoded text would
+  /// not reproduce them.
   @visibleForTesting
-  static Future<String?> Function(Uri url) fetch = _fetchOverHttps;
+  static Future<Uint8List?> Function(Uri url) fetch = _fetchOverHttps;
+
+  /// Detached signature, published beside the manifest.
+  static String get signatureUrl => '$manifestUrl.sig';
 
   /// Negative when [a] is older than [b]. Missing components count as zero, so
   /// "1.4" and "1.4.0" are the same version.
@@ -125,6 +137,7 @@ class UpdateService {
     String body, {
     required String currentVersion,
     required String platformKey,
+    bool manifestVerified = false,
   }) {
     try {
       // A byte-order mark is invisible and fatal to jsonDecode. Tools on the
@@ -147,6 +160,7 @@ class UpdateService {
         downloadUrl: forPlatform is Map ? _safeUrl(forPlatform['url']) : null,
         sizeBytes: forPlatform is Map ? (forPlatform['size'] as num?)?.toInt() : null,
         sha256: forPlatform is Map ? _hexDigest(forPlatform['sha256']) : null,
+        manifestVerified: manifestVerified,
       );
     } catch (_) {
       return null;
@@ -172,13 +186,23 @@ class UpdateService {
       await prefs.setString(lastCheckedKey, DateTime.now().toIso8601String());
       if (body == null) return null;
 
+      // An unsigned or badly signed manifest still tells the user a version
+      // exists - that only opens a browser. It is installing from one that is
+      // refused, further down in UpdateDownloader.
+      final signature = await fetch(Uri.parse(signatureUrl));
+      final verified = ManifestSignature.verify(
+        manifestBytes: body,
+        signature: signature,
+      );
+
       // Deliberately not filtered by [skip] here: that decides whether to
       // interrupt someone, not whether an update exists. A user who asks
       // outright should be told about a version they waved away earlier.
       return parseManifest(
-        body,
+        utf8.decode(body, allowMalformed: true),
         currentVersion: currentVersion,
         platformKey: platformKey,
+        manifestVerified: verified,
       );
     } catch (e) {
       if (kDebugMode) print('UpdateService.check error: $e');
@@ -205,7 +229,7 @@ class UpdateService {
     } catch (_) {}
   }
 
-  static Future<String?> _fetchOverHttps(Uri url) async {
+  static Future<Uint8List?> _fetchOverHttps(Uri url) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
     try {
       final request = await client.getUrl(url).timeout(const Duration(seconds: 10));
@@ -219,7 +243,12 @@ class UpdateService {
         await response.drain<void>();
         return null;
       }
-      return await response.transform(utf8.decoder).join();
+      final chunks = <int>[];
+      await for (final chunk in response) {
+        chunks.addAll(chunk);
+        if (chunks.length > 64 * 1024) return null;
+      }
+      return Uint8List.fromList(chunks);
     } catch (_) {
       return null;
     } finally {

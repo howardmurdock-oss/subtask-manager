@@ -356,6 +356,29 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText((Join-Path $PWD "website\latest.json"), $manifestJson, $utf8NoBom)
 Write-Host "  [OK] website\latest.json -> $targetVersion ($($downloads.Keys.Count) platforms)" -ForegroundColor Green
 
+# The app installs what this file names, so it verifies who published it. The
+# private key never leaves subtask-secrets; the app carries only the public
+# half. Without a signature the app still reports updates - it just refuses to
+# install them, which is the failure worth having.
+$manifestKey = "C:\Users\howar\Documents\antigravity\subtask-secrets\subtask-manifest-key.pem"
+$opensslExe = @(
+    "C:\Program Files\Git\usr\bin\openssl.exe",
+    "C:\Program Files\OpenSSL-Win64\bin\openssl.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if ((Test-Path $manifestKey) -and $opensslExe) {
+    & $opensslExe dgst -sha256 -sign $manifestKey -out "website\latest.json.sig" "website\latest.json"
+    if ($LASTEXITCODE -eq 0 -and (Test-Path "website\latest.json.sig")) {
+        $sigSize = (Get-Item "website\latest.json.sig").Length
+        Write-Host "  [OK] Manifest signed ($sigSize byte signature)." -ForegroundColor Green
+    } else {
+        Write-Host "  [WARNING] Signing failed. Devices will refuse to install this release in-app." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  [WARNING] No manifest signing key (or no openssl); publishing unsigned." -ForegroundColor Yellow
+    Write-Host "  [WARNING] Update notifications still work; in-app install will be refused." -ForegroundColor Yellow
+}
+
 # The site's download buttons and badge were pinned to whichever version was
 # current when they were written - v1.1.0, for four releases running. Point
 # them at "latest" so they never go stale again.
@@ -371,6 +394,7 @@ if (Test-Path $indexPath) {
 $previousEap3 = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 git add website/latest.json website/index.html
+if (Test-Path "website\latest.json.sig") { git add website/latest.json.sig }
 git commit -m "Publish update manifest for $releaseTag" | Out-Null
 git push origin main | Out-Null
 $ErrorActionPreference = $previousEap3
