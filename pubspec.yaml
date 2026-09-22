@@ -22,6 +22,9 @@ dependencies:
   audioplayers: ^6.0.0
   mqtt_client: ^10.5.0
   image: ^4.2.0
+  # Unpacking a Windows release over the installed one. Already present
+  # transitively; declared because it is used directly.
+  archive: ^4.0.9
   flutter_local_notifications: ^17.2.4
   flutter_foreground_task: ^11.0.1
   flutter_timezone: ^5.1.0

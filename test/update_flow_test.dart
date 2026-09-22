@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:orders_app/services/update_downloader.dart';
+import 'package:orders_app/services/update_installer.dart';
 import 'package:orders_app/services/update_flow.dart';
 import 'package:orders_app/services/update_service.dart';
 
@@ -30,11 +31,26 @@ void main() {
   final flow = UpdateFlow.instance;
 
   late Directory workDir;
+  late List<File> installed;
+  late InstallOutcome installOutcome;
+  var quitCalls = 0;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     workDir = await Directory.systemTemp.createTemp('update_flow_test');
     UpdateFlow.downloadDirectory = () async => workDir;
+
+    // Never the real installer: on Windows it replaces the folder the running
+    // executable sits in, which under test is the test runner itself.
+    installed = [];
+    installOutcome = InstallOutcome.handedOff;
+    quitCalls = 0;
+    UpdateFlow.installer = (file) async {
+      installed.add(file);
+      return InstallResult(installOutcome);
+    };
+    UpdateFlow.quitApp = () => quitCalls++;
+
     flow.resetForTest();
     // Served in pieces: cancellation is checked between chunks, so a
     // single-chunk stream would finish before anyone could cancel it.
@@ -101,25 +117,53 @@ void main() {
 
   test('cancelling returns to the offer rather than an error', () async {
     flow.offer(offered());
-    // Cancel as soon as the first bytes arrive.
-    flow.addListener(() {
+    // Cancel as soon as the first bytes arrive. Removed afterwards: the flow
+    // is a singleton, so a listener left attached here cancels the downloads
+    // of every test that follows.
+    void cancelOnFirstBytes() {
       if (flow.phase == UpdatePhase.downloading && (flow.progress ?? 0) > 0) {
         flow.cancelDownload();
       }
-    });
+    }
 
+    flow.addListener(cancelOnFirstBytes);
     await flow.downloadAndInstall();
+    flow.removeListener(cancelOnFirstBytes);
 
     expect(flow.phase, UpdatePhase.offered, reason: 'the update is still there to take');
     expect(flow.message, contains('cancelled'));
   });
 
+  test('a verified download is installed, and the app steps aside for it', () async {
+    flow.offer(offered());
+
+    await flow.downloadAndInstall();
+
+    expect(installed, hasLength(1), reason: 'the downloaded file is what gets installed');
+    expect(await installed.single.readAsBytes(), payload);
+    // On Windows the swap waits for this process to release its own files, so
+    // closing is part of installing rather than something left to the user.
+    expect(quitCalls, Platform.isWindows ? 1 : 0);
+  });
+
+  test('an install that needs permission says so instead of failing', () async {
+    installOutcome = InstallOutcome.permissionRequired;
+    flow.offer(offered());
+
+    await flow.downloadAndInstall();
+
+    expect(flow.phase, UpdatePhase.permissionRequired);
+    expect(quitCalls, 0, reason: 'nothing was installed, so nothing should close');
+  });
+
   test('notifies its listeners as the state moves', () async {
     var notifications = 0;
-    flow.addListener(() => notifications++);
+    void count() => notifications++;
+    flow.addListener(count);
 
     flow.offer(offered(sha: 'f' * 64));
     await flow.downloadAndInstall();
+    flow.removeListener(count);
 
     expect(notifications, greaterThan(2),
         reason: 'the banner and the card both redraw from these');

@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'update_downloader.dart';
 import 'update_installer.dart';
 import 'update_service.dart';
+import 'windows_updater.dart';
 
 enum UpdatePhase {
   /// An update exists and nothing has been started.
@@ -40,6 +41,22 @@ class UpdateFlow extends ChangeNotifier {
   @visibleForTesting
   static Future<Directory> Function() downloadDirectory = _temporaryUpdatesDirectory;
 
+  /// Which installer runs. Injectable because the real one on Windows replaces
+  /// the folder the running executable sits in - under test, that is the test
+  /// runner's own installation.
+  @visibleForTesting
+  static Future<InstallResult> Function(File file) installer = _platformInstaller;
+
+  /// Closing the app is what lets the Windows swap proceed, so it is part of
+  /// installing rather than something the user does afterwards.
+  @visibleForTesting
+  static void Function() quitApp = _quit;
+
+  static Future<InstallResult> _platformInstaller(File file) =>
+      WindowsUpdater.isSupported ? WindowsUpdater.install(file) : UpdateInstaller.install(file);
+
+  static void _quit() => exit(0);
+
   /// The app's own cache, which is also the only directory the Android
   /// FileProvider is willing to share.
   static Future<Directory> _temporaryUpdatesDirectory() async => Directory(
@@ -67,7 +84,7 @@ class UpdateFlow extends ChangeNotifier {
   bool get canInstallInApp {
     final u = _update;
     return u != null &&
-        UpdateInstaller.isSupported &&
+        (UpdateInstaller.isSupported || WindowsUpdater.isSupported) &&
         u.manifestVerified &&
         u.downloadUrl != null &&
         u.sha256 != null;
@@ -167,9 +184,17 @@ class UpdateFlow extends ChangeNotifier {
     _phase = UpdatePhase.installing;
     notifyListeners();
 
-    final result = await UpdateInstaller.install(file);
+    final result = await installer(file);
     switch (result.outcome) {
       case InstallOutcome.handedOff:
+        if (WindowsUpdater.isSupported) {
+          // The swap is waiting for this process to let go of its own files.
+          _message = 'Closing to finish the update. The app will reopen.';
+          notifyListeners();
+          await Future<void>.delayed(const Duration(seconds: 2));
+          quitApp();
+          return;
+        }
         _message = 'Follow the prompt to finish installing.';
         notifyListeners();
       case InstallOutcome.permissionRequired:
