@@ -80,3 +80,6 @@ android/key.properties
 *.jks
 *.p12
 *.keystore
+
+# Signing keys of any kind stay outside this repository.
+*.pem
