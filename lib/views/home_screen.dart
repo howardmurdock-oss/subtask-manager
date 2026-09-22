@@ -15,6 +15,7 @@ import 'director/director_dashboard_view.dart';
 import 'director/pack_manager_view.dart';
 import 'contacts/partners_and_chat_view.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../services/update_flow.dart';
 import '../services/update_service.dart';
 import 'pairing/pairing_view.dart';
 import 'settings/settings_view.dart';
@@ -348,42 +349,115 @@ class _HomeScreenState extends State<HomeScreen> {
     final update = await UpdateService.check();
     if (update == null || !mounted) return;
     if (await UpdateService.isSkipped(update.version)) return;
+    UpdateFlow.instance.offer(update);
     if (mounted) setState(() => _update = update);
   }
 
   Widget _buildUpdateBanner(BuildContext context, AppUpdate update) {
     final theme = Theme.of(context);
-    final size = update.sizeLabel;
+    final flow = UpdateFlow.instance;
+
+    // One line that says where things are, rather than a state the user has to
+    // infer from which buttons happen to be showing.
+    String status() {
+      switch (flow.phase) {
+        case UpdatePhase.downloading:
+          final pct = flow.progress;
+          return pct == null
+              ? 'Downloading version ${update.version}...'
+              : 'Downloading version ${update.version} - ${(pct * 100).round()}%';
+        case UpdatePhase.readyToInstall:
+        case UpdatePhase.installing:
+          return flow.message ?? 'Installing version ${update.version}...';
+        case UpdatePhase.permissionRequired:
+        case UpdatePhase.failed:
+          return flow.message ?? 'That did not work.';
+        case UpdatePhase.offered:
+        case UpdatePhase.dismissed:
+          final size = update.sizeLabel;
+          return 'Version ${update.version} is available'
+              '${size != null ? ' ($size)' : ''}. You are on ${UpdateService.currentVersion}.';
+      }
+    }
+
+    List<Widget> actions() {
+      switch (flow.phase) {
+        case UpdatePhase.downloading:
+          return [
+            TextButton(
+              onPressed: () => flow.cancelDownload(),
+              child: const Text('Cancel'),
+            ),
+          ];
+        case UpdatePhase.permissionRequired:
+          return [
+            TextButton(onPressed: () => flow.dismiss(), child: const Text('Not now')),
+            FilledButton(
+              onPressed: () => flow.grantInstallPermission(),
+              child: const Text('Allow'),
+            ),
+          ];
+        case UpdatePhase.readyToInstall:
+        case UpdatePhase.failed:
+          return [
+            TextButton(onPressed: () => flow.dismiss(), child: const Text('Close')),
+            FilledButton(
+              onPressed: () => flow.phase == UpdatePhase.readyToInstall
+                  ? flow.install()
+                  : flow.downloadAndInstall(),
+              child: Text(flow.phase == UpdatePhase.readyToInstall ? 'Install' : 'Try again'),
+            ),
+          ];
+        case UpdatePhase.installing:
+          return const [];
+        case UpdatePhase.offered:
+        case UpdatePhase.dismissed:
+          return [
+            TextButton(onPressed: () => flow.skip(), child: const Text('Skip')),
+            TextButton(onPressed: () => flow.dismiss(), child: const Text('Later')),
+            FilledButton(
+              onPressed: () async {
+                if (flow.canInstallInApp) {
+                  await flow.downloadAndInstall();
+                  return;
+                }
+                // Everywhere else - and for any release we cannot verify -
+                // the browser is as far as this goes.
+                final target = update.downloadUrl ?? update.notesUrl;
+                if (target == null) return;
+                await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+                flow.dismiss();
+              },
+              child: Text(flow.canInstallInApp ? 'Update' : 'Download'),
+            ),
+          ];
+      }
+    }
+
     return MaterialBanner(
-      backgroundColor: theme.colorScheme.primary.withOpacity(0.12),
-      leading: Icon(Icons.system_update_rounded, color: theme.colorScheme.primary),
-      content: Text(
-        'Version ${update.version} is available'
-        '${size != null ? ' ($size)' : ''}. You are on ${UpdateService.currentVersion}.',
-        style: const TextStyle(fontSize: 13),
+      backgroundColor: flow.phase == UpdatePhase.failed
+          ? theme.colorScheme.errorContainer.withOpacity(0.5)
+          : theme.colorScheme.primary.withOpacity(0.12),
+      leading: Icon(
+        flow.phase == UpdatePhase.failed
+            ? Icons.error_outline_rounded
+            : Icons.system_update_rounded,
+        color: flow.phase == UpdatePhase.failed
+            ? theme.colorScheme.error
+            : theme.colorScheme.primary,
       ),
-      actions: [
-        TextButton(
-          onPressed: () async {
-            await UpdateService.skip(update.version);
-            if (mounted) setState(() => _update = null);
-          },
-          child: const Text('Skip'),
-        ),
-        TextButton(
-          onPressed: () => setState(() => _update = null),
-          child: const Text('Later'),
-        ),
-        FilledButton(
-          onPressed: () async {
-            final target = update.downloadUrl ?? update.notesUrl;
-            if (target == null) return;
-            await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
-            if (mounted) setState(() => _update = null);
-          },
-          child: Text(update.downloadUrl != null ? 'Download' : 'What\'s new'),
-        ),
-      ],
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(status(), style: const TextStyle(fontSize: 13)),
+          if (flow.phase == UpdatePhase.downloading) ...[
+            const SizedBox(height: 8),
+            LinearProgressIndicator(value: flow.progress),
+          ],
+        ],
+      ),
+      actions: actions(),
     );
   }
 
@@ -541,7 +615,14 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
-          if (_update != null) _buildUpdateBanner(context, _update!),
+          if (_update != null)
+            ListenableBuilder(
+              listenable: UpdateFlow.instance,
+              builder: (context, _) =>
+                  UpdateFlow.instance.phase == UpdatePhase.dismissed
+                      ? const SizedBox.shrink()
+                      : _buildUpdateBanner(context, _update!),
+            ),
           Expanded(
             child: isDesktop
           ? Row(

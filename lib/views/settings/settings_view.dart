@@ -16,6 +16,7 @@ import '../../services/push_service.dart';
 import '../../services/worker_socket_service.dart';
 import '../../services/debug_settings.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../services/update_flow.dart';
 import '../../services/update_service.dart';
 import '../player/stats_view.dart';
 import '../../services/schedule_service.dart';
@@ -47,12 +48,79 @@ class _SettingsViewState extends State<SettingsView> {
   bool _checkingForUpdate = false;
   String? _updateCheckMessage;
 
+  /// The update control in the version card. Mirrors the banner, which is the
+  /// same flow seen from somewhere else in the app.
+  Widget _buildUpdateAction(BuildContext context) {
+    final flow = UpdateFlow.instance;
+    final update = _update!;
+
+    if (flow.phase == UpdatePhase.downloading) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 60,
+            child: LinearProgressIndicator(value: flow.progress),
+          ),
+          TextButton(
+            onPressed: () => flow.cancelDownload(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      );
+    }
+
+    if (flow.phase == UpdatePhase.permissionRequired) {
+      return FilledButton(
+        onPressed: () => flow.grantInstallPermission(),
+        child: const Text('Allow'),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Skipping belongs here as well as in the banner: someone who dismissed
+        // the banner and came looking should not have to wait for it to
+        // reappear to be rid of a version.
+        TextButton(
+          onPressed: () async {
+            await flow.skip();
+            if (mounted) {
+              setState(() {
+                _update = null;
+                _updateCheckMessage = 'Version ${update.version} skipped.';
+              });
+            }
+          },
+          child: const Text('Skip'),
+        ),
+        FilledButton(
+          onPressed: () async {
+            if (flow.canInstallInApp) {
+              await flow.downloadAndInstall();
+              return;
+            }
+            final target = update.downloadUrl ?? update.notesUrl;
+            if (target != null) {
+              await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+            }
+          },
+          child: Text(flow.canInstallInApp
+              ? (flow.phase == UpdatePhase.readyToInstall ? 'Install' : 'Update')
+              : (update.downloadUrl != null ? 'Download' : 'Details')),
+        ),
+      ],
+    );
+  }
+
   Future<void> _checkForUpdateNow() async {
     setState(() {
       _checkingForUpdate = true;
       _updateCheckMessage = null;
     });
     final update = await UpdateService.check(force: true);
+    if (update != null) UpdateFlow.instance.offer(update);
     if (!mounted) return;
     setState(() {
       _checkingForUpdate = false;
@@ -692,15 +760,9 @@ class _SettingsViewState extends State<SettingsView> {
                     ? const SizedBox(
                         width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                     : (_update != null
-                        ? FilledButton(
-                            onPressed: () {
-                              final target = _update!.downloadUrl ?? _update!.notesUrl;
-                              if (target != null) {
-                                launchUrl(Uri.parse(target),
-                                    mode: LaunchMode.externalApplication);
-                              }
-                            },
-                            child: Text(_update!.downloadUrl != null ? 'Download' : 'Details'),
+                        ? ListenableBuilder(
+                            listenable: UpdateFlow.instance,
+                            builder: (context, _) => _buildUpdateAction(context),
                           )
                         : TextButton(
                             onPressed: _checkForUpdateNow,
