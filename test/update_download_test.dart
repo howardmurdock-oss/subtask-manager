@@ -22,11 +22,14 @@ void main() {
   const goodUrl =
       'https://github.com/howardmurdock-oss/subtask-manager/releases/latest/download/subTaskManager-Android-Release.apk';
 
+  /// Verified by default: these cover what happens once a manifest is
+  /// trusted. Refusing an untrusted one is covered in manifest_signature_test.
   AppUpdate update({String? url = goodUrl, String? digest, int? size}) => AppUpdate(
         version: '9.9.9',
         downloadUrl: url,
         sha256: digest ?? payloadDigest,
         sizeBytes: size ?? payload.length,
+        manifestVerified: true,
       );
 
   /// Serves [chunks], optionally failing partway through.
@@ -129,7 +132,7 @@ void main() {
     };
 
     final result = await UpdateDownloader.download(
-      update: AppUpdate(version: '9.9.9', downloadUrl: goodUrl),
+      update: AppUpdate(version: '9.9.9', downloadUrl: goodUrl, manifestVerified: true),
       into: workDir,
     );
 
