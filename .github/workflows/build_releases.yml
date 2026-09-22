@@ -1,9 +1,17 @@
 name: Build Linux & macOS Releases
 
 on:
+  # A release pushes a commit, then creates a tag, and the release script used
+  # to dispatch a third time - three runs of the same commit, two of them
+  # racing to attach the same assets. The push is the one that matters; the
+  # release script waits for it by commit.
   push:
     branches: [ main, master ]
-    tags: [ 'v*' ]
+    paths-ignore:
+      # The manifest commit at the end of a release touches only these, and
+      # nothing here is built from them.
+      - 'website/**'
+      - '**/*.md'
   workflow_dispatch:
 
 jobs:

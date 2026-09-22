@@ -154,13 +154,26 @@ Write-Host "  [OK] Code pushed to GitHub main branch." -ForegroundColor Green
 # 6. Cloud Build: macOS & Linux via GitHub Actions
 # ---------------------------------------------------------------------------
 if (-not $SkipCloudBuild) {
-    Write-Host "`n==> Step 7: Triggering macOS & Linux Cloud Build on GitHub Actions..." -ForegroundColor Cyan
-    $runUrl = gh workflow run build_releases.yml --ref main 2>&1
-    Write-Host "  Triggered workflow. Waiting for runners..." -ForegroundColor Yellow
+    Write-Host "`n==> Step 7: Waiting for the macOS & Linux Cloud Build..." -ForegroundColor Cyan
 
-    Start-Sleep -Seconds 10
-    $latestRun = (gh run list --workflow=build_releases.yml --limit=1 --json databaseId,status -q ".[0]") | ConvertFrom-Json
-    $runId = $latestRun.databaseId
+    # The push above already started a run for this commit. Finding it by SHA
+    # rather than taking the most recent one, which was a coin flip between
+    # this build and whatever else had just been triggered.
+    $pushedSha = (git rev-parse HEAD).Trim()
+    $runId = $null
+    for ($attempt = 1; $attempt -le 12 -and -not $runId; $attempt++) {
+        Start-Sleep -Seconds 5
+        $runs = (gh run list --workflow=build_releases.yml --limit=10 --json databaseId,headSha,status) | ConvertFrom-Json
+        $match = $runs | Where-Object { $_.headSha -eq $pushedSha } | Select-Object -First 1
+        if ($match) { $runId = $match.databaseId }
+    }
+
+    if (-not $runId) {
+        Write-Host "  [WARNING] No cloud build found for $($pushedSha.Substring(0,7)); dispatching one." -ForegroundColor Yellow
+        gh workflow run build_releases.yml --ref main | Out-Null
+        Start-Sleep -Seconds 10
+        $runId = ((gh run list --workflow=build_releases.yml --limit=1 --json databaseId -q ".[0]") | ConvertFrom-Json).databaseId
+    }
 
     Write-Host "  Monitoring Run ID: $runId (Apple Silicon macOS + Ubuntu Linux)" -ForegroundColor Yellow
     $startTime = Get-Date
