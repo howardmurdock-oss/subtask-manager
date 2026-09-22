@@ -1,0 +1,4 @@
+# Signed fixtures are compared byte for byte. Line-ending normalisation
+# rewrites them, so the signature stops matching everywhere but the platform
+# they were committed from.
+test/fixtures/** -text
