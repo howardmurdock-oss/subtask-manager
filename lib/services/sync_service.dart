@@ -92,7 +92,6 @@ class SyncService extends ChangeNotifier {
   final Set<String> _handledDirectiveIds = <String>{};
   int? _lastSyncTimestampMs;
   Timer? _saveProcessedIdsTimer;
-  Timer? _saveHandledDirectivesTimer;
   bool _isConnecting = false;
   bool _isPolling = false;
 
@@ -2219,7 +2218,6 @@ class SyncService extends ChangeNotifier {
         tagsHeader = 'sparkles,bell';
         break;
       case SyncMessageType.questStepCompleted:
-        final questTitle = msg.payload['questTitle'] as String? ?? 'Quest';
         final senderName = msg.payload['senderName'] as String? ?? 'Player';
         final stepIndex = (msg.payload['stepIndex'] as num?)?.toInt() ?? 0;
         final stepTitle = msg.payload['stepTitle'] as String? ?? 'Step';

@@ -1,6 +1,5 @@
 ﻿import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:orders_app/models/active_order.dart';
 import 'package:orders_app/models/order_item.dart';
 import 'package:orders_app/services/order_engine.dart';
 import 'package:orders_app/services/partner_service.dart';

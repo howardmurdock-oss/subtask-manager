@@ -364,7 +364,7 @@ class OrderEngine extends ChangeNotifier {
           continue;
         }
         final isAll = category == null || category.isEmpty || category.trim().toLowerCase() == 'all';
-        if (!isAll && order.category.trim().toLowerCase() != category!.trim().toLowerCase()) {
+        if (!isAll && order.category.trim().toLowerCase() != category.trim().toLowerCase()) {
           continue;
         }
         if (minTier != null && order.tier < minTier) {
@@ -408,7 +408,7 @@ class OrderEngine extends ChangeNotifier {
 
     final isAll = category == null || category.isEmpty || category.trim().toLowerCase() == 'all';
     final categoryFiltered = !isAll
-        ? randomEligible.where((o) => o.category.trim().toLowerCase() == category!.trim().toLowerCase()).toList()
+        ? randomEligible.where((o) => o.category.trim().toLowerCase() == category.trim().toLowerCase()).toList()
         : randomEligible;
     if (categoryFiltered.isEmpty) {
       return 'No random-draw directives match category "$category".';

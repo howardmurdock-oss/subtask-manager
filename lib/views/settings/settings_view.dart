@@ -154,7 +154,7 @@ class _SettingsViewState extends State<SettingsView> {
         allowMultiple: false,
       );
 
-      if (result != null && result.isNotEmpty && result.single.path != null) {
+      if (result.isNotEmpty && result.single.path != null) {
         final originalFile = File(result.single.path!);
         final ext = p.extension(originalFile.path);
         final fileName = result.single.name;

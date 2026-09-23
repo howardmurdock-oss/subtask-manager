@@ -8,7 +8,6 @@ import 'package:orders_app/models/reward_item.dart';
 import 'package:orders_app/models/reward_pack.dart';
 import 'package:orders_app/models/quest_item.dart';
 import 'package:orders_app/models/quest_pack.dart';
-import 'package:orders_app/models/partner_contact.dart';
 import 'package:orders_app/services/chat_service.dart';
 import 'package:orders_app/services/order_engine.dart';
 import 'package:orders_app/services/quest_service.dart';

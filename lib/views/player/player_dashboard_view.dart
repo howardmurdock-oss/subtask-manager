@@ -1,6 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
@@ -10,7 +8,6 @@ import '../../services/partner_service.dart';
 import '../../models/active_order.dart';
 import '../../models/order_item.dart';
 import '../../models/partner_contact.dart';
-import '../../models/sync_message.dart';
 import '../../widgets/order_card.dart';
 import '../../widgets/token_badge.dart';
 import '../../widgets/draggable_dialog.dart';
@@ -177,7 +174,6 @@ class PlayerDashboardView extends StatelessWidget {
 
     final textController = TextEditingController(text: activeOrder.submissionProof ?? '');
     String? attachedImageBase64 = activeOrder.proofImageBase64;
-    String? attachedImageName = activeOrder.proofImageBase64 != null ? 'Attached Photo' : null;
 
     final bool isDirectorAssigned = activeOrder.assignedByDirector &&
         ((activeOrder.assignedByPartnerId != null && activeOrder.assignedByPartnerId!.isNotEmpty) ||
@@ -373,7 +369,6 @@ class PlayerDashboardView extends StatelessWidget {
                                   onPressed: () {
                                     setDialogState(() {
                                       attachedImageBase64 = null;
-                                      attachedImageName = null;
                                     });
                                   },
                                 ),
@@ -388,9 +383,8 @@ class PlayerDashboardView extends StatelessWidget {
                           Expanded(
                             child: OutlinedButton.icon(
                               onPressed: () async {
-                                await _pickProofImage(context, ImageSource.camera, setDialogState, (b64, name) {
+                                await _pickProofImage(context, ImageSource.camera, setDialogState, (b64, _) {
                                   attachedImageBase64 = b64;
-                                  attachedImageName = name;
                                 });
                               },
                               icon: const Icon(Icons.camera_alt_rounded, size: 16),
@@ -401,9 +395,8 @@ class PlayerDashboardView extends StatelessWidget {
                           Expanded(
                             child: OutlinedButton.icon(
                               onPressed: () async {
-                                await _pickProofImage(context, ImageSource.gallery, setDialogState, (b64, name) {
+                                await _pickProofImage(context, ImageSource.gallery, setDialogState, (b64, _) {
                                   attachedImageBase64 = b64;
-                                  attachedImageName = name;
                                 });
                               },
                               icon: const Icon(Icons.photo_library_rounded, size: 16),

@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import '../../models/reward_item.dart';
 import '../../models/reward_pack.dart';
 import '../../models/partner_contact.dart';
 import '../../models/active_redemption.dart';
@@ -243,7 +242,7 @@ class RewardManagerView extends StatelessWidget {
         allowedExtensions: ['rewardpack', 'json', 'txt'],
       );
 
-      if (result != null && result.isNotEmpty && result.single.path != null) {
+      if (result.isNotEmpty && result.single.path != null) {
         final file = File(result.single.path!);
         final raw = await file.readAsString();
 

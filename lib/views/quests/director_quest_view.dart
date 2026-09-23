@@ -7,13 +7,11 @@ import 'package:provider/provider.dart';
 import '../../models/quest_item.dart';
 import '../../models/quest_pack.dart';
 import '../../models/order_item.dart';
-import '../../models/order_pack.dart';
 import '../../models/partner_contact.dart';
 import '../../services/quest_service.dart';
 import '../../services/sync_service.dart';
 import '../../services/partner_service.dart';
 import '../../services/order_engine.dart';
-import '../../core/security/encryption_helper.dart';
 import '../../widgets/draggable_dialog.dart';
 
 class DirectorQuestView extends StatefulWidget {
@@ -927,7 +925,7 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
                 Navigator.pop(ctx);
                 final rawJson = jsonEncode(pack.toJson());
                 await sync.sendChatMessage(
-                  selectedPartner!,
+                  selectedPartner,
                   'Shared Quest Pack: "${pack.title}" (${pack.quests.length} quests)',
                   packType: 'questPack',
                   packTitle: pack.title,
@@ -935,7 +933,7 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
                   packData: rawJson,
                 );
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Sent "${pack.title}" to ${selectedPartner!.displayName}!'), behavior: SnackBarBehavior.floating),
+                  SnackBar(content: Text('Sent "${pack.title}" to ${selectedPartner.displayName}!'), behavior: SnackBarBehavior.floating),
                 );
               },
             ),
@@ -947,7 +945,6 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
 
   void _exportQuest(Quest quest) {
     final questSvc = Provider.of<QuestService>(context, listen: false);
-    final rawJson = jsonEncode(quest.toJson());
     final passCtrl = TextEditingController();
 
     showDialog(
@@ -1276,7 +1273,7 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
                           allowedExtensions: ['questpack', 'json', 'txt'],
                         );
 
-                        if (result != null && result.isNotEmpty && result.single.path != null) {
+                        if (result.isNotEmpty && result.single.path != null) {
                           final file = File(result.single.path!);
                           final rawContent = await file.readAsString();
                           if (ctx.mounted) Navigator.pop(ctx);

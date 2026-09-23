@@ -69,10 +69,8 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
   late TextEditingController _equipmentController;
   late TextEditingController _categoryController;
   int _selectedTier = 1;
-  int _actionDurationSeconds = 120;
   int _actionValue = 2;
   String _actionUnit = 'Minutes';
-  int _durationMinutes = 15;
   int _deadlineValue = 15;
   String _deadlineUnit = 'Minutes';
   DurationType _durationType = DurationType.actionTimer;
@@ -100,8 +98,6 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
       _equipmentController = TextEditingController(text: order.requiredEquipment.join(', '));
       _categoryController = TextEditingController(text: order.category);
       _selectedTier = order.tier;
-      _actionDurationSeconds = order.actionDurationSeconds;
-      _durationMinutes = order.durationMinutes;
       _durationType = order.durationType;
       _verificationType = order.verificationType;
       _rewardTokens = order.rewardTokens;
@@ -148,8 +144,6 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
       _equipmentController.text = order.requiredEquipment.join(', ');
       _categoryController.text = order.category;
       _selectedTier = order.tier;
-      _actionDurationSeconds = order.actionDurationSeconds;
-      _durationMinutes = order.durationMinutes;
       _durationType = order.durationType;
       _verificationType = order.verificationType;
       _rewardTokens = order.rewardTokens;

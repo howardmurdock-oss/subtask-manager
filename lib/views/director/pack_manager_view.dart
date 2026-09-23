@@ -132,7 +132,7 @@ class PackManagerView extends StatelessWidget {
         allowedExtensions: ['orderpack', 'json', 'txt'],
       );
 
-      if (result != null && result.isNotEmpty && result.single.path != null) {
+      if (result.isNotEmpty && result.single.path != null) {
         final file = File(result.single.path!);
         final raw = await file.readAsString();
 
@@ -224,89 +224,6 @@ class PackManagerView extends StatelessWidget {
                 }
               },
               child: const Text('Decrypt & Import'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showImportDialog(BuildContext context) {
-    final engine = Provider.of<OrderEngine>(context, listen: false);
-    final dataCtrl = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Import Order Pack'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.file_open_rounded),
-                  label: const Text('Pick .orderpack / .json File'),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 44),
-                  ),
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _importFromFile(context);
-                  },
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    const Expanded(child: Divider()),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Text(
-                        'OR PASTE RAW DATA',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                        ),
-                      ),
-                    ),
-                    const Expanded(child: Divider()),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  'Paste Pack Data / JSON',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: dataCtrl,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    hintText: 'Paste copied JSON or encrypted text string...',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final raw = dataCtrl.text.trim();
-                if (raw.isEmpty) return;
-                Navigator.pop(ctx);
-                _processImportData(context, engine, raw);
-              },
-              child: const Text('Import Text'),
             ),
           ],
         );

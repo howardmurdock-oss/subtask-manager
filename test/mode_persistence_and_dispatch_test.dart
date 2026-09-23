@@ -176,7 +176,7 @@ void main() {
         actionDurationSeconds: 600,
       );
 
-      final active = playerEngine.assignOrder(
+      playerEngine.assignOrder(
         order,
         id: 'active_456',
         assignedByDirector: true,

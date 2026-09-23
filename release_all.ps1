@@ -83,6 +83,21 @@ Write-Host "==> Target Release: $targetVersion ($releaseTag)" -ForegroundColor G
 # ---------------------------------------------------------------------------
 # 2. Automated Test Suite
 # ---------------------------------------------------------------------------
+# The analyzer had been reporting that the update check was never called from
+# anywhere - the bug that shipped four releases none of which could announce
+# themselves - in among 578 deprecation notices nobody reads. Warnings are
+# errors here; the notices are not.
+Write-Host "`n==> Step 0: Analyzing..." -ForegroundColor Cyan
+$analysis = & $flutterBat analyze --no-pub 2>&1 | Out-String
+$problems = ($analysis -split "`n") | Where-Object { $_ -match '^\s*(warning|error) -' }
+if ($problems) {
+    Write-Host "  [ERROR] The analyzer found $($problems.Count) warning(s):" -ForegroundColor Red
+    $problems | ForEach-Object { Write-Host "    $($_.Trim())" -ForegroundColor Red }
+    Write-Error "Analysis failed. Aborting release."
+    exit 1
+}
+Write-Host "  [OK] No analyzer warnings." -ForegroundColor Green
+
 Write-Host "`n==> Step 1: Running Automated Tests..." -ForegroundColor Cyan
 & $flutterBat test
 if ($LASTEXITCODE -ne 0) {

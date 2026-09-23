@@ -14,9 +14,7 @@ import '../../services/partner_service.dart';
 import '../../services/sync_service.dart';
 import '../../services/order_engine.dart';
 import '../../services/quest_service.dart';
-import '../../core/security/encryption_helper.dart';
 import '../../core/utils/image_compressor.dart';
-import '../../widgets/draggable_dialog.dart';
 import '../../widgets/linkable_text.dart';
 
 class ChatConversationView extends StatefulWidget {
@@ -1174,7 +1172,6 @@ class _ChatConversationViewState extends State<ChatConversationView> {
 
   void _showPackPreviewDialog(ChatMessage msg) {
     if (msg.packData == null) return;
-    final theme = Theme.of(context);
     final packType = msg.packType ?? 'orderPack';
 
     try {
