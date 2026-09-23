@@ -232,13 +232,9 @@ if (-not $SkipCloudBuild) {
     if ($downloadOk) {
         Write-Host "  [OK] Cloud artifacts downloaded to dist/." -ForegroundColor Green
 
-        # Copy cloud binaries to Google Drive
-        if (Test-Path $gdriveTarget) {
-            Get-ChildItem -Recurse dist -Include *.dmg, *.tar.gz, *.zip | ForEach-Object {
-                Copy-Item $_.FullName -Destination $gdriveTarget -Force
-            }
-            Write-Host "  [OK] Native macOS & Linux copied to Google Drive." -ForegroundColor Green
-        }
+        # Not to Google Drive: that holds the Windows and Android builds, which
+        # are the two that get handed to people directly. macOS and Linux are
+        # downloaded from the release.
         # Copy to F: backup drive
         if (Test-Path "F:\subTask Manager") {
             Get-ChildItem -Recurse dist -Include *.dmg, *.tar.gz, *.zip | ForEach-Object {
