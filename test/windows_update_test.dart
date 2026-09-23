@@ -83,6 +83,7 @@ void main() {
       required Directory installed,
       required Directory staging,
       String? executable,
+      String? from,
     }) async {
       final script = File('${root.path}${Platform.pathSeparator}swap.ps1');
       await script.writeAsString(WindowsUpdater.swapScript(
@@ -96,8 +97,13 @@ void main() {
         // test the failure branch.
         executable: executable ?? r'C:\Windows\System32\where.exe',
       ));
-      return Process.run('powershell.exe',
-          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script.path]);
+      return Process.run(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script.path],
+        // Where the script is started from is the whole point of one of these
+        // tests, so it is not left to whatever the runner happens to use.
+        workingDirectory: from ?? root.path,
+      );
     }
 
     test('replaces the installation with the new version', () async {
@@ -110,6 +116,56 @@ void main() {
           '2.0.0');
       expect(await Directory('${installed.path}.old').exists(), isFalse,
           reason: 'the old copy is cleared once the new one is in place');
+    });
+
+    test('survives being started from inside the folder it replaces', () async {
+      // What actually happened on the first real update: the app hands the
+      // swap to a detached process, which inherits the app's working
+      // directory - the installation. Windows will not move a directory that
+      // any process holds open, so the first move failed and the update
+      // silently did nothing.
+      final installed = await installation('1.0.0');
+      final staging = await WindowsUpdater.unpackBeside(await releaseZip('2.0.0'), installed);
+
+      final result = await runSwap(
+        installed: installed,
+        staging: staging,
+        from: installed.path,
+      );
+
+      expect(result.exitCode, 0, reason: result.stdout.toString() + result.stderr.toString());
+      expect(await File('${installed.path}${Platform.pathSeparator}version.txt').readAsString(),
+          '2.0.0');
+    });
+
+    test('a failure leaves the installation, a log and no download behind', () async {
+      final installed = await installation('1.0.0');
+      final staging = Directory('${root.path}${Platform.pathSeparator}app.update');
+      await staging.create(recursive: true);
+      await File('${staging.path}${Platform.pathSeparator}version.txt').writeAsString('2.0.0');
+
+      // A process holding the installation open, which is the failure the
+      // retries are there to outlast - this one never lets go.
+      final holder = await Process.start(
+        'powershell.exe',
+        ['-NoProfile', '-Command', 'Start-Sleep -Seconds 30'],
+        workingDirectory: installed.path,
+      );
+      addTearDown(() => holder.kill());
+
+      final result = await runSwap(installed: installed, staging: staging);
+
+      expect(result.exitCode, isNot(0));
+      expect(await File('${installed.path}${Platform.pathSeparator}version.txt').readAsString(),
+          '1.0.0',
+          reason: 'a failed update must leave the machine with what it had');
+      expect(await staging.exists(), isFalse,
+          reason: 'the download is cleared rather than left beside the installation');
+
+      final log = File('${root.path}${Platform.pathSeparator}swap.ps1.log');
+      expect(await log.exists(), isTrue,
+          reason: 'a silent failure is the one thing this cannot do');
+      expect(await log.readAsString(), contains('could not move the installation aside'));
     });
 
     test('puts the original back when the new version cannot be moved in', () async {

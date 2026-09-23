@@ -72,12 +72,27 @@ class WindowsUpdater {
     required String target,
     required String executable,
   }) =>
-      '''
+      """
 # Written by (sub)Task Manager to replace itself. Safe to delete.
 \$ErrorActionPreference = 'Stop'
 
+# A failed swap used to leave the app closed and nothing to look at. Whatever
+# happens here is written down; the log is removed again on success.
+\$log = "\$PSCommandPath.log"
+function Say(\$m) {
+    Add-Content -LiteralPath \$log -Value "\$((Get-Date).ToString('HH:mm:ss')) \$m"
+}
+
+# Nothing may hold the installation open - including this script. Windows
+# refuses to move a directory that any process has as its working directory,
+# and this script inherits the app's, which is the installation itself. That
+# failed the very first move, so the update did nothing at all.
+Set-Location -LiteralPath \$env:TEMP
+[Environment]::CurrentDirectory = \$env:TEMP
+
 # Wait for the app to close. Files under the installation stay locked until it
 # does, and a move would fail against them.
+Say 'waiting for the app to close (pid $pid)'
 for (\$i = 0; \$i -lt 120; \$i++) {
     if (-not (Get-Process -Id $pid -ErrorAction SilentlyContinue)) { break }
     Start-Sleep -Milliseconds 500
@@ -88,26 +103,51 @@ if (Test-Path -LiteralPath \$backup) { Remove-Item -LiteralPath \$backup -Recurs
 
 # Move the old installation aside first. If anything below fails, it goes back:
 # a failed update must leave the machine with the version it started with.
-Move-Item -LiteralPath '$target' -Destination \$backup -Force
+# Scanners and indexers can hold a file open for a moment after the process
+# exits, so this is worth a few attempts before calling it a failure.
+\$movedAside = \$false
+for (\$i = 0; \$i -lt 10 -and -not \$movedAside; \$i++) {
+    try {
+        Move-Item -LiteralPath '$target' -Destination \$backup -Force
+        \$movedAside = \$true
+    } catch {
+        Say "could not move the installation aside: \$_"
+        Start-Sleep -Milliseconds 700
+    }
+}
+
+if (-not \$movedAside) {
+    # Nothing has been touched. Clear the download rather than leaving a copy
+    # of the new version sitting beside the old one forever.
+    Say 'giving up; the installation is untouched'
+    Remove-Item -LiteralPath '$staging' -Recurse -Force -ErrorAction SilentlyContinue
+    try { Start-Process -FilePath '$executable' } catch { Say "restart failed: \$_" }
+    exit 1
+}
+
 try {
     Move-Item -LiteralPath '$staging' -Destination '$target' -Force
 } catch {
+    Say "could not move the new version in: \$_"
     Move-Item -LiteralPath \$backup -Destination '$target' -Force
+    try { Start-Process -FilePath '$executable' } catch { Say "restart failed: \$_" }
     exit 1
 }
 
 # The update is already in place by here. A relaunch that fails is a nuisance;
 # it must not stop the old copy being cleared, or leave the user without the
 # new version running and no explanation.
+Say 'installed'
 try {
     Start-Process -FilePath '$executable'
 } catch {
-    Write-Output "update installed, but the app could not be restarted: \$_"
+    Say "update installed, but the app could not be restarted: \$_"
 }
 
 Remove-Item -LiteralPath \$backup -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath \$log -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath \$PSCommandPath -Force -ErrorAction SilentlyContinue
-''';
+""";
 
   /// Unpacks the download and hands the swap to a detached script.
   ///
@@ -143,6 +183,10 @@ Remove-Item -LiteralPath \$PSCommandPath -Force -ErrorAction SilentlyContinue
         'powershell.exe',
         ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script.path],
         mode: ProcessStartMode.detached,
+        // Anywhere but the installation: a child process inherits this app's
+        // working directory, and a directory held open by any process cannot
+        // be moved.
+        workingDirectory: Directory.systemTemp.path,
       );
       return const InstallResult(InstallOutcome.handedOff);
     } catch (e) {
