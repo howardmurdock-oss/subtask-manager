@@ -52,6 +52,10 @@ class _HomeScreenState extends State<HomeScreen> {
           _showIncomingOrderDialog(order);
         }
       });
+      // The banner is the only thing that tells a sideloaded build a newer one
+      // exists. Nothing called this, so it never appeared for anyone: the
+      // Settings page was the only way to find an update.
+      _checkForUpdate();
     });
   }
 
