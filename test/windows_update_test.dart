@@ -70,6 +70,13 @@ void main() {
         reason: 'unpacking must not touch the running installation');
   });
 
+  // The swap is a PowerShell script operating on Windows paths. The cloud
+  // builders run the same suite on macOS and Linux, where there is nothing for
+  // these to exercise - and a failure there is a failure to publish, not a
+  // finding about the updater.
+  final windowsOnly =
+      Platform.isWindows ? null : 'the Windows swap only runs on Windows';
+
   group('the swap script', () {
     /// Runs the script to completion with no app to wait for.
     Future<ProcessResult> runSwap({
@@ -119,7 +126,7 @@ void main() {
       expect(await File('${installed.path}${Platform.pathSeparator}version.txt').readAsString(),
           '1.0.0');
     });
-  });
+  }, skip: windowsOnly);
 
   test('an installation in a folder we cannot write to is refused', () async {
     // Nothing is unpacked or swapped; the user is told to do it themselves.
@@ -127,5 +134,5 @@ void main() {
     expect(await zip.exists(), isTrue);
     expect(WindowsUpdater.isSupported, isTrue, reason: 'this suite runs on Windows');
     expect(await WindowsUpdater.canReplaceInstallation(), isA<bool>());
-  });
+  }, skip: windowsOnly);
 }
