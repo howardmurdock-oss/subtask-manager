@@ -45,9 +45,13 @@ class WindowsUpdater {
   /// is a move: across volumes that becomes a copy of every file, which is
   /// slower and can half-finish.
   @visibleForTesting
+  static Directory stagingFor(Directory installation) => Directory(
+      '${installation.parent.path}${Platform.pathSeparator}'
+      '${installation.uri.pathSegments.where((s) => s.isNotEmpty).last}.update');
+
+  @visibleForTesting
   static Future<Directory> unpackBeside(File zip, Directory installation) async {
-    final staging = Directory(
-        '${installation.parent.path}${Platform.pathSeparator}${installation.uri.pathSegments.where((s) => s.isNotEmpty).last}.update');
+    final staging = stagingFor(installation);
     if (await staging.exists()) await staging.delete(recursive: true);
     await staging.create(recursive: true);
 
@@ -148,6 +152,47 @@ Remove-Item -LiteralPath \$backup -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath \$log -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath \$PSCommandPath -Force -ErrorAction SilentlyContinue
 """;
+
+  /// The download left behind by an update that never completed, if there is
+  /// one.
+  ///
+  /// A swap that fails leaves the unpacked release sitting beside the
+  /// installation, and the app looks - from the inside - exactly as it did
+  /// before: same version, no message, nothing to suggest anything happened.
+  /// Two real updates failed that way before anyone could say why.
+  static Future<String?> unfinishedUpdate() => probeForUnfinishedUpdate();
+
+  /// The probe itself, swapped out by tests that need a leftover to exist.
+  @visibleForTesting
+  static Future<String?> Function() probeForUnfinishedUpdate = _unfinishedUpdate;
+
+  static Future<String?> _unfinishedUpdate() async {
+    if (!isSupported) return null;
+    try {
+      return await unfinishedUpdateBeside(installDirectory);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @visibleForTesting
+  static Future<String?> unfinishedUpdateBeside(Directory installation) async {
+    final staging = stagingFor(installation);
+    return await staging.exists() ? staging.path : null;
+  }
+
+  /// Removes a leftover download. The next attempt re-fetches it: what was
+  /// unpacked cannot be checked against the published digest, which covers the
+  /// archive rather than the folder it became.
+  static Future<bool> discardUnfinished(String path) async {
+    try {
+      final dir = Directory(path);
+      if (await dir.exists()) await dir.delete(recursive: true);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Unpacks the download and hands the swap to a detached script.
   ///

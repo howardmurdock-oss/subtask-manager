@@ -14,6 +14,7 @@ import 'package:orders_app/services/storage_service.dart';
 import 'package:orders_app/services/sync_service.dart';
 import 'package:orders_app/services/update_flow.dart';
 import 'package:orders_app/services/update_service.dart';
+import 'package:orders_app/services/windows_updater.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// The update banner is the only thing that tells a sideloaded build a newer
@@ -39,22 +40,27 @@ void main() {
       });
 
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    // A check made minutes ago, which is the normal state of things: the
+    // interval only ever elapses while the app is closed.
+    SharedPreferences.setMockInitialValues({
+      UpdateService.lastCheckedKey: DateTime.now().toIso8601String(),
+    });
     UpdateService.fetch = (_) async => Uint8List.fromList(utf8.encode(manifest()));
   });
 
   tearDown(() {
     UpdateService.fetch = (_) async => null;
+    WindowsUpdater.probeForUnfinishedUpdate = () async => null;
     UpdateFlow.instance.dismiss();
   });
 
-  testWidgets('a newer version is offered on launch, without being asked',
-      (WidgetTester tester) async {
+  Future<void> pumpApp(WidgetTester tester) async {
     final sync = SyncService(OrderEngine(storage: StorageService()));
     final partners = PartnerService();
     final chat = ChatService();
     final quests = QuestService();
     sync.attachServices(partners, chat, questService: quests);
+    addTearDown(sync.dispose);
 
     await tester.pumpWidget(
       MultiProvider(
@@ -71,15 +77,31 @@ void main() {
       ),
     );
 
-    // The check runs after the first frame and has a preference read and a
-    // fetch to get through before it can say anything.
+    // The checks run after the first frame, each with a preference read and a
+    // fetch to get through before they can say anything.
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
+  }
+
+  testWidgets('a newer version is offered on launch, even within the interval',
+      (WidgetTester tester) async {
+    await pumpApp(tester);
 
     expect(find.textContaining('Version 9.9.0 is available'), findsOneWidget,
-        reason: 'the banner must appear on its own, not only from Settings');
+        reason: 'the banner must appear on its own, not only from Settings, and '
+            'a check made earlier today must not swallow the launch');
+  });
 
-    sync.dispose();
+  testWidgets('a download that never installed is reported, not left silent',
+      (WidgetTester tester) async {
+    // Two real updates failed exactly here: the files were downloaded, the
+    // swap did not happen, and the app came back looking untouched.
+    WindowsUpdater.probeForUnfinishedUpdate = () async => r'D:\app\Windows-Portable.update';
+
+    await pumpApp(tester);
+
+    expect(find.textContaining('could not be installed'), findsOneWidget);
+    expect(find.text('Delete download'), findsOneWidget);
   });
 }

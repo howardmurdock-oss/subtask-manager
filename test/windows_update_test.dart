@@ -70,6 +70,22 @@ void main() {
         reason: 'unpacking must not touch the running installation');
   });
 
+  test('a download left behind by a failed update is found, and can be cleared',
+      () async {
+    final installed = await installation('1.0.0');
+    expect(await WindowsUpdater.unfinishedUpdateBeside(installed), isNull,
+        reason: 'nothing to report when no update was attempted');
+
+    final staging = await WindowsUpdater.unpackBeside(await releaseZip('2.0.0'), installed);
+    expect(await WindowsUpdater.unfinishedUpdateBeside(installed), staging.path);
+
+    expect(await WindowsUpdater.discardUnfinished(staging.path), isTrue);
+    expect(await WindowsUpdater.unfinishedUpdateBeside(installed), isNull);
+    expect(await File('${installed.path}${Platform.pathSeparator}version.txt').readAsString(),
+        '1.0.0',
+        reason: 'clearing the download must not touch the installation');
+  });
+
   // The swap is a PowerShell script operating on Windows paths. The cloud
   // builders run the same suite on macOS and Linux, where there is nothing for
   // these to exercise - and a failure there is a failure to publish, not a

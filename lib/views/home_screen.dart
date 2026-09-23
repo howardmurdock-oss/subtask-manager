@@ -17,6 +17,7 @@ import 'contacts/partners_and_chat_view.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/update_flow.dart';
 import '../services/update_service.dart';
+import '../services/windows_updater.dart';
 import 'pairing/pairing_view.dart';
 import 'settings/settings_view.dart';
 import 'quests/quests_hub_view.dart';
@@ -39,6 +40,10 @@ class _HomeScreenState extends State<HomeScreen> {
   AppUpdate? _update;
   bool _isRequestDialogShowing = false;
   StreamSubscription<ActiveOrder>? _orderSubscription;
+  Timer? _updateTimer;
+
+  /// A download from an update that never finished installing.
+  String? _unfinishedUpdate;
 
   @override
   void initState() {
@@ -55,12 +60,26 @@ class _HomeScreenState extends State<HomeScreen> {
       // The banner is the only thing that tells a sideloaded build a newer one
       // exists. Nothing called this, so it never appeared for anyone: the
       // Settings page was the only way to find an update.
-      _checkForUpdate();
+      //
+      // Forced, because opening the app is the moment a user is most able to
+      // act on an update, and the interval would otherwise swallow the launch
+      // that happens to fall inside it - which is most of them, on the day a
+      // release goes out.
+      _checkForUpdate(force: true);
+      _checkUnfinishedUpdate();
+
+      // And again while it stays open. A desktop copy can sit running for
+      // days, and would otherwise never ask a second time.
+      _updateTimer = Timer.periodic(
+        UpdateService.checkInterval,
+        (_) => _checkForUpdate(),
+      );
     });
   }
 
   @override
   void dispose() {
+    _updateTimer?.cancel();
     _orderSubscription?.cancel();
     super.dispose();
   }
@@ -349,12 +368,48 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Nothing tells someone running a sideloaded build that a new one exists,
   /// so the app asks - once a day, quietly, and never on its own initiative
   /// beyond saying so.
-  Future<void> _checkForUpdate() async {
-    final update = await UpdateService.check();
+  Future<void> _checkForUpdate({bool force = false}) async {
+    final update = await UpdateService.check(force: force);
     if (update == null || !mounted) return;
     if (await UpdateService.isSkipped(update.version)) return;
     UpdateFlow.instance.offer(update);
     if (mounted) setState(() => _update = update);
+  }
+
+  /// An update that downloaded and then failed to install leaves its files
+  /// beside the installation and says nothing. Saying so is the difference
+  /// between "the update did nothing" and "the update could not be applied".
+  Future<void> _checkUnfinishedUpdate() async {
+    final leftover = await WindowsUpdater.unfinishedUpdate();
+    if (leftover == null || !mounted) return;
+    setState(() => _unfinishedUpdate = leftover);
+  }
+
+  Widget _buildUnfinishedUpdateBanner(BuildContext context, String path) {
+    final theme = Theme.of(context);
+    return MaterialBanner(
+      backgroundColor: theme.colorScheme.errorContainer.withOpacity(0.4),
+      leading: Icon(Icons.info_outline_rounded, color: theme.colorScheme.error),
+      content: Text(
+        'The last update downloaded but could not be installed. This copy is '
+        'still version ${UpdateService.currentVersion}, and the download is '
+        'still on disk.',
+        style: theme.textTheme.bodyMedium,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => setState(() => _unfinishedUpdate = null),
+          child: const Text('Later'),
+        ),
+        FilledButton(
+          onPressed: () async {
+            await WindowsUpdater.discardUnfinished(path);
+            if (mounted) setState(() => _unfinishedUpdate = null);
+          },
+          child: const Text('Delete download'),
+        ),
+      ],
+    );
   }
 
   Widget _buildUpdateBanner(BuildContext context, AppUpdate update) {
@@ -619,6 +674,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
+          if (_unfinishedUpdate != null)
+            _buildUnfinishedUpdateBanner(context, _unfinishedUpdate!),
           if (_update != null)
             ListenableBuilder(
               listenable: UpdateFlow.instance,
@@ -631,7 +688,16 @@ class _HomeScreenState extends State<HomeScreen> {
             child: isDesktop
           ? Row(
               children: [
-                NavigationRail(
+                // The rail is as tall as its destinations, and a short window
+                // - or anything above it, like an update banner - pushes the
+                // last ones out of sight with no way to reach them. Let it
+                // scroll, while still filling the height when there is room.
+                LayoutBuilder(
+                  builder: (context, constraints) => SingleChildScrollView(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                      child: IntrinsicHeight(
+                        child: NavigationRail(
                   selectedIndex: _currentRole == AppRole.player ? _playerIndex : _directorIndex,
                   onDestinationSelected: (idx) {
                     setState(() {
@@ -703,6 +769,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             label: Text('Settings'),
                           ),
                         ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 const VerticalDivider(thickness: 1, width: 1),
                 Expanded(child: activeBody),
