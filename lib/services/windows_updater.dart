@@ -194,7 +194,36 @@ Remove-Item -LiteralPath \$PSCommandPath -Force -ErrorAction SilentlyContinue
     }
   }
 
-  /// Unpacks the download and hands the swap to a detached script.
+  /// Starts the swap script, and returns once it is running.
+  ///
+  /// Not detached, though everything about this says it should be. A process
+  /// created with DETACHED_PROCESS has no console, powershell.exe will not
+  /// start without one, and it fails so early that nothing is written
+  /// anywhere - the app hands off, closes, and no swap ever happens. A normal
+  /// child outlives the parent on Windows, which is all this needs.
+  @visibleForTesting
+  static Future<void> startScript(File script) async {
+    await Process.start(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        // The app is closing; a console window appearing over the desktop as
+        // it goes is not something to explain to anyone.
+        '-WindowStyle',
+        'Hidden',
+        '-File',
+        script.path,
+      ],
+      mode: ProcessStartMode.normal,
+      // Anywhere but the installation: a child inherits this app's working
+      // directory, and a directory held open by any process cannot be moved.
+      workingDirectory: Directory.systemTemp.path,
+    );
+  }
+
+  /// Unpacks the download and hands the swap to a script.
   ///
   /// Returns once the script is running; the caller closes the app, which is
   /// what lets the swap proceed.
@@ -224,15 +253,7 @@ Remove-Item -LiteralPath \$PSCommandPath -Force -ErrorAction SilentlyContinue
         executable: Platform.resolvedExecutable,
       ));
 
-      await Process.start(
-        'powershell.exe',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script.path],
-        mode: ProcessStartMode.detached,
-        // Anywhere but the installation: a child process inherits this app's
-        // working directory, and a directory held open by any process cannot
-        // be moved.
-        workingDirectory: Directory.systemTemp.path,
-      );
+      await startScript(script);
       return const InstallResult(InstallOutcome.handedOff);
     } catch (e) {
       return InstallResult(InstallOutcome.failed, detail: '$e');

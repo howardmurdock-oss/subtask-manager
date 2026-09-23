@@ -200,6 +200,26 @@ void main() {
     });
   }, skip: windowsOnly);
 
+  test('the script the app hands off to actually runs', () async {
+    // Every other test here runs the swap script itself. None of them covered
+    // the step between the app and the script, and that is where two real
+    // updates died: handed to a detached process, which on Windows has no
+    // console, which powershell.exe will not start without. It failed so
+    // early that not even the script's own log was written.
+    final marker = File('${root.path}${Platform.pathSeparator}it-ran.txt');
+    final script = File('${root.path}${Platform.pathSeparator}hand-off.ps1');
+    await script.writeAsString("Set-Content -LiteralPath '${marker.path}' -Value 'ran'");
+
+    await WindowsUpdater.startScript(script);
+
+    // It is a separate process; give it a moment to exist.
+    for (var i = 0; i < 40 && !await marker.exists(); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    expect(await marker.exists(), isTrue,
+        reason: 'the app must hand off to something that runs');
+  }, skip: windowsOnly);
+
   test('an installation in a folder we cannot write to is refused', () async {
     // Nothing is unpacked or swapped; the user is told to do it themselves.
     final zip = await releaseZip('2.0.0');
