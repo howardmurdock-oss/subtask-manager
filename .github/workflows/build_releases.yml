@@ -47,13 +47,12 @@ jobs:
         run: |
           mkdir -p dist
           tar -czvf dist/SubTaskManager-Linux-x64.tar.gz -C build/linux/x64/release/bundle .
-          cp dist/SubTaskManager-Linux-x64.tar.gz dist/OrdersApp-Linux-x64.tar.gz
 
       - name: Upload Linux Distributable
         uses: actions/upload-artifact@v4
         with:
           name: Linux-Distributable
-          path: dist/*Linux-x64.tar.gz
+          path: dist/SubTaskManager-Linux-x64.tar.gz
 
   build-macos:
     name: Build macOS Desktop Release
@@ -83,41 +82,12 @@ jobs:
           mkdir -p dist
           cd build/macos/Build/Products/Release
           zip -r -y ../../../../../dist/SubTaskManager-macOS.zip orders_app.app
-          cp ../../../../../dist/SubTaskManager-macOS.zip ../../../../../dist/OrdersApp-macOS.zip
           hdiutil create -volname "SubTask Manager" -srcfolder orders_app.app -ov -format UDZO ../../../../../dist/SubTaskManager-macOS.dmg
-          cp ../../../../../dist/SubTaskManager-macOS.dmg ../../../../../dist/OrdersApp-macOS.dmg
 
       - name: Upload macOS Distributable
         uses: actions/upload-artifact@v4
         with:
           name: macOS-Distributable
           path: |
-            dist/*macOS.zip
-            dist/*macOS.dmg
-
-  release:
-    name: Publish GitHub Release (on tags)
-    needs: [build-linux, build-macos]
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    # The default GITHUB_TOKEN is read-only, so creating the release failed with
-    # "Resource not accessible by integration" on every tagged build.
-    permissions:
-      contents: write
-    steps:
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Consolidate distribution files
-        run: |
-          mkdir -p release_assets
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.dmg" \) -exec cp {} release_assets/ \;
-          ls -la release_assets
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release_assets/*
-          generate_release_notes: true
+            dist/SubTaskManager-macOS.zip
+            dist/SubTaskManager-macOS.dmg

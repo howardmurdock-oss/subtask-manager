@@ -47,6 +47,9 @@ void main() {
       expect(UpdateService.isNewer('1.4.0', '1.3.9'), isTrue);
       expect(UpdateService.isNewer('1.3.10', '1.3.9'), isTrue,
           reason: 'string comparison would call this older');
+      expect(UpdateService.isNewer('1.4.10', '1.4.9'), isTrue,
+          reason: 'the first double-digit patch release');
+      expect(UpdateService.isNewer('1.4.9', '1.4.10'), isFalse);
       expect(UpdateService.isNewer('1.3.9', '1.3.9'), isFalse);
       expect(UpdateService.isNewer('1.3.8', '1.3.9'), isFalse);
       expect(UpdateService.isNewer('2.0.0', '1.9.9'), isTrue);
