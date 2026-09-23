@@ -31,7 +31,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   AppRole _currentRole = AppRole.player;
   int _playerIndex = 0;
   int _directorIndex = 0;
@@ -48,6 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadSavedRole();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final sync = Provider.of<SyncService>(context, listen: false);
@@ -79,6 +80,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _updateTimer?.cancel();
     _orderSubscription?.cancel();
     super.dispose();
@@ -368,8 +370,20 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Nothing tells someone running a sideloaded build that a new one exists,
   /// so the app asks - once a day, quietly, and never on its own initiative
   /// beyond saying so.
-  Future<void> _checkForUpdate({bool force = false}) async {
-    final update = await UpdateService.check(force: force);
+  /// Coming back to the app is the same moment as opening it, as far as an
+  /// update is concerned - and on a phone it is the only one that happens.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || !mounted) return;
+    final security = Provider.of<SecurityService>(context, listen: false);
+    // The lock screen has a queue of its own to get through; a network call
+    // behind it helps nobody.
+    if (security.isPinRequired && !security.isUnlocked) return;
+    _checkForUpdate(interval: UpdateService.resumeInterval);
+  }
+
+  Future<void> _checkForUpdate({bool force = false, Duration? interval}) async {
+    final update = await UpdateService.check(force: force, interval: interval);
     if (update == null || !mounted) return;
     if (await UpdateService.isSkipped(update.version)) return;
     UpdateFlow.instance.offer(update);

@@ -137,6 +137,30 @@ void main() {
       expect((await UpdateService.check(force: true))?.version, '9.9.0');
     });
 
+    test('a shorter interval can be asked for, for a resume', () async {
+      // Returning to the app is the same moment as opening it, but it happens
+      // far more often, so it gets its own staleness rather than the daily one.
+      SharedPreferences.setMockInitialValues({
+        UpdateService.lastCheckedKey:
+            DateTime.now().subtract(const Duration(minutes: 30)).toIso8601String(),
+      });
+      expect(await UpdateService.check(interval: const Duration(hours: 1)), isNull,
+          reason: 'checked half an hour ago; a resume should not check again');
+
+      SharedPreferences.setMockInitialValues({
+        UpdateService.lastCheckedKey:
+            DateTime.now().subtract(const Duration(hours: 2)).toIso8601String(),
+      });
+      expect((await UpdateService.check(interval: const Duration(hours: 1)))?.version, '9.9.0');
+
+      // Without one, the daily interval still applies.
+      SharedPreferences.setMockInitialValues({
+        UpdateService.lastCheckedKey:
+            DateTime.now().subtract(const Duration(hours: 2)).toIso8601String(),
+      });
+      expect(await UpdateService.check(), isNull);
+    });
+
     test('a failed fetch is silent', () async {
       UpdateService.fetch = (_) async => null;
       expect(await UpdateService.check(), isNull);

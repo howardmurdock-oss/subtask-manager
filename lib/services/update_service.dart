@@ -58,6 +58,13 @@ class UpdateService {
   /// that a release is noticed the next day.
   static const Duration checkInterval = Duration(hours: 20);
 
+  /// How stale a check may be before returning to the app counts as a launch.
+  ///
+  /// A phone is rarely launched. It is resumed, for days, which is why the
+  /// launch check alone barely fires there - but a check on every glance at
+  /// the screen is not worth the battery either.
+  static const Duration resumeInterval = Duration(hours: 1);
+
   /// Where a download link may point. The manifest is fetched over HTTPS from
   /// our own site, but it is still data from the network deciding where to
   /// send someone - so the destination is checked rather than trusted.
@@ -169,7 +176,7 @@ class UpdateService {
 
   /// The newer version, or null. Never throws: a failed check is silent, since
   /// there is nothing the user could do about it.
-  static Future<AppUpdate?> check({bool force = false}) async {
+  static Future<AppUpdate?> check({bool force = false, Duration? interval}) async {
     if (!isSupported) return null;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -177,7 +184,7 @@ class UpdateService {
 
       if (!force) {
         final last = DateTime.tryParse(prefs.getString(lastCheckedKey) ?? '');
-        if (last != null && DateTime.now().difference(last) < checkInterval) {
+        if (last != null && DateTime.now().difference(last) < (interval ?? checkInterval)) {
           return null;
         }
       }

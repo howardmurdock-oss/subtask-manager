@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:orders_app/core/security/security_service.dart';
 import 'package:orders_app/core/theme/theme_provider.dart';
 import 'package:orders_app/main.dart';
+import 'package:orders_app/views/home_screen.dart';
 import 'package:orders_app/services/chat_service.dart';
 import 'package:orders_app/services/order_engine.dart';
 import 'package:orders_app/services/partner_service.dart';
@@ -54,7 +56,7 @@ void main() {
     UpdateFlow.instance.dismiss();
   });
 
-  Future<void> pumpApp(WidgetTester tester) async {
+  Future<void> pumpApp(WidgetTester tester, {bool screenOnly = false}) async {
     final sync = SyncService(OrderEngine(storage: StorageService()));
     final partners = PartnerService();
     final chat = ChatService();
@@ -73,7 +75,12 @@ void main() {
           ChangeNotifierProvider.value(value: quests),
           ChangeNotifierProvider.value(value: sync),
         ],
-        child: const OrdersApp(),
+        // The whole app, or the screen on its own. The app registers a resume
+        // handler of its own that re-arms scheduling alarms - not what is
+        // under test here, and it leaves timers running behind it.
+        child: screenOnly
+            ? const MaterialApp(home: HomeScreen())
+            : const OrdersApp(),
       ),
     );
 
@@ -91,6 +98,31 @@ void main() {
     expect(find.textContaining('Version 9.9.0 is available'), findsOneWidget,
         reason: 'the banner must appear on its own, not only from Settings, and '
             'a check made earlier today must not swallow the launch');
+  });
+
+  testWidgets('coming back to the app checks too, which on a phone is the only '
+      'thing that happens', (WidgetTester tester) async {
+    var manifestFetches = 0;
+    UpdateService.fetch = (url) async {
+      if (!url.path.endsWith('.sig')) manifestFetches++;
+      return Uint8List.fromList(utf8.encode(manifest()));
+    };
+
+    await pumpApp(tester, screenOnly: true);
+    expect(manifestFetches, 1, reason: 'the launch check');
+
+    // Long enough ago that returning counts as opening it.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(UpdateService.lastCheckedKey,
+        DateTime.now().subtract(const Duration(hours: 2)).toIso8601String());
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(manifestFetches, 2, reason: 'a resume after two hours must check');
   });
 
   testWidgets('a download that never installed is reported, not left silent',
