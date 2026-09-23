@@ -17,7 +17,7 @@ import 'sync_service.dart';
 import 'partner_service.dart';
 
 class ScheduleService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.4.11';
+  static const String appCurrentBuildVersion = '1.4.12';
 
   /// Occurrences staged with the Worker per rule.
   ///
