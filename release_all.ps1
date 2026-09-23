@@ -88,7 +88,16 @@ Write-Host "==> Target Release: $targetVersion ($releaseTag)" -ForegroundColor G
 # themselves - in among 578 deprecation notices nobody reads. Warnings are
 # errors here; the notices are not.
 Write-Host "`n==> Step 0: Analyzing..." -ForegroundColor Cyan
-$analysis = & $flutterBat analyze --no-pub 2>&1 | Out-String
+# Piping a native command's stderr under $ErrorActionPreference = "Stop" makes
+# PowerShell 5.1 treat ordinary output as a terminating error - the analyzer
+# prints its issue count there, so this killed the release before it started.
+$previousEapAnalysis = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$analysisFile = Join-Path $env:TEMP "subtask-analysis.txt"
+& $flutterBat analyze --no-pub > $analysisFile 2>&1
+$analysis = Get-Content $analysisFile -Raw
+Remove-Item -LiteralPath $analysisFile -Force -ErrorAction SilentlyContinue
+$ErrorActionPreference = $previousEapAnalysis
 $problems = ($analysis -split "`n") | Where-Object { $_ -match '^\s*(warning|error) -' }
 if ($problems) {
     Write-Host "  [ERROR] The analyzer found $($problems.Count) warning(s):" -ForegroundColor Red
