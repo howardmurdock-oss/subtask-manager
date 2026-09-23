@@ -50,3 +50,25 @@ CREATE TABLE IF NOT EXISTS deliveries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_deliveries_topic ON deliveries (topic, fired_at);
+
+-- Payloads too large to travel as a data message.
+--
+-- FCM caps a data message at 4KB, and a proof photo is roughly 120KB by the
+-- time it is compressed, base64'd and encrypted. Those used to go to the
+-- public relay instead, which a dozing Android device does not hear at all, so
+-- a photo arrived whenever its recipient next opened the app - if the relay
+-- had not expired the attachment first.
+--
+-- The device stores the ciphertext here and sends a pointer to it. What is
+-- kept is exactly what would have been in the message, and is no more readable
+-- here than it was there.
+CREATE TABLE IF NOT EXISTS blobs (
+  id         TEXT PRIMARY KEY,
+  topic      TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  stored_at  INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+
+-- Swept by the cron.
+CREATE INDEX IF NOT EXISTS idx_blobs_expiry ON blobs (expires_at);

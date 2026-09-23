@@ -34,8 +34,22 @@ const ACCESS_TOKEN_KEY = 'fcm_access_token';
 /** Google issues these for an hour; refresh early so a request never races expiry. */
 const ACCESS_TOKEN_TTL_SECONDS = 3300;
 
-/** FCM caps a data message at 4KB. Anything larger travels via R2 (phase 04). */
+/** FCM caps a data message at 4KB. Anything larger is stored and pointed at. */
 const MAX_PAYLOAD_BYTES = 3500;
+
+/**
+ * A proof photo compresses to about 50KB, which is roughly 120KB once it is
+ * base64 and encrypted. This leaves room for that without accepting something
+ * that has no business being a directive.
+ */
+const MAX_BLOB_BYTES = 512 * 1024;
+
+/**
+ * How long a stored payload stays fetchable. Long enough for a phone that was
+ * off for a weekend, short enough that nothing accumulates: the pointer is
+ * useless once the message has been applied, and the row is swept either way.
+ */
+const BLOB_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const MAX_TOKENS_PER_TOPIC = 10;
 
@@ -578,6 +592,86 @@ let deliveriesTableReady = false;
  * (7403) even while the Worker's own binding works - so the log must not
  * depend on it. Once per isolate; both statements are no-ops after the first.
  */
+let blobsTableReady = false;
+
+/**
+ * Where a payload too large for a data message waits to be collected.
+ *
+ * The alternative was the public relay, which a dozing Android device does not
+ * hear at all - so a proof photo only arrived when its recipient next opened
+ * the app, hours later, if the relay had not expired the attachment first.
+ *
+ * The row holds ciphertext. It is stored and served without ever being
+ * readable here, exactly like the payload of a data message.
+ */
+async function ensureBlobsTable(env: Env): Promise<void> {
+  if (blobsTableReady) return;
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS blobs (
+         id TEXT PRIMARY KEY, topic TEXT NOT NULL, payload TEXT NOT NULL,
+         stored_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_blobs_expiry ON blobs (expires_at)`,
+    ),
+  ]);
+  blobsTableReady = true;
+}
+
+async function handleBlobPut(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json().catch(() => null)) as {
+    topic?: string;
+    payload?: string;
+  } | null;
+
+  if (!body?.topic || !body.payload) {
+    return json({ error: 'topic and payload are required' }, 400);
+  }
+  if (new TextEncoder().encode(body.payload).length > MAX_BLOB_BYTES) {
+    return json({ error: 'payload too large', limit: MAX_BLOB_BYTES }, 413);
+  }
+
+  await ensureBlobsTable(env);
+  // Unguessable, because the id is the whole of the authority to fetch it -
+  // the same bargain the topic itself makes.
+  const id = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+  const now = Date.now();
+  await env.DB.prepare(
+    `INSERT INTO blobs (id, topic, payload, stored_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
+  )
+    .bind(id, body.topic, body.payload, now, now + BLOB_TTL_MS)
+    .run();
+
+  return json({ id, expiresAt: now + BLOB_TTL_MS });
+}
+
+async function handleBlobGet(url: URL, env: Env): Promise<Response> {
+  const id = url.searchParams.get('id') ?? '';
+  if (!id) return json({ error: 'id is required' }, 400);
+
+  await ensureBlobsTable(env);
+  const row = await env.DB.prepare(
+    `SELECT payload, expires_at FROM blobs WHERE id = ?`,
+  )
+    .bind(id)
+    .first<{ payload: string; expires_at: number }>();
+
+  // Not deleted on collection: a topic can be held by more than one device,
+  // and the second one to wake up needs it as much as the first.
+  if (!row || row.expires_at < Date.now()) return json({ error: 'not found' }, 404);
+  return json({ payload: row.payload });
+}
+
+async function sweepExpiredBlobs(env: Env): Promise<void> {
+  try {
+    await ensureBlobsTable(env);
+    await env.DB.prepare(`DELETE FROM blobs WHERE expires_at < ?`).bind(Date.now()).run();
+  } catch {
+    // A sweep that fails costs storage, not delivery.
+  }
+}
+
 async function ensureDeliveriesTable(env: Env): Promise<void> {
   if (deliveriesTableReady) return;
   await env.DB.batch([
@@ -748,6 +842,7 @@ async function handleDiagSummary(env: Env): Promise<Response> {
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(runDueSchedules(env));
+    ctx.waitUntil(sweepExpiredBlobs(env));
   },
 
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -808,6 +903,14 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/send') {
       return handleSend(request, env).catch((e) => json({ error: String(e) }, 500));
+    }
+
+    if (request.method === 'POST' && url.pathname === '/blob') {
+      return handleBlobPut(request, env).catch((e) => json({ error: String(e) }, 500));
+    }
+
+    if (request.method === 'GET' && url.pathname === '/blob') {
+      return handleBlobGet(url, env).catch((e) => json({ error: String(e) }, 500));
     }
 
     return json({ error: 'not found' }, 404);

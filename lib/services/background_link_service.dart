@@ -16,6 +16,7 @@ import '../models/order_pack.dart';
 import '../models/scheduled_order_rule.dart';
 import 'storage_service.dart';
 import 'schedule_coordinator.dart';
+import 'push_service.dart';
 
 // ---------------------------------------------------------------------------
 // Background isolate entry point — must be top-level & annotated
@@ -400,7 +401,10 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     return null;
   }
 
-  void _processIncomingRaw(String raw) async {
+  void _processIncomingRaw(String rawOrPointer) async {
+    // A payload too large for a data message arrives as a reference to one the
+    // Worker is holding. Collect it before trying to make sense of it.
+    final raw = await PushService.resolvePayload(rawOrPointer);
     SyncMessage? message = _tryDecode(raw);
 
     // If decoding failed, reload latest config from disk and retry

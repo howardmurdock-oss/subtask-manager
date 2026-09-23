@@ -2145,13 +2145,28 @@ class SyncService extends ChangeNotifier {
     debugSentMessages.add(addressed);
     if (debugSentMessages.length > 50) debugSentMessages.removeAt(0);
 
+    // A payload too large for a data message is stored with the Worker and a
+    // pointer sent in its place. Without this a proof photo could not travel
+    // by push at all - it went to the relay, which a dozing Android device
+    // does not hear, so the photo arrived whenever its recipient next opened
+    // the app. The stored payload is the same ciphertext; the Worker can no
+    // more read it there than it could in a message.
+    var pushPayload = payload;
+    if (utf8.encode(payload).length > PushService.maxDataMessageBytes) {
+      final id = await PushService.uploadBlob(topic: topic, payload: payload);
+      // Failing to store it is not failing to send: the relay still carries
+      // the whole thing, as it did before any of this existed.
+      pushPayload = id == null ? payload : PushService.pointerFor(id);
+    }
+
     // Push first. It reaches a dozing Android device, which the relay cannot,
     // and it keeps directive traffic off a shared public server that has been
     // answering 429. A false here means no Android device holds this topic —
     // a desktop target, or one still on an older build — so fall through to the
     // relay rather than treating it as a delivery failure.
-    if (await PushService.send(topic: topic, payload: payload, kind: addressed.type.name)) {
-      await _recordRelaySendResult('delivered via push');
+    if (await PushService.send(topic: topic, payload: pushPayload, kind: addressed.type.name)) {
+      await _recordRelaySendResult(
+          pushPayload == payload ? 'delivered via push' : 'delivered via push (stored payload)');
       return true;
     }
 
@@ -2328,7 +2343,10 @@ class SyncService extends ChangeNotifier {
     return false;
   }
 
-  Future<void> _processIncomingRaw(String raw) async {
+  Future<void> _processIncomingRaw(String rawOrPointer) async {
+    // A payload too large for a data message arrives as a reference to one
+    // held by the Worker. Everything below this line sees the payload itself.
+    final raw = await PushService.resolvePayload(rawOrPointer);
     SyncMessage? message;
 
     // 1. Try direct plain JSON (e.g. unencrypted pairingRequest, pairingAccept)

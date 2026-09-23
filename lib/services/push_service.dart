@@ -290,6 +290,91 @@ class PushService {
     }
   }
 
+  /// The largest payload a data message can carry, matching the Worker.
+  ///
+  /// Anything over this is stored instead and a pointer sent in its place. A
+  /// proof photo is roughly 120KB once compressed, base64'd and encrypted -
+  /// thirty times over the limit, which is why photos used to travel by relay
+  /// and never woke a sleeping phone.
+  static const int maxDataMessageBytes = 3500;
+
+  /// Marks a payload that is a reference rather than the thing itself.
+  ///
+  /// Ciphertext is base64 and never begins with a brace, and a plain sync
+  /// message has a `type`, so neither can be mistaken for one of these.
+  static const String blobPointerKey = '__blob';
+
+  static String pointerFor(String id) => jsonEncode({blobPointerKey: id});
+
+  static String? pointerIdIn(String raw) {
+    if (!raw.startsWith('{') || !raw.contains(blobPointerKey)) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map && decoded[blobPointerKey] is String) {
+        final id = decoded[blobPointerKey] as String;
+        return id.isEmpty ? null : id;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Stores [payload] with the Worker and returns the id to point at, or null
+  /// if it could not be stored - in which case the caller still has the
+  /// payload and can fall back to the relay.
+  static Future<String?> uploadBlob({
+    required String topic,
+    required String payload,
+  }) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+    try {
+      final request = await client
+          .postUrl(Uri.parse('$workerBaseUrl/blob'))
+          .timeout(const Duration(seconds: 10));
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode({'topic': topic, 'payload': payload}));
+      final response = await request.close().timeout(const Duration(seconds: 30));
+      final body = await response.transform(utf8.decoder).join();
+      if (response.statusCode != 200) {
+        await _recordStatus('blob upload failed: HTTP ${response.statusCode}');
+        return null;
+      }
+      final id = (jsonDecode(body) as Map)['id'];
+      return id is String && id.isNotEmpty ? id : null;
+    } catch (e) {
+      await _recordStatus('blob upload error: $e');
+      return null;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// Collects a stored payload. Null when it has expired or never existed,
+  /// which is a message that cannot be applied rather than one to guess at.
+  static Future<String?> fetchBlob(String id) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+    try {
+      final uri = Uri.parse('$workerBaseUrl/blob').replace(queryParameters: {'id': id});
+      final request = await client.getUrl(uri).timeout(const Duration(seconds: 10));
+      final response = await request.close().timeout(const Duration(seconds: 30));
+      final body = await response.transform(utf8.decoder).join();
+      if (response.statusCode != 200) return null;
+      final payload = (jsonDecode(body) as Map)['payload'];
+      return payload is String && payload.isNotEmpty ? payload : null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// [raw] itself, or what it points at. Everything that receives a payload
+  /// passes it through here before trying to decrypt it.
+  static Future<String> resolvePayload(String raw) async {
+    final id = pointerIdIn(raw);
+    if (id == null) return raw;
+    return await fetchBlob(id) ?? raw;
+  }
+
   static Future<int> _post(String path, Map<String, dynamic> body) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
     try {
@@ -403,13 +488,17 @@ class PushService {
         } catch (_) {}
       }
 
+      // A payload too large for a data message arrives as a reference; the
+      // isolate collects it before it can do anything with it.
+      final payload = await resolvePayload(raw);
+
       SyncMessage? message;
       try {
-        message = SyncMessage.decode(raw);
+        message = SyncMessage.decode(payload);
       } catch (_) {
         for (final secret in secrets) {
           try {
-            message = SyncMessage.decode(EncryptionHelper.decryptString(raw, secret));
+            message = SyncMessage.decode(EncryptionHelper.decryptString(payload, secret));
             break;
           } catch (_) {}
         }
