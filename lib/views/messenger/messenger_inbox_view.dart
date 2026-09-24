@@ -267,7 +267,7 @@ class _MessengerInboxViewState extends State<MessengerInboxView> {
                             Expanded(
                               child: Text(
                                 lastMsg != null
-                                    ? (lastMsg.imageBase64 != null && lastMsg.text.isEmpty ? '📷 [Photo proof attachment]' : lastMsg.text)
+                                    ? (lastMsg.imageBase64 != null && lastMsg.text.isEmpty ? '📷 [Photo attachment]' : lastMsg.text)
                                     : 'Tap to start encrypted conversation',
                                 style: TextStyle(
                                   fontSize: 13,
