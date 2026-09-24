@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:orders_app/core/security/encryption_helper.dart';
@@ -34,7 +36,8 @@ void main() {
     return (sync, engine);
   }
 
-  String encryptedDirective(String activeOrderId, String title) {
+  String encryptedDirective(String activeOrderId, String title,
+      {int version = EncryptionHelper.writeVersion}) {
     final msg = SyncMessage(
       id: 'msg_$activeOrderId',
       type: SyncMessageType.dispatchOrder,
@@ -54,7 +57,8 @@ void main() {
         'assignedByDirector': true,
       },
     );
-    return EncryptionHelper.encryptString(msg.encode(), mySecret);
+    return EncryptionHelper.encryptString(msg.encode(), mySecret,
+        version: version);
   }
 
   group('Pushed directives', () {
@@ -108,6 +112,41 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList('pending_background_push_v1',
           [EncryptionHelper.encryptString(msg.encode(), mySecret)]);
+
+      await sync.processPendingBackgroundMessages();
+
+      expect(engine.activeOrders, isEmpty);
+    });
+
+    test('both envelope versions mount during a mixed-build rollout', () async {
+      final (sync, engine) = await player();
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('pending_background_push_v1', [
+        encryptedDirective('active_v1', 'From an older build', version: 1),
+        encryptedDirective('active_v2', 'From a newer build', version: 2),
+      ]);
+
+      await sync.processPendingBackgroundMessages();
+
+      expect(engine.activeOrders.map((o) => o.id).toSet(),
+          {'active_v1', 'active_v2'});
+    });
+
+    test('a v2 payload altered in transit is dropped, not applied', () async {
+      final (sync, engine) = await player();
+
+      final genuine =
+          encryptedDirective('active_tampered', 'Tampered', version: 2);
+      final env = jsonDecode(utf8.decode(base64Decode(genuine)))
+          as Map<String, dynamic>;
+      final ct = base64Decode(env['ct'] as String);
+      ct[0] ^= 0x01;
+      final tampered = base64Encode(
+          utf8.encode(jsonEncode({...env, 'ct': base64Encode(ct)})));
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('pending_background_push_v1', [tampered]);
 
       await sync.processPendingBackgroundMessages();
 
