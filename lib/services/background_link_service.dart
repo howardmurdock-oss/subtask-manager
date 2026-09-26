@@ -9,6 +9,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/security/encryption_helper.dart';
+import '../core/security/pairing_crypto.dart';
 import '../core/notifications/notification_service.dart';
 import '../models/sync_message.dart';
 import '../models/order_item.dart';
@@ -941,20 +942,25 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           final senderName = msg.payload['senderName'] as String? ?? 'Partner';
           final senderCode = msg.payload['senderCode'] as String? ?? '';
           final senderId = msg.payload['senderId'] as String? ?? msg.senderId;
-          final sharedSecret = msg.payload['sharedSecret'] as String? ?? '';
+          final isPrivate = msg.payload['pairing'] == PairingCrypto.version;
+          final exchangeId = isPrivate
+              ? msg.payload['commitment'] as String? ?? ''
+              : msg.payload['sharedSecret'] as String? ?? '';
 
           final cleanSender = _cleanCode(senderCode);
-          final isHandled = cleanSender.isNotEmpty &&
-              (_handledPairings.contains(cleanSender) ||
-               (sharedSecret.isNotEmpty && _handledPairings.contains('${cleanSender}_$sharedSecret')));
-
-          // Ignore if sender is already an existing partner or self or already handled
-          final isExistingPartner = isHandled ||
-              _partnerCodes.any((c) => _cleanCode(c) == cleanSender) ||
-              (cleanSender.isNotEmpty && cleanSender == _cleanCode(_pairingCode)) ||
+          final isSelf = (cleanSender.isNotEmpty && cleanSender == _cleanCode(_pairingCode)) ||
               (senderId.isNotEmpty && senderId == _deviceId);
+          final isHandled = exchangeId.isNotEmpty &&
+              _handledPairings.contains('${cleanSender}_$exchangeId');
+          // A private request from an existing partner is a re-pair and still
+          // goes to the user. An older build's request from one never does.
+          final isExistingPartner = _partnerCodes.any((c) => _cleanCode(c) == cleanSender);
 
-          if (isExistingPartner) {
+          if (cleanSender.isEmpty ||
+              exchangeId.isEmpty ||
+              isSelf ||
+              isHandled ||
+              (isExistingPartner && !isPrivate)) {
             break;
           }
 
@@ -964,6 +970,13 @@ class DirectiveSyncTaskHandler extends TaskHandler {
             senderName: senderName,
             senderCode: senderCode,
           );
+          break;
+
+        case SyncMessageType.pairingAccept:
+        case SyncMessageType.pairingConfirm:
+          // A private pairing only finishes once these are applied, so they
+          // must survive the app being closed when they arrive.
+          _queuePendingSyncMessage(msg);
           break;
 
         case SyncMessageType.submitProof:

@@ -119,7 +119,7 @@ void main() {
         senderCode: 'REQ888',
         senderName: 'Master Alex',
         senderRole: PartnerRole.dominant,
-        sharedSecret: 'supersecret',
+        exchangeId: 'supersecret',
         timestamp: DateTime.now(),
       );
 

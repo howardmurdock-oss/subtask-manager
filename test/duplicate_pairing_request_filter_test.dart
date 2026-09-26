@@ -57,7 +57,7 @@ void main() {
         senderCode: 'DIR-7788',
         senderName: 'Existing Director',
         senderRole: PartnerRole.dominant,
-        sharedSecret: 'secretABC',
+        exchangeId: 'secretABC',
         timestamp: DateTime.now(),
       ));
 
@@ -81,7 +81,7 @@ void main() {
         senderCode: 'NEW-CODE-2222',
         senderName: 'Existing Player',
         senderRole: PartnerRole.submissive,
-        sharedSecret: 'secretXYZ',
+        exchangeId: 'secretXYZ',
         timestamp: DateTime.now(),
       ));
 
@@ -96,7 +96,7 @@ void main() {
         senderCode: 'ALICE-99',
         senderName: 'Alice',
         senderRole: PartnerRole.dominant,
-        sharedSecret: 'secA',
+        exchangeId: 'secA',
         timestamp: DateTime.now(),
       ));
       expect(partnerService.pendingRequests.length, 1);
@@ -115,7 +115,9 @@ void main() {
       expect(partnerService.pendingRequests.length, 0);
     });
 
-    test('SyncService._handleSyncMessage ignores pairingRequest from existing contact and updates secret if changed', () async {
+    test('An older build\'s pairingRequest cannot replace an existing contact\'s secret', () async {
+      // It crosses the relays in the clear and anyone who knows a code can
+      // send one. Accepting its secret handed the pairing to whoever sent it.
       final friend = PartnerContact(
         id: 'friend_dev_1',
         displayName: 'Best Director',
@@ -140,13 +142,10 @@ void main() {
 
       await syncService.handleIncomingSyncMessage(msg);
 
-      // No pending request created
       expect(partnerService.pendingRequests.length, 0);
-
-      // Contact was seamlessly updated with new secret
-      final updated = partnerService.findContactById('friend_dev_1');
-      expect(updated, isNotNull);
-      expect(updated!.pairingSecret, 'newSecretUpdated');
+      expect(partnerService.findContactById('friend_dev_1')!.pairingSecret, 'oldSecret');
+      expect(syncService.debugSentMessages, isEmpty,
+          reason: 'no reply, least of all one carrying the secret in the clear');
     });
 
     test('SyncService.processPendingBackgroundMessages filters out existing contacts from pending_background_pairings_v1', () async {
@@ -192,7 +191,7 @@ void main() {
         senderCode: 'GMJ7-UCVY', // Received with dash
         senderName: 'Submissive',
         senderRole: PartnerRole.submissive,
-        sharedSecret: 'sec123',
+        exchangeId: 'sec123',
         timestamp: DateTime.now(),
       ));
 
@@ -206,7 +205,7 @@ void main() {
         senderCode: 'GMJ7-UCVY',
         senderName: 'Submissive',
         senderRole: PartnerRole.submissive,
-        sharedSecret: 'randomSecretXYZ',
+        exchangeId: 'randomSecretXYZ',
         timestamp: DateTime.now(),
       );
 

@@ -132,8 +132,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (partnerSvc.pendingRequests.isEmpty) return;
 
       final req = partnerSvc.pendingRequests.first;
-      if (partnerSvc.isRequestHandled(req.senderCode, req.sharedSecret) ||
-          partnerSvc.isExistingContactOrSelf(req.senderId, req.senderCode, ownCode: sync.pairingCode, ownDeviceId: sync.deviceId)) {
+      if (!partnerSvc.isRequestStillRelevant(req, ownCode: sync.pairingCode, ownDeviceId: sync.deviceId)) {
         partnerSvc.removeIncomingRequest(req.senderId);
         partnerSvc.removeIncomingRequest(req.senderCode);
         return;
@@ -161,7 +160,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${req.senderName.isNotEmpty ? req.senderName : "A partner"} wants to connect and sync with you.',
+                    req.isLegacy
+                        ? '${req.senderName.isNotEmpty ? req.senderName : "A partner"} wants to connect, but their app is too old to pair privately. Ask them to update, then send the request again.'
+                        : req.isRepair
+                            ? '${req.senderName.isNotEmpty ? req.senderName : "A partner"} wants to re-pair. This replaces the key you share with a new private one.'
+                            : '${req.senderName.isNotEmpty ? req.senderName : "A partner"} wants to connect and sync with you.',
                     style: const TextStyle(fontSize: 14),
                   ),
                   const SizedBox(height: 12),
@@ -197,52 +200,65 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: nameCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Partner Nickname / Alias',
-                      hintText: 'e.g. Master Jack / Dan',
-                      prefixIcon: Icon(Icons.badge_rounded, size: 20),
+                  if (!req.isLegacy) ...[
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Partner Nickname / Alias',
+                        hintText: 'e.g. Master Jack / Dan',
+                        prefixIcon: Icon(Icons.badge_rounded, size: 20),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
             actions: [
-              TextButton(
-                style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-                onPressed: () async {
-                  await partnerSvc.markRequestHandled(req.senderCode, req.sharedSecret);
-                  await sync.declinePairingRequest(req);
-                  if (context.mounted) Navigator.pop(ctx);
-                  _isRequestDialogShowing = false;
-                },
-                child: const Text('Decline'),
-              ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.check_rounded, size: 18),
-                label: const Text('Accept & Pair'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: theme.colorScheme.primary,
-                  foregroundColor: theme.colorScheme.brightness == Brightness.dark ? Colors.black : Colors.white,
+              if (req.isLegacy)
+                TextButton(
+                  onPressed: () async {
+                    await partnerSvc.markRequestHandled(req.senderCode, req.exchangeId);
+                    partnerSvc.removeIncomingRequest(req.senderCode);
+                    if (context.mounted) Navigator.pop(ctx);
+                    _isRequestDialogShowing = false;
+                  },
+                  child: const Text('OK'),
+                )
+              else ...[
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+                  onPressed: () async {
+                    await partnerSvc.markRequestHandled(req.senderCode, req.exchangeId);
+                    await sync.declinePairingRequest(req);
+                    if (context.mounted) Navigator.pop(ctx);
+                    _isRequestDialogShowing = false;
+                  },
+                  child: const Text('Decline'),
                 ),
-                onPressed: () async {
-                  await partnerSvc.markRequestHandled(req.senderCode, req.sharedSecret);
-                  final customName = nameCtrl.text.trim();
-                  await sync.acceptPairingRequest(req, customName: customName.isNotEmpty ? customName : null);
-                  if (context.mounted) Navigator.pop(ctx);
-                  _isRequestDialogShowing = false;
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Connected with ${customName.isNotEmpty ? customName : req.senderName}!'),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  }
-                },
-              ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.check_rounded, size: 18),
+                  label: Text(req.isRepair ? 'Accept & Re-pair' : 'Accept & Pair'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: theme.colorScheme.primary,
+                    foregroundColor: theme.colorScheme.brightness == Brightness.dark ? Colors.black : Colors.white,
+                  ),
+                  onPressed: () async {
+                    final customName = nameCtrl.text.trim();
+                    await sync.acceptPairingRequest(req, customName: customName.isNotEmpty ? customName : null);
+                    if (context.mounted) Navigator.pop(ctx);
+                    _isRequestDialogShowing = false;
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Accepted. Finishing pairing with ${customName.isNotEmpty ? customName : req.senderName}...'),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                  },
+                ),
+              ],
             ],
           );
         },

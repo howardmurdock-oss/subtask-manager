@@ -204,6 +204,42 @@ class PartnerDirectoryView extends StatelessWidget {
     );
   }
 
+  void _confirmRepair(BuildContext context, SyncService sync, PartnerContact partner) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Re-pair with a new private key?'),
+        content: Text(
+          '${partner.displayName} will be asked to accept. Once they do, you both switch to a new key '
+          'that never leaves your two phones, and each phone shows a verification code to compare. '
+          'Your current key keeps working until then.\n\n'
+          'Both of you need the latest version of the app.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await sync.repairPartner(partner);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Asked ${partner.displayName} to re-pair. Waiting for them to accept...'),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            child: const Text('Send Request'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final partnerSvc = Provider.of<PartnerService>(context);
@@ -269,29 +305,46 @@ class PartnerDirectoryView extends StatelessWidget {
                                   '${req.senderRole.name.toUpperCase()} • Code: ${req.senderCode}',
                                   style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withOpacity(0.6)),
                                 ),
+                                if (req.isLegacy || req.isRepair)
+                                  Text(
+                                    req.isLegacy
+                                        ? 'Their app is too old to pair privately. Ask them to update.'
+                                        : 'Wants to re-pair with a new private key.',
+                                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+                                  ),
                               ],
                             ),
                           ),
-                          TextButton(
-                            onPressed: () => sync.declinePairingRequest(req),
-                            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-                            child: const Text('Decline'),
-                          ),
-                          const SizedBox(width: 6),
-                          ElevatedButton.icon(
-                            icon: const Icon(Icons.check_rounded, size: 16),
-                            label: const Text('Accept & Pair'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: theme.colorScheme.primary,
-                              foregroundColor: theme.colorScheme.brightness == Brightness.dark ? Colors.black : Colors.white,
+                          if (req.isLegacy)
+                            TextButton(
+                              onPressed: () async {
+                                await partnerSvc.markRequestHandled(req.senderCode, req.exchangeId);
+                                partnerSvc.removeIncomingRequest(req.senderCode);
+                              },
+                              child: const Text('Dismiss'),
+                            )
+                          else ...[
+                            TextButton(
+                              onPressed: () => sync.declinePairingRequest(req),
+                              style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+                              child: const Text('Decline'),
                             ),
-                            onPressed: () async {
-                              await sync.acceptPairingRequest(req);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Accepted pairing from ${req.senderName}! You are now connected.')),
-                              );
-                            },
-                          ),
+                            const SizedBox(width: 6),
+                            ElevatedButton.icon(
+                              icon: const Icon(Icons.check_rounded, size: 16),
+                              label: Text(req.isRepair ? 'Accept & Re-pair' : 'Accept & Pair'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: theme.colorScheme.primary,
+                                foregroundColor: theme.colorScheme.brightness == Brightness.dark ? Colors.black : Colors.white,
+                              ),
+                              onPressed: () async {
+                                await sync.acceptPairingRequest(req);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Accepted. Finishing pairing with ${req.senderName}...')),
+                                );
+                              },
+                            ),
+                          ],
                         ],
                       ),
                     )),
@@ -420,6 +473,8 @@ class PartnerDirectoryView extends StatelessWidget {
                                     color: theme.colorScheme.onSurface.withOpacity(0.6),
                                   ),
                                 ),
+                                const SizedBox(height: 2),
+                                _PairingStatus(partner: partner, inProgress: partnerSvc.isPairingInProgress(partner.pairingCode)),
                               ],
                             ),
                           ),
@@ -427,6 +482,8 @@ class PartnerDirectoryView extends StatelessWidget {
                             onSelected: (val) {
                               if (val == 'edit') {
                                 _showAddEditPartnerDialog(context, existing: partner);
+                              } else if (val == 'repair') {
+                                _confirmRepair(context, sync, partner);
                               } else if (val == 'block') {
                                 partnerSvc.toggleBlock(partner.id);
                               } else if (val == 'delete') {
@@ -435,6 +492,8 @@ class PartnerDirectoryView extends StatelessWidget {
                             },
                             itemBuilder: (ctx) => [
                               const PopupMenuItem(value: 'edit', child: Text('Edit Partner Details')),
+                              if (!partner.isBlocked)
+                                const PopupMenuItem(value: 'repair', child: Text('Re-pair (New Private Key)')),
                               PopupMenuItem(
                                 value: 'block',
                                 child: Text(partner.isBlocked ? 'Unblock Contact' : 'Block Contact'),
@@ -510,6 +569,46 @@ class PartnerDirectoryView extends StatelessWidget {
         ],
       ),
       body: body,
+    );
+  }
+}
+
+/// Whether the key shared with a partner is private, and if so the code to
+/// compare with the one on their phone.
+class _PairingStatus extends StatelessWidget {
+  final PartnerContact partner;
+  final bool inProgress;
+
+  const _PairingStatus({required this.partner, required this.inProgress});
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6);
+    final code = partner.verificationCode;
+
+    final IconData icon;
+    final String text;
+    final Color color;
+    if (inProgress) {
+      icon = Icons.hourglass_top_rounded;
+      text = code == null ? 'Waiting for them to finish pairing' : 'Re-pairing... (current code $code)';
+      color = muted;
+    } else if (code != null) {
+      icon = Icons.verified_user_rounded;
+      text = 'Verification code $code - should match their phone';
+      color = Colors.greenAccent[400]!;
+    } else {
+      icon = Icons.gpp_maybe_rounded;
+      text = 'Key not private - use Re-pair';
+      color = Colors.orangeAccent;
+    }
+
+    return Row(
+      children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 4),
+        Flexible(child: Text(text, style: TextStyle(fontSize: 11, color: color))),
+      ],
     );
   }
 }

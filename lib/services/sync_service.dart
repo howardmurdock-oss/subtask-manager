@@ -15,6 +15,7 @@ import '../models/partner_contact.dart';
 import '../models/chat_message.dart';
 import '../models/quest_item.dart';
 import '../core/security/encryption_helper.dart';
+import '../core/security/pairing_crypto.dart';
 import '../core/notifications/notification_service.dart';
 import '../core/sound/sound_service.dart';
 import 'order_engine.dart';
@@ -578,42 +579,13 @@ class SyncService extends ChangeNotifier {
       if (rawPairings != null && rawPairings.isNotEmpty) {
         for (final raw in rawPairings) {
           try {
-            final data = jsonDecode(raw) as Map<String, dynamic>;
-            final senderId = data['senderId'] as String? ?? '';
-            final senderCode = data['senderCode'] as String? ?? '';
-            final senderName = data['senderName'] as String? ?? 'Partner';
-            final sharedSecret = data['sharedSecret'] as String? ?? '';
-            final cleanSender = PartnerService.normalizeCode(senderCode);
-            final isSelf = cleanSender.isNotEmpty &&
-                (_pastPairingCodes.contains(cleanSender) ||
-                 cleanSender == PartnerService.normalizeCode(_pairingCode) ||
-                 (senderId.isNotEmpty && senderId == _deviceId));
-
-            final isHandled = _partnerService?.isRequestHandled(cleanSender, sharedSecret) ?? false;
-            final isAlreadyPartner = isSelf ||
-                isHandled ||
-                (_partnerService?.isExistingContactOrSelf(
-                      senderId,
-                      senderCode,
-                      ownCode: _pairingCode,
-                      ownDeviceId: _deviceId,
-                    ) ??
-                    false);
-
-            if (cleanSender.isNotEmpty && !isAlreadyPartner) {
-              _partnerService?.addIncomingRequest(
-                IncomingPairingRequest(
-                  senderId: senderId,
-                  senderCode: senderCode,
-                  senderName: senderName,
-                  senderRole: PartnerRole.dominant,
-                  sharedSecret: sharedSecret,
-                  timestamp: DateTime.now(),
-                ),
-                ownCode: _pairingCode,
-                ownDeviceId: _deviceId,
-              );
-            }
+            // The background isolate already raised the notification.
+            _receivePairingRequest(
+              jsonDecode(raw) as Map<String, dynamic>,
+              fallbackSenderId: '',
+              timestamp: DateTime.now(),
+              announce: false,
+            );
           } catch (_) {}
         }
         await prefs.remove('pending_background_pairings_v1');
@@ -1842,28 +1814,61 @@ class SyncService extends ChangeNotifier {
     return true;
   }
 
+  /// Asks the owner of [targetCode] to pair.
+  ///
+  /// No secret goes with the request, or with anything else in the exchange:
+  /// each side sends a public key and works the secret out for itself (see
+  /// [PairingCrypto]). A build that predates this cannot take part, and
+  /// ignores the request.
   Future<bool> sendPairingRequest({
     required String targetCode,
     String? targetName,
     required PartnerRole targetRole,
   }) async {
     final cleanCode = targetCode.trim().toUpperCase();
-    final sharedSecret = generateRandomSecret(12);
+
+    if (_partnerService?.findContactByCode(cleanCode) == null) {
+      final contactName = targetName != null && targetName.trim().isNotEmpty
+          ? targetName.trim()
+          : 'Partner ($cleanCode)';
+      // Listed straight away so the user can see who they asked. Until the
+      // exchange finishes the secret is a stand-in no one else holds, so
+      // anything sent to them before then is unreadable to everyone, them
+      // included, rather than readable by the relay.
+      await _partnerService?.addContact(PartnerContact(
+        displayName: contactName,
+        pairingCode: cleanCode,
+        pairingSecret: generateRandomSecret(24),
+        role: targetRole,
+      ));
+    }
+
+    return _startPairingExchange(cleanCode, targetRole);
+  }
+
+  /// Replaces the secret shared with [partner] by running a fresh private
+  /// exchange. The current secret stays in use until the partner accepts.
+  ///
+  /// This is how a pair made by an older build - whose secret crossed the
+  /// relay in the clear - becomes private.
+  Future<bool> repairPartner(PartnerContact partner) =>
+      _startPairingExchange(partner.pairingCode, partner.role);
+
+  Future<bool> _startPairingExchange(String code, PartnerRole targetRole) async {
+    final partners = _partnerService;
+    if (partners == null) return false;
+
+    final keys = PairingCrypto.generateKeyPair();
+    final commitment = PairingCrypto.commitmentFor(keys.publicKey);
+    await partners.addPendingExchange(PendingPairingExchange(
+      commitment: commitment,
+      isRequester: true,
+      peerCode: code,
+      privateKey: keys.privateKey,
+      publicKey: keys.publicKey,
+    ));
 
     final myRole = _role == ConnectionRole.director ? PartnerRole.dominant : PartnerRole.submissive;
-    final contactName = targetName != null && targetName.trim().isNotEmpty
-        ? targetName.trim()
-        : 'Partner ($cleanCode)';
-
-    // Save as pending contact locally
-    final newContact = PartnerContact(
-      displayName: contactName,
-      pairingCode: cleanCode,
-      pairingSecret: sharedSecret,
-      role: targetRole,
-    );
-    await _partnerService?.addContact(newContact);
-
     final myDisplayName = _nickname.isNotEmpty
         ? _nickname
         : (_role == ConnectionRole.director ? 'Director' : 'Submissive');
@@ -1877,28 +1882,53 @@ class SyncService extends ChangeNotifier {
         'senderName': myDisplayName,
         'senderRole': myRole.name,
         'targetRole': targetRole.name,
-        'sharedSecret': sharedSecret,
+        'pairing': PairingCrypto.version,
+        'commitment': commitment,
       },
     );
 
-    return await sendDirectToTopic(cleanCode, '', msg);
+    return await sendDirectToTopic(code, '', msg);
   }
 
+  /// Accepts [req] by sending this side's public key. The secret is settled
+  /// when the requester's key arrives in the pairingConfirm that follows.
+  ///
+  /// A request from an older build carries its secret in the clear and cannot
+  /// be accepted; the answer is always false.
   Future<bool> acceptPairingRequest(IncomingPairingRequest req, {String? customName}) async {
-    await _partnerService?.markRequestHandled(req.senderCode, req.sharedSecret);
-    final contact = PartnerContact(
-      id: req.senderId,
-      displayName: customName != null && customName.trim().isNotEmpty
-          ? customName.trim()
-          : (req.senderName.isNotEmpty ? req.senderName : 'Partner (${req.senderCode})'),
-      pairingCode: req.senderCode,
-      pairingSecret: req.sharedSecret,
-      role: req.senderRole,
-    );
+    final partners = _partnerService;
+    if (req.isLegacy || partners == null) return false;
 
-    await _partnerService?.addContact(contact);
-    _partnerService?.removeIncomingRequest(req.senderId);
-    _partnerService?.removeIncomingRequest(req.senderCode);
+    await partners.markRequestHandled(req.senderCode, req.exchangeId);
+    partners.removeIncomingRequest(req.senderId);
+    partners.removeIncomingRequest(req.senderCode);
+
+    final keys = PairingCrypto.generateKeyPair();
+    await partners.addPendingExchange(PendingPairingExchange(
+      commitment: req.exchangeId,
+      isRequester: false,
+      peerCode: req.senderCode,
+      privateKey: keys.privateKey,
+      publicKey: keys.publicKey,
+    ));
+
+    final name = customName != null && customName.trim().isNotEmpty ? customName.trim() : null;
+    final existing = partners.findContactByCode(req.senderCode);
+    if (existing == null) {
+      // As when requesting: listed now, with a stand-in secret until the
+      // exchange finishes.
+      await partners.addContact(PartnerContact(
+        id: req.senderId,
+        displayName: name ?? (req.senderName.isNotEmpty ? req.senderName : 'Partner (${req.senderCode})'),
+        pairingCode: req.senderCode,
+        pairingSecret: generateRandomSecret(24),
+        role: req.senderRole,
+      ));
+    } else if (name != null) {
+      // Re-pairing: the current secret keeps working until the new one is
+      // agreed.
+      await partners.updateContact(existing.copyWith(displayName: name));
+    }
 
     final myDisplayName = _nickname.isNotEmpty
         ? _nickname
@@ -1911,7 +1941,9 @@ class SyncService extends ChangeNotifier {
         'senderId': _deviceId,
         'senderCode': _pairingCode,
         'senderName': myDisplayName,
-        'sharedSecret': req.sharedSecret,
+        'pairing': PairingCrypto.version,
+        'commitment': req.exchangeId,
+        'publicKey': keys.publicKey,
       },
     );
 
@@ -1919,7 +1951,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<bool> declinePairingRequest(IncomingPairingRequest req) async {
-    await _partnerService?.markRequestHandled(req.senderCode, req.sharedSecret);
+    await _partnerService?.markRequestHandled(req.senderCode, req.exchangeId);
     _partnerService?.removeIncomingRequest(req.senderId);
     _partnerService?.removeIncomingRequest(req.senderCode);
     final msg = SyncMessage(
@@ -2393,6 +2425,213 @@ class SyncService extends ChangeNotifier {
     }
   }
 
+  /// Offers a pairing request to the user, whether it came from the relay
+  /// or from the queue the background isolate filled.
+  ///
+  /// Never changes a secret by itself. Requests cross the relays in the clear
+  /// and anyone who knows a code can send one, so the most a request can do
+  /// is ask.
+  void _receivePairingRequest(
+    Map<String, dynamic> payload, {
+    required String fallbackSenderId,
+    required DateTime timestamp,
+    required bool announce,
+  }) {
+    final partners = _partnerService;
+    if (partners == null) return;
+
+    final senderId = payload['senderId'] as String? ?? fallbackSenderId;
+    final senderCode = payload['senderCode'] as String? ?? '';
+    final senderName = payload['senderName'] as String? ?? 'Partner';
+    final senderRole = PartnerRole.values.firstWhere(
+      (e) => e.name == payload['senderRole'],
+      orElse: () => PartnerRole.submissive,
+    );
+    final commitment = payload['pairing'] == PairingCrypto.version
+        ? payload['commitment'] as String? ?? ''
+        : '';
+    final legacySecret = payload['sharedSecret'] as String? ?? '';
+
+    final cleanSender = PartnerService.normalizeCode(senderCode);
+    if (cleanSender.isEmpty) return;
+
+    // This device, under its current identity, a past one, or its device id.
+    if (_pastPairingCodes.contains(cleanSender) ||
+        cleanSender == PartnerService.normalizeCode(_pairingCode) ||
+        (senderId.isNotEmpty && senderId == _deviceId)) {
+      return;
+    }
+
+    final existing = partners.findContactByCode(cleanSender) ??
+        partners.findContactById(senderId);
+
+    final IncomingPairingRequest req;
+    if (commitment.isNotEmpty) {
+      req = IncomingPairingRequest(
+        senderId: senderId,
+        senderCode: senderCode,
+        senderName: senderName,
+        senderRole: senderRole,
+        exchangeId: commitment,
+        timestamp: timestamp,
+        isRepair: existing != null,
+      );
+    } else if (legacySecret.isNotEmpty && existing == null) {
+      // Shown, so the user knows to ask them to update, but not acceptable:
+      // its secret has already been read by every relay it crossed.
+      req = IncomingPairingRequest(
+        senderId: senderId,
+        senderCode: senderCode,
+        senderName: senderName,
+        senderRole: senderRole,
+        exchangeId: legacySecret,
+        timestamp: timestamp,
+        isLegacy: true,
+      );
+    } else {
+      // An older build asking again about someone already paired. This used
+      // to replace the shared secret with whatever the request carried and
+      // reply with it in the clear, so anyone who knew a code could take
+      // over a pairing. The existing pairing stands.
+      return;
+    }
+
+    if (partners.isRequestHandled(cleanSender, req.exchangeId)) return;
+    partners.addIncomingRequest(req, ownCode: _pairingCode, ownDeviceId: _deviceId);
+
+    if (announce && partners.pendingRequests.contains(req)) {
+      NotificationService.showPairingRequestNotification(
+        senderName: senderName,
+        senderCode: senderCode,
+      );
+      SoundService.playAlarm();
+    }
+  }
+
+  /// The partner accepted a request sent from here: work out the secret,
+  /// then reveal this side's key so they can do the same.
+  Future<void> _onPairingAccepted(Map<String, dynamic> payload) async {
+    final partners = _partnerService;
+    if (partners == null) return;
+
+    // An accept with no key is an older build answering in the clear. It used
+    // to overwrite the stored secret with whatever it carried, which let
+    // anyone who knew a code redirect a pairing. Only an answer to an
+    // exchange started here can change anything.
+    if (payload['pairing'] != PairingCrypto.version) return;
+    final commitment = payload['commitment'] as String? ?? '';
+    final accepterKey = payload['publicKey'] as String? ?? '';
+    final exchange = partners.findPendingExchange(commitment, asRequester: true);
+    if (exchange == null || accepterKey.isEmpty) return;
+
+    final senderCode = payload['senderCode'] as String? ?? '';
+    if (PartnerService.normalizeCode(senderCode) !=
+        PartnerService.normalizeCode(exchange.peerCode)) {
+      return;
+    }
+
+    final PairingResult result;
+    try {
+      result = PairingCrypto.derive(
+        privateKey: exchange.privateKey,
+        requesterKey: exchange.publicKey,
+        accepterKey: accepterKey,
+        isRequester: true,
+      );
+    } on FormatException {
+      return;
+    }
+
+    final contact = partners.findContactByCode(exchange.peerCode);
+    await partners.clearPendingExchanges(exchange.peerCode);
+    if (contact == null) return; // Deleted while waiting.
+
+    final senderName = payload['senderName'] as String? ?? '';
+    await partners.updateContact(contact.copyWith(
+      displayName: senderName.isNotEmpty ? senderName : contact.displayName,
+      pairingSecret: result.secret,
+      verificationCode: result.verificationCode,
+      lastSeen: DateTime.now(),
+    ));
+
+    await sendDirectToTopic(
+      exchange.peerCode,
+      '',
+      SyncMessage(
+        type: SyncMessageType.pairingConfirm,
+        senderId: _deviceId,
+        payload: {
+          'senderId': _deviceId,
+          'senderCode': _pairingCode,
+          'pairing': PairingCrypto.version,
+          'commitment': commitment,
+          'publicKey': exchange.publicKey,
+          'acceptKey': accepterKey,
+          'proof': result.proof,
+        },
+      ),
+    );
+
+    NotificationService.showGenericNotification(
+      title: 'Paired with ${senderName.isNotEmpty ? senderName : contact.displayName}',
+      body: 'Verification code ${result.verificationCode}. Check it matches on their phone.',
+    );
+    notifyListeners();
+  }
+
+  /// The requester revealed its key after this side accepted: check it
+  /// against the commitment it made at the start, then settle the secret.
+  Future<void> _onPairingConfirmed(Map<String, dynamic> payload) async {
+    final partners = _partnerService;
+    if (partners == null) return;
+    if (payload['pairing'] != PairingCrypto.version) return;
+
+    final commitment = payload['commitment'] as String? ?? '';
+    final requesterKey = payload['publicKey'] as String? ?? '';
+    final exchange = partners.findPendingExchange(commitment, asRequester: false);
+    if (exchange == null || requesterKey.isEmpty) return;
+
+    final senderCode = payload['senderCode'] as String? ?? '';
+    if (PartnerService.normalizeCode(senderCode) !=
+        PartnerService.normalizeCode(exchange.peerCode)) {
+      return;
+    }
+
+    // Another device sharing this pairing code accepted first and its key
+    // was the one used. Nothing this device holds can complete the exchange.
+    if (payload['acceptKey'] != exchange.publicKey) {
+      await partners.clearPendingExchanges(exchange.peerCode);
+      return;
+    }
+
+    final PairingResult result;
+    try {
+      if (PairingCrypto.commitmentFor(requesterKey) != commitment) return;
+      result = PairingCrypto.derive(
+        privateKey: exchange.privateKey,
+        requesterKey: requesterKey,
+        accepterKey: exchange.publicKey,
+        isRequester: false,
+      );
+    } on FormatException {
+      return;
+    }
+    if (!PairingCrypto.proofsMatch(result.proof, payload['proof'] as String? ?? '')) {
+      return;
+    }
+
+    final contact = partners.findContactByCode(exchange.peerCode);
+    await partners.clearPendingExchanges(exchange.peerCode);
+    if (contact == null) return;
+
+    await partners.updateContact(contact.copyWith(
+      pairingSecret: result.secret,
+      verificationCode: result.verificationCode,
+      lastSeen: DateTime.now(),
+    ));
+    notifyListeners();
+  }
+
   @visibleForTesting
   Future<void> handleIncomingSyncMessage(SyncMessage msg) async {
     await _handleSyncMessage(msg);
@@ -2420,111 +2659,20 @@ class SyncService extends ChangeNotifier {
 
     switch (msg.type) {
       case SyncMessageType.pairingRequest:
-        final senderId = msg.payload['senderId'] as String? ?? msg.senderId;
-        final senderCode = msg.payload['senderCode'] as String? ?? '';
-        final senderName = msg.payload['senderName'] as String? ?? 'Partner';
-        final senderRoleStr = msg.payload['senderRole'] as String? ?? 'submissive';
-        final sharedSecret = msg.payload['sharedSecret'] as String? ?? '';
-
-        final senderRole = PartnerRole.values.firstWhere(
-          (e) => e.name == senderRoleStr,
-          orElse: () => PartnerRole.submissive,
+        _receivePairingRequest(
+          msg.payload,
+          fallbackSenderId: msg.senderId,
+          timestamp: msg.timestamp,
+          announce: true,
         );
-
-        final cleanSender = PartnerService.normalizeCode(senderCode);
-
-        // 1. Ignore if sender is self (current identity, past identity, or device ID)
-        if (cleanSender.isNotEmpty &&
-            (_pastPairingCodes.contains(cleanSender) ||
-             cleanSender == PartnerService.normalizeCode(_pairingCode) ||
-             (senderId.isNotEmpty && senderId == _deviceId))) {
-          return;
-        }
-
-        // 2. Check if sender is ALREADY in contacts / friend list
-        final existingContact = _partnerService?.findContactByCode(cleanSender) ??
-            _partnerService?.findContactById(senderId);
-
-        if (existingContact != null) {
-          // Already a contact, so no prompt is needed - but an answer is. The
-          // sender is sitting on a pending request and has no idea it was
-          // absorbed here; without a reply it waits forever, which looks
-          // exactly like the request never arriving. This is the state a
-          // half-finished earlier attempt leaves behind.
-          _partnerService?.markRequestHandled(cleanSender, sharedSecret);
-          if (sharedSecret.isNotEmpty && existingContact.pairingSecret != sharedSecret) {
-            _partnerService?.updateContact(existingContact.copyWith(
-              pairingSecret: sharedSecret,
-              lastSeen: DateTime.now(),
-            ));
-          } else {
-            _partnerService?.updateLastSeen(existingContact.id);
-          }
-
-          if (senderCode.isNotEmpty) {
-            final myDisplayName = _nickname.isNotEmpty
-                ? _nickname
-                : (_role == ConnectionRole.director ? 'Director' : 'Submissive');
-            sendDirectToTopic(
-              senderCode,
-              '',
-              SyncMessage(
-                type: SyncMessageType.pairingAccept,
-                senderId: _deviceId,
-                payload: {
-                  'senderId': _deviceId,
-                  'senderCode': _pairingCode,
-                  'senderName': myDisplayName,
-                  'sharedSecret': sharedSecret.isNotEmpty
-                      ? sharedSecret
-                      : existingContact.pairingSecret,
-                },
-              ),
-            );
-          }
-          return;
-        }
-
-        // 3. Ignore if already handled / accepted / declined
-        if (_partnerService?.isRequestHandled(cleanSender, sharedSecret) == true) {
-          return;
-        }
-
-        if (senderCode.isNotEmpty && sharedSecret.isNotEmpty) {
-          _partnerService?.addIncomingRequest(
-            IncomingPairingRequest(
-              senderId: senderId,
-              senderCode: senderCode,
-              senderName: senderName,
-              senderRole: senderRole,
-              sharedSecret: sharedSecret,
-              timestamp: msg.timestamp,
-            ),
-            ownCode: _pairingCode,
-            ownDeviceId: _deviceId,
-          );
-          NotificationService.showPairingRequestNotification(
-            senderName: senderName,
-            senderCode: senderCode,
-          );
-          SoundService.playAlarm();
-        }
         break;
 
       case SyncMessageType.pairingAccept:
-        final senderId = msg.payload['senderId'] as String? ?? msg.senderId;
-        final senderCode = msg.payload['senderCode'] as String? ?? '';
-        final senderName = msg.payload['senderName'] as String? ?? 'Partner';
-        final sharedSecret = msg.payload['sharedSecret'] as String? ?? '';
+        await _onPairingAccepted(msg.payload);
+        break;
 
-        final existing = _partnerService?.findContactByCode(senderCode) ??
-            _partnerService?.findContactById(senderId);
-        if (existing != null) {
-          _partnerService?.updateContact(existing.copyWith(
-            displayName: senderName.isNotEmpty ? senderName : existing.displayName,
-            pairingSecret: sharedSecret.isNotEmpty ? sharedSecret : existing.pairingSecret,
-          ));
-        }
+      case SyncMessageType.pairingConfirm:
+        await _onPairingConfirmed(msg.payload);
         break;
 
       case SyncMessageType.pairingDecline:

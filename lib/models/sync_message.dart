@@ -28,6 +28,7 @@ enum SyncMessageType {
   questCompleted,
   identityMigrated,
   identityMigratedAck,
+  pairingConfirm,
 }
 
 class SyncMessage {

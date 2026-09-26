@@ -16,6 +16,11 @@ class PartnerContact {
   final String? notes;
   final DateTime createdAt;
 
+  /// Six digits both phones show after a private pairing, for the two people
+  /// to compare. Null when the secret did not come from one: paired by a build
+  /// that sent it in the clear, typed in by hand, or still being exchanged.
+  final String? verificationCode;
+
   PartnerContact({
     String? id,
     required this.displayName,
@@ -29,6 +34,7 @@ class PartnerContact {
     this.avatarColorIndex = 0,
     this.notes,
     DateTime? createdAt,
+    this.verificationCode,
   })  : id = id ?? const Uuid().v4(),
         createdAt = createdAt ?? DateTime.now();
 
@@ -60,6 +66,7 @@ class PartnerContact {
       'avatarColorIndex': avatarColorIndex,
       'notes': notes,
       'createdAt': createdAt.toIso8601String(),
+      'verificationCode': verificationCode,
     };
   }
 
@@ -82,6 +89,7 @@ class PartnerContact {
       createdAt: json['createdAt'] != null
           ? DateTime.tryParse(json['createdAt'] as String)
           : null,
+      verificationCode: json['verificationCode'] as String?,
     );
   }
 
@@ -98,6 +106,7 @@ class PartnerContact {
     int? avatarColorIndex,
     String? notes,
     DateTime? createdAt,
+    String? verificationCode,
   }) {
     return PartnerContact(
       id: id ?? this.id,
@@ -112,6 +121,12 @@ class PartnerContact {
       avatarColorIndex: avatarColorIndex ?? this.avatarColorIndex,
       notes: notes ?? this.notes,
       createdAt: createdAt ?? this.createdAt,
+      // A code describes one secret. Changing the secret without supplying a
+      // new code must not leave the old one vouching for it.
+      verificationCode: verificationCode ??
+          (pairingSecret != null && pairingSecret != this.pairingSecret
+              ? null
+              : this.verificationCode),
     );
   }
 
