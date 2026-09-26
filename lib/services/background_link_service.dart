@@ -75,10 +75,6 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   String _lastError = 'None';
   String _lastMsgTime = 'None';
 
-  DirectiveSyncTaskHandler() {
-    _httpClient.badCertificateCallback = (cert, host, port) => true;
-  }
-
   static String _cleanCode(String code) =>
       code.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
 
@@ -108,7 +104,6 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     WidgetsFlutterBinding.ensureInitialized();
-    _httpClient.badCertificateCallback = (cert, host, port) => true;
     
     try {
       await NotificationService.init();

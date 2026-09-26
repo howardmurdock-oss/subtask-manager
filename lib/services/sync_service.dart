@@ -142,7 +142,6 @@ class SyncService extends ChangeNotifier {
     _httpClient.connectionTimeout = const Duration(seconds: 8);
     _httpClient.idleTimeout = const Duration(seconds: 15);
     _httpClient.maxConnectionsPerHost = 20;
-    _httpClient.badCertificateCallback = (X509Certificate cert, String host, int port) => true;
 
     // Auto-broadcast when local player engine state changes (debounced)
     _engine.addListener(_onEngineChanged);
