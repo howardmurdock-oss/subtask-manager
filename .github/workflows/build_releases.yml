@@ -34,6 +34,10 @@ jobs:
 
       - name: Install Linux Build Toolchain
         run: |
+          # The 22.04 runner image ships libunwind-14-dev with its LLVM, which
+          # conflicts with the libunwind-dev that libgstreamer1.0-dev needs,
+          # and apt refuses the whole install.
+          sudo apt-get remove -y libunwind-14-dev || true
           sudo apt-get update -y
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libsecret-1-dev libasound2-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
