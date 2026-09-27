@@ -317,7 +317,10 @@ class _SettingsViewState extends State<SettingsView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Customize your personal nickname and E2EE encryption password.',
+              'Customize your personal nickname and E2EE encryption password.\n\n'
+              'The password is only used by devices you linked by typing in your code and password; '
+              'enter the new one on each of them. Partners you paired with have their own keys '
+              'and are not affected. The password is never sent to anyone.',
               style: TextStyle(fontSize: 13),
             ),
             const SizedBox(height: 12),
@@ -357,7 +360,7 @@ class _SettingsViewState extends State<SettingsView> {
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Updated password & synced with contacts!'),
+                    content: Text('Updated password & nickname'),
                     behavior: SnackBarBehavior.floating,
                   ),
                 );
@@ -584,7 +587,9 @@ class _SettingsViewState extends State<SettingsView> {
                           builder: (ctx) => AlertDialog(
                             title: const Text('Generate New Unique Identity?'),
                             content: const Text(
-                              'An automatic migration update will be sent to all existing contacts.',
+                              'Your new code will be sent to all existing contacts automatically. '
+                              'Your new password is not sent: devices you linked by typing in your code '
+                              'and password will need both entered again.',
                             ),
                             actions: [
                               TextButton(

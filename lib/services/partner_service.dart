@@ -226,14 +226,7 @@ class PartnerService extends ChangeNotifier {
     }
   }
 
-  /// Automatically updates an existing contact's pairing code & secret upon receiving an identity migration beacon.
-  Future<bool> updateContactPairingIdentity({
-    String? deviceId,
-    String? oldCode,
-    required String newCode,
-    String? newSecret,
-    String? newDisplayName,
-  }) async {
+  int _indexForMigration({String? deviceId, String? oldCode}) {
     int idx = -1;
     if (oldCode != null && oldCode.trim().isNotEmpty) {
       idx = _contacts.indexWhere((c) => c.pairingCode.toUpperCase() == oldCode.trim().toUpperCase());
@@ -241,12 +234,30 @@ class PartnerService extends ChangeNotifier {
     if (idx < 0 && deviceId != null && deviceId.trim().isNotEmpty) {
       idx = _contacts.indexWhere((c) => c.id == deviceId.trim());
     }
+    return idx;
+  }
+
+  /// The contact an identity migration beacon is about.
+  PartnerContact? findContactForMigration({String? deviceId, String? oldCode}) {
+    final idx = _indexForMigration(deviceId: deviceId, oldCode: oldCode);
+    return idx >= 0 ? _contacts[idx] : null;
+  }
+
+  /// Moves an existing contact to the new pairing code from an identity
+  /// migration beacon. The key shared with them stays as it is: changing
+  /// code is not changing key.
+  Future<bool> updateContactPairingIdentity({
+    String? deviceId,
+    String? oldCode,
+    required String newCode,
+    String? newDisplayName,
+  }) async {
+    final idx = _indexForMigration(deviceId: deviceId, oldCode: oldCode);
 
     if (idx >= 0) {
       final current = _contacts[idx];
       _contacts[idx] = current.copyWith(
         pairingCode: newCode.trim().toUpperCase(),
-        pairingSecret: (newSecret != null && newSecret.trim().isNotEmpty) ? newSecret.trim() : current.pairingSecret,
         displayName: (newDisplayName != null && newDisplayName.trim().isNotEmpty) ? newDisplayName.trim() : current.displayName,
         lastSeen: DateTime.now(),
       );

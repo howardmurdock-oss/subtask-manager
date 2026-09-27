@@ -1270,9 +1270,9 @@ class SyncService extends ChangeNotifier {
     return List.generate(length, (_) => chars[rand.nextInt(chars.length)]).join();
   }
 
-  /// Regenerates the user's connection identity (pairing code & secret)
-  /// and automatically broadcasts an encrypted migration beacon to all current contacts
-  /// so their friend lists update automatically without breaking connectivity.
+  /// Regenerates the user's connection identity (pairing code & secret) and
+  /// tells every contact the new code, so their friend lists follow it
+  /// without breaking connectivity. The new secret is not sent anywhere.
   Future<void> regeneratePersonalIdentity({bool broadcastMigration = true}) async {
     final newCode = generateRandomCode();
     final newSecret = generateRandomSecret();
@@ -1283,7 +1283,15 @@ class SyncService extends ChangeNotifier {
     );
   }
 
-  /// Updates personal identity (pairing code and/or secret) and broadcasts migration to contacts
+  /// Updates personal identity (pairing code and/or secret), and tells
+  /// contacts when the code changes.
+  ///
+  /// Only the code goes out. The personal secret is the key for devices
+  /// linked by typing this code and password in by hand. Partners paired
+  /// through a pairing request each share their own key with this device and
+  /// never need it. Sending it to every contact used to hand each of them a
+  /// key that also opened the others' traffic, and a new password encrypted
+  /// under the old one is no use if the old one is why it was changed.
   Future<void> updatePersonalIdentity({
     String? newCode,
     String? newSecret,
@@ -1303,30 +1311,33 @@ class SyncService extends ChangeNotifier {
       _nickname = newNickname.trim();
     }
 
-    if (broadcastMigration && oldCode.isNotEmpty && (cleanNewCode != oldCode || cleanNewSecret != oldSecret)) {
-      final migrationMsg = SyncMessage(
-        type: SyncMessageType.identityMigrated,
-        senderId: _deviceId,
-        payload: {
-          'deviceId': _deviceId,
-          'oldPairingCode': oldCode,
-          'newPairingCode': cleanNewCode,
-          'oldPairingSecret': oldSecret,
-          'newPairingSecret': cleanNewSecret,
-          'nickname': _nickname,
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
-        },
-      );
+    if (broadcastMigration && oldCode.isNotEmpty && cleanNewCode != oldCode) {
+      // Each copy proves it came from someone holding the key that copy is
+      // encrypted with. Without that, any other contact - who can also
+      // produce messages this device will decrypt - could claim to be this
+      // one and point its friends at a code of their choosing.
+      SyncMessage migrationFor(String secret) => SyncMessage(
+            type: SyncMessageType.identityMigrated,
+            senderId: _deviceId,
+            payload: {
+              'deviceId': _deviceId,
+              'oldPairingCode': oldCode,
+              'newPairingCode': cleanNewCode,
+              'nickname': _nickname,
+              'timestamp': DateTime.now().millisecondsSinceEpoch,
+              'proof': identityMigrationProof(secret, _deviceId, oldCode, cleanNewCode),
+            },
+          );
 
       // 1. Dispatch directly to each unblocked friend/contact
       if (_partnerService != null) {
         for (final contact in _partnerService!.unblockedContacts) {
-          if (contact.pairingCode.isNotEmpty) {
+          if (contact.pairingCode.isNotEmpty && contact.pairingSecret.isNotEmpty) {
             try {
               await sendDirectToTopic(
                 contact.pairingCode,
                 contact.pairingSecret,
-                migrationMsg,
+                migrationFor(contact.pairingSecret),
                 relayHost: contact.customRelayHost,
               );
             } catch (_) {}
@@ -1334,15 +1345,18 @@ class SyncService extends ChangeNotifier {
         }
       }
 
-      // 2. Publish tombstone redirection beacon to the old personal channel
-      try {
-        await sendDirectToTopic(
-          oldCode,
-          oldSecret,
-          migrationMsg,
-          relayHost: _customRelayHost,
-        );
-      } catch (_) {}
+      // 2. Publish tombstone redirection beacon to the old personal channel,
+      //    for devices linked with the old code and password.
+      if (oldSecret.isNotEmpty) {
+        try {
+          await sendDirectToTopic(
+            oldCode,
+            oldSecret,
+            migrationFor(oldSecret),
+            relayHost: _customRelayHost,
+          );
+        } catch (_) {}
+      }
     }
 
     // 3. Commit new credentials
@@ -2631,6 +2645,16 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Ties an identityMigrated message to the key it was sent under, so only
+  /// someone holding the key shared with a contact can move that contact to
+  /// a new code.
+  static String identityMigrationProof(
+      String secret, String deviceId, String oldCode, String newCode) {
+    final message = utf8.encode('orders-app/identity-migrated|$deviceId|'
+        '${PartnerService.normalizeCode(oldCode)}|${PartnerService.normalizeCode(newCode)}');
+    return base64Encode(Hmac(sha256, utf8.encode(secret)).convert(message).bytes);
+  }
+
   @visibleForTesting
   Future<void> handleIncomingSyncMessage(SyncMessage msg) async {
     await _handleSyncMessage(msg);
@@ -2685,15 +2709,33 @@ class SyncService extends ChangeNotifier {
         final senderDeviceId = msg.payload['deviceId'] as String? ?? msg.senderId;
         final oldCode = msg.payload['oldPairingCode'] as String? ?? '';
         final newCode = msg.payload['newPairingCode'] as String? ?? '';
-        final newSecret = msg.payload['newPairingSecret'] as String? ?? '';
         final senderName = msg.payload['nickname'] as String? ?? msg.payload['senderName'] as String? ?? '';
+        final proof = msg.payload['proof'] as String?;
 
-        if (newCode.isNotEmpty && _partnerService != null) {
+        final migrating = _partnerService?.findContactForMigration(
+          deviceId: senderDeviceId,
+          oldCode: oldCode,
+        );
+        // Older builds send no proof; their code change is still followed.
+        // A proof that does not check out is someone else speaking for them.
+        if (migrating != null &&
+            proof != null &&
+            !PairingCrypto.proofsMatch(
+                proof,
+                identityMigrationProof(
+                    migrating.pairingSecret, senderDeviceId, oldCode, newCode))) {
+          break;
+        }
+
+        // Only the code and name are taken. Older builds also send their
+        // personal secret, which used to replace the key this device shares
+        // with them - handing that pairing the same key as every other
+        // contact of theirs, and one they no longer encrypt to it with.
+        if (newCode.isNotEmpty && migrating != null && _partnerService != null) {
           final updated = await _partnerService!.updateContactPairingIdentity(
             deviceId: senderDeviceId,
             oldCode: oldCode,
             newCode: newCode,
-            newSecret: newSecret,
             newDisplayName: senderName,
           );
 
@@ -2717,11 +2759,7 @@ class SyncService extends ChangeNotifier {
                   'recipientCode': newCode,
                 },
               );
-              await sendDirectToTopic(
-                newCode,
-                newSecret.isNotEmpty ? newSecret : _pairingSecret,
-                ackMsg,
-              );
+              await sendDirectToTopic(newCode, migrating.pairingSecret, ackMsg);
             } catch (_) {}
           }
         }
