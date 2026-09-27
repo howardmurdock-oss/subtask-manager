@@ -45,10 +45,21 @@ Write-Host "============================================================" -Foreg
 Write-Host "   (sub)Task Manager - All-in-One Release Automation        " -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 
+# Every file this script rewrites is UTF-8, and is read and written as UTF-8
+# without a byte-order mark. Windows PowerShell 5.1's Get-Content reads a file
+# with no BOM as the ANSI code page, so reading with it and writing back as
+# UTF-8 re-encoded every non-ASCII character on each release: three em dashes
+# in website\index.html roughly doubled the file every release, from 33 KB to
+# 1.7 MB by v1.5.0, all of it served by the live site. A BOM, for its part,
+# makes the app's JSON parser reject latest.json.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Read-Utf8([string]$path) { [System.IO.File]::ReadAllText((Join-Path $PWD $path), $utf8NoBom) }
+function Write-Utf8([string]$path, [string]$text) { [System.IO.File]::WriteAllText((Join-Path $PWD $path), $text, $utf8NoBom) }
+
 # ---------------------------------------------------------------------------
 # 1. Version Management
 # ---------------------------------------------------------------------------
-$pubspecContent = Get-Content "pubspec.yaml" -Raw
+$pubspecContent = Read-Utf8 "pubspec.yaml"
 $currentVersion = "1.1.0"
 if ($pubspecContent -match 'version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+?([0-9]*)') {
     $currentVersion = $matches[1]
@@ -64,15 +75,13 @@ if ($Version) {
 
     # Update pubspec.yaml
     $pubspecContent = $pubspecContent -replace 'version:\s*[0-9]+\.[0-9]+\.[0-9]+\+?[0-9]*', "version: $targetVersion+$newBuild"
-    Set-Content "pubspec.yaml" $pubspecContent -NoNewline
+    Write-Utf8 "pubspec.yaml" $pubspecContent
 
-    # Update quest_service.dart
-    if (Test-Path "lib\services\quest_service.dart") {
-        (Get-Content "lib\services\quest_service.dart" -Raw) -replace "appCurrentBuildVersion = '[^']+'", "appCurrentBuildVersion = '$targetVersion'" | Set-Content "lib\services\quest_service.dart" -NoNewline
-    }
-    # Update schedule_service.dart
-    if (Test-Path "lib\services\schedule_service.dart") {
-        (Get-Content "lib\services\schedule_service.dart" -Raw) -replace "appCurrentBuildVersion = '[^']+'", "appCurrentBuildVersion = '$targetVersion'" | Set-Content "lib\services\schedule_service.dart" -NoNewline
+    # Update the version constant in the Dart services
+    foreach ($dartFile in @("lib\services\quest_service.dart", "lib\services\schedule_service.dart")) {
+        if (Test-Path $dartFile) {
+            Write-Utf8 $dartFile ((Read-Utf8 $dartFile) -replace "appCurrentBuildVersion = '[^']+'", "appCurrentBuildVersion = '$targetVersion'")
+        }
     }
 } else {
     $targetVersion = $currentVersion
@@ -321,11 +330,9 @@ $manifest = [ordered]@{
     downloads = $downloads
 }
 $manifestJson = $manifest | ConvertTo-Json -Depth 5
-# WriteAllText with a BOM-less encoding, not Set-Content -Encoding utf8: PS 5.1
-# writes a byte-order mark, and the app's JSON parser rejects one - which would
-# have made every update check fail silently.
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText((Join-Path $PWD "website\latest.json"), $manifestJson, $utf8NoBom)
+# Without a BOM (see Write-Utf8): the app's JSON parser rejects one, which
+# would make every update check fail silently.
+Write-Utf8 "website\latest.json" $manifestJson
 Write-Host "  [OK] website\latest.json -> $targetVersion ($($downloads.Keys.Count) platforms)" -ForegroundColor Green
 
 # The app installs what this file names, so it verifies who published it. The
@@ -356,10 +363,10 @@ if ((Test-Path $manifestKey) -and $opensslExe) {
 # them at "latest" so they never go stale again.
 $indexPath = "website\index.html"
 if (Test-Path $indexPath) {
-    $index = Get-Content $indexPath -Raw
+    $index = Read-Utf8 $indexPath
     $index = $index -replace 'releases/download/v[0-9]+\.[0-9]+\.[0-9]+/', 'releases/latest/download/'
     $index = $index -replace '>v[0-9]+\.[0-9]+\.[0-9]+ Release<', ">v$targetVersion Release<"
-    [System.IO.File]::WriteAllText((Join-Path $PWD $indexPath), $index, $utf8NoBom)
+    Write-Utf8 $indexPath $index
     Write-Host "  [OK] Website download links point at the latest release." -ForegroundColor Green
 }
 
