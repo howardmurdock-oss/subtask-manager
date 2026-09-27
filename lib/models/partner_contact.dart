@@ -16,7 +16,7 @@ class PartnerContact {
   final String? notes;
   final DateTime createdAt;
 
-  /// Six digits both phones show after a private pairing, for the two people
+  /// Six digits both devices show after a private pairing, for the two people
   /// to compare. Null when the secret did not come from one: paired by a build
   /// that sent it in the clear, typed in by hand, or still being exchanged.
   final String? verificationCode;

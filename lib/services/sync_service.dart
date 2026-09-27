@@ -2587,7 +2587,7 @@ class SyncService extends ChangeNotifier {
 
     NotificationService.showGenericNotification(
       title: 'Paired with ${senderName.isNotEmpty ? senderName : contact.displayName}',
-      body: 'Verification code ${result.verificationCode}. Check it matches on their phone.',
+      body: 'Verification code ${result.verificationCode}',
     );
     notifyListeners();
   }

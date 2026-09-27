@@ -18,7 +18,7 @@ import 'package:pointycastle/ecc/ecc_fp.dart' as fp;
 ///
 /// Both sides then hold the same secret and the same six-digit verification
 /// code. A relay that swaps in its own keys ends up sharing one secret with
-/// each side, and the two phones show different codes. The commitment is what
+/// each side, and the two devices show different codes. The commitment is what
 /// makes that comparison worth anything: without it, whoever sends the second
 /// message has seen both keys and can try a million of its own until the codes
 /// happen to match. With it, the requester's key is fixed before the accepter's

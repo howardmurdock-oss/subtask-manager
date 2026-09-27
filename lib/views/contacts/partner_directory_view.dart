@@ -211,7 +211,7 @@ class PartnerDirectoryView extends StatelessWidget {
         title: const Text('Re-pair with a new private key?'),
         content: Text(
           '${partner.displayName} will be asked to accept. Once they do, you both switch to a new key '
-          'that never leaves your two phones, and each phone shows a verification code to compare. '
+          'that never leaves your two devices, and each shows a verification code to compare. '
           'Your current key keeps working until then.\n\n'
           'Both of you need the latest version of the app.',
         ),
@@ -574,7 +574,7 @@ class PartnerDirectoryView extends StatelessWidget {
 }
 
 /// Whether the key shared with a partner is private, and if so the code to
-/// compare with the one on their phone.
+/// compare with the one on their device.
 class _PairingStatus extends StatelessWidget {
   final PartnerContact partner;
   final bool inProgress;
@@ -595,7 +595,7 @@ class _PairingStatus extends StatelessWidget {
       color = muted;
     } else if (code != null) {
       icon = Icons.verified_user_rounded;
-      text = 'Verification code $code - should match their phone';
+      text = 'Verification code $code';
       color = Colors.greenAccent[400]!;
     } else {
       icon = Icons.gpp_maybe_rounded;
