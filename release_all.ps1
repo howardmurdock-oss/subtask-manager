@@ -8,7 +8,7 @@
     2. Runs the full test suite (92+ unit and widget tests).
     3. Compiles the Windows Standalone and Android APK locally.
     4. Commits and pushes changes to GitHub.
-    5. Triggers GitHub Actions cloud build for native macOS (.dmg, .zip) and Linux (.tar.gz).
+    5. Triggers GitHub Actions cloud build for native macOS (.dmg, .zip) and Linux (.tar.gz, .AppImage).
     6. Waits for cloud completion and downloads the native macOS and Linux artifacts.
     7. Copies the Windows and Android builds to Google Drive.
     8. Publishes/updates the GitHub Release the updater and website download from.
@@ -246,7 +246,7 @@ if (-not $SkipCloudBuild) {
         # downloaded from the release.
         # Copy to F: backup drive
         if (Test-Path "F:\subTask Manager") {
-            Get-ChildItem -Recurse dist -Include *.dmg, *.tar.gz, *.zip | ForEach-Object {
+            Get-ChildItem -Recurse dist -Include *.dmg, *.tar.gz, *.zip, *.AppImage | ForEach-Object {
                 Copy-Item $_.FullName -Destination "F:\subTask Manager" -Force
             }
             Write-Host "  [OK] Native macOS & Linux mirrored to F: backup drive." -ForegroundColor Green
@@ -268,11 +268,15 @@ $releaseAssets = @(
 $macDmg = $null
 $macZip = $null
 $linuxTar = $null
+$linuxAppImage = $null
 if (Test-Path "dist") {
     $macDmg = Get-ChildItem -Recurse dist -Filter "SubTaskManager-macOS.dmg" | Select-Object -First 1
     $macZip = Get-ChildItem -Recurse dist -Filter "SubTaskManager-macOS.zip" | Select-Object -First 1
     $linuxTar = Get-ChildItem -Recurse dist -Filter "SubTaskManager-Linux-x64.tar.gz" | Select-Object -First 1
-    foreach ($found in @($macDmg, $macZip, $linuxTar)) {
+    # A download for people only. The update manifest keeps pointing at the
+    # .tar.gz, which is what the in-app updater knows how to fetch.
+    $linuxAppImage = Get-ChildItem -Recurse dist -Filter "SubTaskManager-Linux-x86_64.AppImage" | Select-Object -First 1
+    foreach ($found in @($macDmg, $macZip, $linuxTar, $linuxAppImage)) {
         if ($found) { $releaseAssets += $found.FullName }
     }
 }
@@ -404,7 +408,7 @@ Write-Host "============================================================" -Foreg
 Write-Host " * Windows:     subTaskManager-Windows-Release.zip"
 Write-Host " * Android:     subTaskManager-Android-Release.apk"
 Write-Host " * macOS:       SubTaskManager-macOS.dmg & .zip"
-Write-Host " * Linux:       SubTaskManager-Linux-x64.tar.gz"
+Write-Host " * Linux:       SubTaskManager-Linux-x64.tar.gz, SubTaskManager-Linux-x86_64.AppImage"
 Write-Host " * Live Site:   https://subtaskmanager.com"
 Write-Host " * GitHub Rel:  https://github.com/howardmurdock-oss/subtask-manager/releases/tag/$releaseTag"
 Write-Host "============================================================`n" -ForegroundColor Green

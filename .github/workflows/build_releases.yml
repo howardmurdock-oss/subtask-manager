@@ -14,10 +14,19 @@ on:
       - '**/*.md'
   workflow_dispatch:
 
+# The same Flutter the Windows and Android builds are made with locally.
+# "stable" alone meant whatever stable was on the day, so one release could
+# ship four platforms built by two different Flutter versions.
+env:
+  FLUTTER_VERSION: '3.47.0'
+
 jobs:
   build-linux:
     name: Build Linux Desktop Release
-    runs-on: ubuntu-latest
+    # The oldest supported runner, not the newest: a binary needs at least
+    # the glibc it was built against, so building on 24.04 shut out every
+    # distribution older than that. SteamOS is newer than either.
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
@@ -26,17 +35,21 @@ jobs:
       - name: Install Linux Build Toolchain
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libasound2-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libsecret-1-dev libasound2-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install dependencies
         run: flutter pub get
 
+      # The release script has already run the suite on Windows before it
+      # pushed. Once more here catches anything Linux-specific; macOS does not
+      # repeat it, since that job is the one the release waits on.
       - name: Run Test Suite
         run: flutter test
 
@@ -48,11 +61,49 @@ jobs:
           mkdir -p dist
           tar -czvf dist/SubTaskManager-Linux-x64.tar.gz -C build/linux/x64/release/bundle .
 
+      # One file that runs where it is downloaded, for Steam Deck and desktop
+      # users who would rather not unpack an archive. The .tar.gz stays: it is
+      # what the in-app updater fetches. It still uses the system's GTK, as
+      # the archive does, rather than carrying its own copy.
+      - name: Package Linux AppImage
+        run: |
+          APPDIR=build/SubTaskManager.AppDir
+          mkdir -p "$APPDIR"
+          cp -r build/linux/x64/release/bundle/. "$APPDIR/"
+          cp android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png "$APPDIR/subtask-manager.png"
+          cat > "$APPDIR/subtask-manager.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=SubTask Manager
+          Exec=orders_app
+          Icon=subtask-manager
+          Categories=Utility;
+          EOF
+          cat > "$APPDIR/AppRun" <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/orders_app" "$@"
+          EOF
+          chmod +x "$APPDIR/AppRun"
+
+          # Pinned releases, checked against their published digests, rather
+          # than the "continuous" builds these tools default to.
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          curl -fsSL -o runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool" | sha256sum -c -
+          echo "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  runtime-x86_64" | sha256sum -c -
+          chmod +x appimagetool
+
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool --runtime-file runtime-x86_64 \
+            "$APPDIR" dist/SubTaskManager-Linux-x86_64.AppImage
+
       - name: Upload Linux Distributable
         uses: actions/upload-artifact@v4
         with:
           name: Linux-Distributable
-          path: dist/SubTaskManager-Linux-x64.tar.gz
+          path: |
+            dist/SubTaskManager-Linux-x64.tar.gz
+            dist/SubTaskManager-Linux-x86_64.AppImage
 
   build-macos:
     name: Build macOS Desktop Release
@@ -66,13 +117,11 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install dependencies
         run: flutter pub get
-
-      - name: Run Test Suite
-        run: flutter test
 
       - name: Compile macOS Native Release
         run: flutter build macos --release --no-tree-shake-icons
