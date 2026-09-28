@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:orders_app/core/security/patreon_access.dart';
 import 'package:orders_app/models/quest_item.dart';
 import 'package:orders_app/models/order_item.dart';
 import 'package:orders_app/models/sync_message.dart';
@@ -120,7 +121,10 @@ void main() {
   group('QuestService Patreon Gating & Progression Tests', () {
     setUp(() {
       SharedPreferences.setMockInitialValues({});
+      // A stand-in code: the real one is kept out of this public repo.
+      PatreonAccess.debugDigests = {PatreonAccess.digestOf('TEST-ONLY-CODE')};
     });
+    tearDown(() => PatreonAccess.debugDigests = null);
 
     test('Patreon passcode gating: unlocks on valid code and rejects invalid', () async {
       final service = QuestService();
@@ -134,17 +138,13 @@ void main() {
       expect(service.isUnlocked, isFalse);
 
       // Valid passcode (case-insensitive, whitespace-trimmed)
-      final successResult = service.unlockWithPasscode('  patreon-vip  ');
+      final successResult = service.unlockWithPasscode('  test-only-code  ');
       expect(successResult, isTrue);
       expect(service.isUnlocked, isTrue);
 
       // Relock
       service.relock();
       expect(service.isUnlocked, isFalse);
-
-      // Alternate valid code
-      expect(service.unlockWithPasscode('QUESTS-2026'), isTrue);
-      expect(service.isUnlocked, isTrue);
     });
 
     test('Quest progression awards step tokens and grand completion bonus', () async {

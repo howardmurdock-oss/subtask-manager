@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/community_links.dart';
 import '../../models/scheduled_order_rule.dart';
 import '../../models/order_item.dart';
 import '../../models/partner_contact.dart';
@@ -69,7 +70,7 @@ class ScheduleOrderDialog {
                   Icon(Icons.stars_rounded, size: 16, color: Colors.amber),
                   SizedBox(width: 6),
                   Text(
-                    'CREATOR COMMUNITY EXCLUSIVE',
+                    'PATREON SUPPORTER FEATURE',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
@@ -98,7 +99,7 @@ class ScheduleOrderDialog {
               textCapitalization: TextCapitalization.characters,
               decoration: InputDecoration(
                 labelText: 'Enter Community Passcode',
-                hintText: 'e.g. PATREON-VIP',
+                hintText: 'Access code',
                 prefixIcon: const Icon(Icons.key_rounded),
                 border: const OutlineInputBorder(),
                 errorText: errorMsg,
@@ -111,7 +112,16 @@ class ScheduleOrderDialog {
                 });
               },
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                icon: const Icon(Icons.workspace_premium_rounded, size: 18, color: Colors.amber),
+                label: const Text('Get the code on Patreon'),
+                onPressed: () => CommunityLinks.open(CommunityLinks.patreon),
+              ),
+            ),
+            const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -187,7 +197,7 @@ class ScheduleOrderDialog {
       );
       _showScheduleModal(rootCtx, isDirectorMode: isDirectorMode);
     } else {
-      setError('Invalid access code. Check Patreon posts for the current code.');
+      setError('Invalid access code. Check Patreon for the current code.');
     }
   }
 

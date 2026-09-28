@@ -1,38 +1,18 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 import '../models/quest_item.dart';
 import '../models/quest_pack.dart';
 import '../models/order_item.dart';
 import '../models/user_stats.dart';
 import '../core/security/encryption_helper.dart';
+import '../core/security/patreon_access.dart';
 import 'order_engine.dart';
 import 'sync_service.dart';
 
 class QuestService extends ChangeNotifier {
   static const String appCurrentBuildVersion = '1.5.0';
-
-  // Valid Patreon Unlock Code hashes (stored securely as SHA-256 digests)
-  // Included default codes: 'PATREON-VIP', 'QUESTS-2026', 'DIRECTIVE-CHAIN', 'PATREON-SUPPORTER', 'QUEST'
-  static final Set<String> _validCodeHashes = {
-    _hashPasscode('PATREON-VIP'),
-    _hashPasscode('QUESTS-2026'),
-    _hashPasscode('DIRECTIVE-CHAIN'),
-    _hashPasscode('PATREON-SUPPORTER'),
-    _hashPasscode('QUEST'),
-    _hashPasscode('VIP'),
-    _hashPasscode('SCHEDULE'),
-    _hashPasscode('SCHEDULE-VIP'),
-    _hashPasscode('PATREON'),
-  };
-
-  static String _hashPasscode(String raw) {
-    final clean = raw.trim().toUpperCase();
-    final bytes = utf8.encode('patreon_quest_salt_v1_$clean');
-    return sha256.convert(bytes).toString();
-  }
 
   bool _isUnlocked = false;
   bool get isUnlocked => _isUnlocked;
@@ -195,8 +175,7 @@ class QuestService extends ChangeNotifier {
   // ---- Patreon Code Validation ----
 
   bool unlockWithPasscode(String passcode) {
-    final hash = _hashPasscode(passcode);
-    if (_validCodeHashes.contains(hash)) {
+    if (PatreonAccess.isValid(passcode)) {
       _isUnlocked = true;
       _saveToStorage();
       notifyListeners();

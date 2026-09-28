@@ -16,6 +16,7 @@ import '../../services/push_service.dart';
 import '../../services/worker_socket_service.dart';
 import '../../services/debug_settings.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../core/community_links.dart';
 import '../../services/update_flow.dart';
 import '../../services/update_service.dart';
 import '../player/stats_view.dart';
@@ -776,6 +777,55 @@ class _SettingsViewState extends State<SettingsView> {
               ),
             ),
           ],
+
+          Text(
+            'COMMUNITY',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.2,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            margin: const EdgeInsets.only(bottom: 20),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: Colors.amber.withValues(alpha: 0.18),
+                    child: const Icon(Icons.workspace_premium_rounded, color: Colors.amber),
+                  ),
+                  title: const Text('Support on Patreon',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    'Unlocks Quests and Scheduled Orders, and keeps development going.',
+                    style: TextStyle(
+                        fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
+                  ),
+                  trailing: const Icon(Icons.open_in_new_rounded, size: 18),
+                  onTap: () => CommunityLinks.open(CommunityLinks.patreon),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: const Color(0xFF5865F2).withValues(alpha: 0.18),
+                    child: const Icon(Icons.forum_rounded, color: Color(0xFF5865F2)),
+                  ),
+                  title: const Text('Join the Discord',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    'Chat with other players, share feedback and hear about updates first.',
+                    style: TextStyle(
+                        fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
+                  ),
+                  trailing: const Icon(Icons.open_in_new_rounded, size: 18),
+                  onTap: () => CommunityLinks.open(CommunityLinks.discord),
+                ),
+              ],
+            ),
+          ),
 
           // Background Connection & Battery Optimization Section
           Text(

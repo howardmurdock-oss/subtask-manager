@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/community_links.dart';
 import '../../services/quest_service.dart';
 
 class QuestGateView extends StatefulWidget {
@@ -32,7 +33,7 @@ class _QuestGateViewState extends State<QuestGateView> {
     setState(() {
       _isLoading = false;
       if (!success) {
-        _errorMsg = 'Invalid Patreon access code. Check Patreon posts for the current build code.';
+        _errorMsg = 'Invalid Patreon access code. Check Patreon for the current code.';
       }
     });
 
@@ -122,7 +123,7 @@ class _QuestGateViewState extends State<QuestGateView> {
                 const SizedBox(height: 16),
 
                 Text(
-                  'Sequential Directive Quests',
+                  'Quests',
                   style: theme.textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -131,7 +132,7 @@ class _QuestGateViewState extends State<QuestGateView> {
                 const SizedBox(height: 10),
 
                 Text(
-                  'String directives into multi-step interactive playlists, gauntlets, and obedience storylines. Progress step-by-step with mystery reveals and bonus payouts.',
+                  'Build chained directives, with optional bonus rewards for finishing the entire quest chain.',
                   style: TextStyle(
                     fontSize: 14,
                     color: theme.colorScheme.onSurface.withOpacity(0.7),
@@ -164,7 +165,7 @@ class _QuestGateViewState extends State<QuestGateView> {
                           controller: _codeCtrl,
                           textCapitalization: TextCapitalization.characters,
                           decoration: InputDecoration(
-                            hintText: 'e.g. PATREON-VIP',
+                            hintText: 'Access code',
                             prefixIcon: const Icon(Icons.key_rounded),
                             errorText: _errorMsg,
                             border: const OutlineInputBorder(),
@@ -194,10 +195,21 @@ class _QuestGateViewState extends State<QuestGateView> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
+
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.workspace_premium_rounded, color: Colors.amber),
+                  label: const Text('Get the code on Patreon'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    side: BorderSide(color: Colors.amber.withValues(alpha: 0.6)),
+                  ),
+                  onPressed: () => CommunityLinks.open(CommunityLinks.patreon),
+                ),
+                const SizedBox(height: 16),
 
                 Text(
-                  'Active for current build (v${QuestService.appCurrentBuildVersion}). Codes are distributed on the official Patreon creator page.',
+                  'Supporters receive the access code on Patreon. It unlocks Quests and Scheduled Orders.',
                   style: TextStyle(
                     fontSize: 12,
                     color: theme.colorScheme.onSurface.withOpacity(0.5),

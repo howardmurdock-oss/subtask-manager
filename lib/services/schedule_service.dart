@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:crypto/crypto.dart';
+import '../core/security/patreon_access.dart';
 import '../models/scheduled_order_rule.dart';
 import '../models/order_item.dart';
 import '../models/partner_contact.dart';
@@ -30,25 +30,6 @@ class ScheduleService extends ChangeNotifier {
   /// reporting the rule as enabled - so the horizon has to outlast any
   /// plausible stretch of the app not being opened.
   static const int stagedOccurrences = 14;
-
-  // Valid Patreon Unlock Code hashes
-  static final Set<String> _validCodeHashes = {
-    _hashPasscode('PATREON-VIP'),
-    _hashPasscode('QUESTS-2026'),
-    _hashPasscode('DIRECTIVE-CHAIN'),
-    _hashPasscode('PATREON-SUPPORTER'),
-    _hashPasscode('QUEST'),
-    _hashPasscode('VIP'),
-    _hashPasscode('SCHEDULE'),
-    _hashPasscode('SCHEDULE-VIP'),
-    _hashPasscode('PATREON'),
-  };
-
-  static String _hashPasscode(String raw) {
-    final clean = raw.trim().toUpperCase();
-    final bytes = utf8.encode('patreon_quest_salt_v1_$clean');
-    return sha256.convert(bytes).toString();
-  }
 
   bool _isUnlocked = false;
   bool get isUnlocked => _isUnlocked;
@@ -488,8 +469,7 @@ class ScheduleService extends ChangeNotifier {
   // ---- Patreon Code Validation ----
 
   bool unlockWithPasscode(String passcode) {
-    final hash = _hashPasscode(passcode);
-    if (_validCodeHashes.contains(hash)) {
+    if (PatreonAccess.isValid(passcode)) {
       _isUnlocked = true;
       _saveToStorage();
       notifyListeners();

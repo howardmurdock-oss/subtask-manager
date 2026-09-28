@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:orders_app/core/security/patreon_access.dart';
 import 'package:orders_app/models/order_item.dart';
 import 'package:orders_app/models/order_pack.dart';
 import 'package:orders_app/models/partner_contact.dart';
@@ -106,20 +107,20 @@ void main() {
 
   group('ScheduleService Execution & Gating Tests', () {
     test('Patreon passcode gating: unlocks on valid code and rejects invalid', () async {
+      // A stand-in code: the real one is kept out of this public repo.
+      PatreonAccess.debugDigests = {PatreonAccess.digestOf('TEST-ONLY-CODE')};
+      addTearDown(() => PatreonAccess.debugDigests = null);
       final scheduleSvc = ScheduleService();
 
       expect(scheduleSvc.isUnlocked, isFalse);
       expect(scheduleSvc.unlockWithPasscode('WRONG-CODE'), isFalse);
       expect(scheduleSvc.isUnlocked, isFalse);
 
-      expect(scheduleSvc.unlockWithPasscode('PATREON-VIP'), isTrue);
+      expect(scheduleSvc.unlockWithPasscode('TEST-ONLY-CODE'), isTrue);
       expect(scheduleSvc.isUnlocked, isTrue);
 
       scheduleSvc.relock();
       expect(scheduleSvc.isUnlocked, isFalse);
-
-      expect(scheduleSvc.unlockWithPasscode('SCHEDULE'), isTrue);
-      expect(scheduleSvc.isUnlocked, isTrue);
     });
 
     test('Rule CRUD operations persist and update accurately', () async {
