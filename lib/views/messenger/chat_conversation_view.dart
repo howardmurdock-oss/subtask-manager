@@ -32,6 +32,18 @@ class _ChatConversationViewState extends State<ChatConversationView> {
   final FocusNode _inputFocusNode = FocusNode();
   final ImagePicker _picker = ImagePicker();
   String? _pendingImageBase64;
+
+  /// Decoded photos, keyed by their base64 text.
+  ///
+  /// Decoding in build handed Image.memory a new byte list on every rebuild,
+  /// and a MemoryImage is only the same image as the same list - so each
+  /// rebuild (any message, read receipt or presence change) reloaded every
+  /// photo in the conversation. While reloading, a photo with only a width has
+  /// no height, and the bubble collapsed to a sliver and sprang back.
+  final Map<String, Uint8List> _decodedImages = {};
+
+  Uint8List _imageBytes(String base64Image) =>
+      _decodedImages.putIfAbsent(base64Image, () => base64Decode(base64Image));
   bool _isSending = false;
   ChatService? _chatServiceRef;
 
@@ -173,7 +185,7 @@ class _ChatConversationViewState extends State<ChatConversationView> {
                 child: InteractiveViewer(
                   minScale: 0.5,
                   maxScale: 4.0,
-                  child: Image.memory(base64Decode(base64Image), fit: BoxFit.contain),
+                  child: Image.memory(_imageBytes(base64Image), fit: BoxFit.contain),
                 ),
               ),
             ),
@@ -389,10 +401,11 @@ class _ChatConversationViewState extends State<ChatConversationView> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: Image.memory(
-                      base64Decode(_pendingImageBase64!),
+                      _imageBytes(_pendingImageBase64!),
                       width: 50,
                       height: 50,
                       fit: BoxFit.cover,
+                      gaplessPlayback: true,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1624,9 +1637,12 @@ class _ChatConversationViewState extends State<ChatConversationView> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: Image.memory(
-                      base64Decode(msg.imageBase64!),
+                      _imageBytes(msg.imageBase64!),
                       width: 200,
                       fit: BoxFit.cover,
+                      // Keep the last frame on screen should the image ever
+                      // reload, rather than nothing, which has no height.
+                      gaplessPlayback: true,
                     ),
                   ),
                 ),
