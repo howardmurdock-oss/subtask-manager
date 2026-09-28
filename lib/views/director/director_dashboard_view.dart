@@ -778,56 +778,70 @@ class DirectorDashboardView extends StatelessWidget {
                   children: [
                     const Icon(Icons.people_alt_outlined, size: 16, color: Colors.purpleAccent),
                     const SizedBox(width: 6),
-                    Text(
-                      'Active Submissive:',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.onSurface.withOpacity(0.7),
+                    Flexible(
+                      child: Text(
+                        'Active Submissive:',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.onSurface.withOpacity(0.7),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
-                    DropdownButton<String>(
-                      value: partnerSvc.activePartnerId ?? PartnerContact.selfId,
-                      isDense: true,
-                      underline: const SizedBox(),
-                      items: [
-                        const DropdownMenuItem(
-                          value: PartnerContact.selfId,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.person_rounded, size: 14, color: Colors.purpleAccent),
-                              SizedBox(width: 6),
-                              Text(
-                                'Myself (This Device)',
-                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                              ),
-                            ],
+                    // Takes whatever width is left rather than sizing itself.
+                    // A dropdown is otherwise as wide as its widest item -
+                    // "Myself (This Device)" - even when a short name is
+                    // selected, and on a phone that pushed the Chat button
+                    // past the edge of the screen.
+                    Expanded(
+                      child: DropdownButton<String>(
+                        value: partnerSvc.activePartnerId ?? PartnerContact.selfId,
+                        isDense: true,
+                        isExpanded: true,
+                        underline: const SizedBox(),
+                        items: [
+                          const DropdownMenuItem(
+                            value: PartnerContact.selfId,
+                            child: Row(
+                              children: [
+                                Icon(Icons.person_rounded, size: 14, color: Colors.purpleAccent),
+                                SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    'Myself (This Device)',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        ...partners.map((p) => DropdownMenuItem(
-                          value: p.id,
-                          child: Text(
-                            p.displayName,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                          ),
-                        )),
-                      ],
-                      onChanged: (newId) {
-                        if (newId != null) {
-                          if (newId == PartnerContact.selfId) {
-                            partnerSvc.setActivePartner(PartnerContact.selfId);
-                            sync.switchActivePartner(PartnerContact.self());
-                          } else {
-                            final target = partners.firstWhere((p) => p.id == newId);
-                            partnerSvc.setActivePartner(target.id);
-                            sync.switchActivePartner(target);
+                          ...partners.map((p) => DropdownMenuItem(
+                            value: p.id,
+                            child: Text(
+                              p.displayName,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                            ),
+                          )),
+                        ],
+                        onChanged: (newId) {
+                          if (newId != null) {
+                            if (newId == PartnerContact.selfId) {
+                              partnerSvc.setActivePartner(PartnerContact.selfId);
+                              sync.switchActivePartner(PartnerContact.self());
+                            } else {
+                              final target = partners.firstWhere((p) => p.id == newId);
+                              partnerSvc.setActivePartner(target.id);
+                              sync.switchActivePartner(target);
+                            }
                           }
-                        }
-                      },
+                        },
+                      ),
                     ),
-                    const Spacer(),
                     if (activePartner != null && !activePartner.isSelf)
                       TextButton.icon(
                         icon: const Icon(Icons.chat_bubble_outline_rounded, size: 14),
@@ -998,13 +1012,15 @@ class DirectorDashboardView extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'ACTIVE DIRECTIVES IN PROGRESS (${activeOrders.length})',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-                color: theme.colorScheme.primary,
+            Flexible(
+              child: Text(
+                'ACTIVE DIRECTIVES IN PROGRESS (${activeOrders.length})',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                  color: theme.colorScheme.primary,
+                ),
               ),
             ),
             if (activeOrders.isNotEmpty)
