@@ -110,8 +110,11 @@ void main() {
         target: installed.path,
         // A real executable that exits immediately: the script relaunches
         // whatever it is given, and a path that does not exist would only
-        // test the failure branch.
-        executable: executable ?? r'C:\Windows\System32\where.exe',
+        // test the failure branch. Not a console program: this was where.exe,
+        // which started with no console to attach to and put up a 0xc0000142
+        // error dialog on the desktop on every test run. rundll32.exe with no
+        // arguments opens no window and exits.
+        executable: executable ?? r'C:\Windows\System32\rundll32.exe',
       ));
       return Process.run(
         'powershell.exe',
