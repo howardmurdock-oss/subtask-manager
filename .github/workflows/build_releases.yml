@@ -79,14 +79,14 @@ jobs:
           [Desktop Entry]
           Type=Application
           Name=SubTask Manager
-          Exec=orders_app
+          Exec=subtaskmanager
           Icon=subtask-manager
           Categories=Utility;
           EOF
           cat > "$APPDIR/AppRun" <<'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "$0")")"
-          exec "$HERE/orders_app" "$@"
+          exec "$HERE/subtaskmanager" "$@"
           EOF
           chmod +x "$APPDIR/AppRun"
 
@@ -134,8 +134,8 @@ jobs:
         run: |
           mkdir -p dist
           cd build/macos/Build/Products/Release
-          zip -r -y ../../../../../dist/SubTaskManager-macOS.zip orders_app.app
-          hdiutil create -volname "SubTask Manager" -srcfolder orders_app.app -ov -format UDZO ../../../../../dist/SubTaskManager-macOS.dmg
+          zip -r -y ../../../../../dist/SubTaskManager-macOS.zip subtaskmanager.app
+          hdiutil create -volname "SubTask Manager" -srcfolder subtaskmanager.app -ov -format UDZO ../../../../../dist/SubTaskManager-macOS.dmg
 
       - name: Upload macOS Distributable
         uses: actions/upload-artifact@v4

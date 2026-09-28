@@ -17,18 +17,18 @@ The Steam Deck has Valve's **Proton** compatibility layer built-in. You can run 
 2. **Extract the Files in Desktop Mode**:
    - Press the **STEAM** button on your Deck -> **Power** -> **Switch to Desktop**.
    - In Dolphin File Manager, create a folder (e.g. `/home/deck/Applications/SubTaskManager/`).
-   - Extract the `.zip` archive into that folder so you see `orders_app.exe` and its `data/` folder.
+   - Extract the `.zip` archive into that folder so you see `subtaskmanager.exe` and its `data/` folder.
 
 3. **Add as a Non-Steam Game**:
    - Open the **Steam** desktop client.
    - In the bottom-left corner, click **Add a Game** -> **Add a Non-Steam Game...**
-   - Click **Browse** and navigate to `/home/deck/Applications/SubTaskManager/orders_app.exe`.
-   - Check the box next to `orders_app.exe` and click **Add Selected Programs**.
+   - Click **Browse** and navigate to `/home/deck/Applications/SubTaskManager/subtaskmanager.exe`.
+   - Check the box next to `subtaskmanager.exe` and click **Add Selected Programs**.
 
 4. **Enable Proton Compatibility**:
-   - In your Steam Library, find **`orders_app.exe`**.
+   - In your Steam Library, find **`subtaskmanager.exe`**.
    - Right-click it (or press Left Trackpad / Gear icon) -> select **Properties...**
-   - In the **Shortcut** tab: Rename the title from `orders_app.exe` to **SubTask Manager**.
+   - In the **Shortcut** tab: Rename the title from `subtaskmanager.exe` to **SubTask Manager**.
    - In the **Compatibility** tab: Check **"Force the use of a specific Steam Play compatibility tool"**.
    - Select **Proton Experimental** (or **Proton 9.0** / **GE-Proton**).
 
@@ -68,7 +68,7 @@ If you are compiling directly on a Linux computer or inside a SteamOS container 
 
 3. **Output Binary**:
    - The compiled Linux bundle will be generated in `build/linux/x64/release/bundle/` and packaged as `Releases/Linux/SubTaskManager-Linux-x64.tar.gz`.
-   - Run with: `./orders_app`
+   - Run with: `./subtaskmanager`
 
 ---
 

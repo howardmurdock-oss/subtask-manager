@@ -19,7 +19,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "==> Building Windows Standalone Release..." -ForegroundColor Cyan
-Get-Process orders_app -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process subtaskmanager, orders_app -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 & "F:\src\flutter\bin\flutter.bat" build windows --release --no-tree-shake-icons
 Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "subTaskManager-Windows-Release.zip" -Force

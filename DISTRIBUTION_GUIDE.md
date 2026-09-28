@@ -66,8 +66,8 @@ In addition to desktop downloads, you can offer an instant **"Launch in Browser"
 ## 4. Steam Deck Compatibility
 
 Steam Deck users have two seamless options:
-1. **Native Linux**: Download and unpack `SubTaskManager-Linux-x64.tar.gz` in Desktop Mode, then run `./orders_app`.
-2. **Proton / Steam Play**: Download `OrdersApp-Windows-Release.zip`, add `orders_app.exe` as a Non-Steam Game in Steam, and enable Proton. (See [STEAM_DECK_GUIDE.md](STEAM_DECK_GUIDE.md) for full screenshots and controller config).
+1. **Native Linux**: Download and unpack `SubTaskManager-Linux-x64.tar.gz` in Desktop Mode, then run `./subtaskmanager`.
+2. **Proton / Steam Play**: Download `OrdersApp-Windows-Release.zip`, add `subtaskmanager.exe` as a Non-Steam Game in Steam, and enable Proton. (See [STEAM_DECK_GUIDE.md](STEAM_DECK_GUIDE.md) for full screenshots and controller config).
 
 ---
 

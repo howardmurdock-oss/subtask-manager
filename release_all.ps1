@@ -128,7 +128,9 @@ Write-Host "  [OK] All tests passed cleanly." -ForegroundColor Green
 # 3. Local Binary Builds (Windows, Android)
 # ---------------------------------------------------------------------------
 Write-Host "`n==> Step 2: Compiling Windows Desktop Release..." -ForegroundColor Cyan
-Get-Process orders_app -ErrorAction SilentlyContinue | Stop-Process -Force
+# orders_app is the name before v1.5.2, still running on this machine until it
+# updates.
+Get-Process subtaskmanager, orders_app -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 & $flutterBat build windows --release --no-tree-shake-icons
 if ($LASTEXITCODE -ne 0) { Write-Error "Windows build failed."; exit 1 }

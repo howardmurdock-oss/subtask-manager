@@ -28,7 +28,7 @@ if [ -d "$BUILD_OUTPUT" ]; then
     mkdir -p "$RELEASE_DIR"
     tar -czf "$RELEASE_DIR/$ARCHIVE_NAME" -C "$BUILD_OUTPUT" .
     echo "==> Successfully created $RELEASE_DIR/$ARCHIVE_NAME!"
-    echo "    To run on Linux/Steam Deck: extract the archive and execute ./orders_app"
+    echo "    To run on Linux/Steam Deck: extract the archive and execute ./subtaskmanager"
 else
     echo "Error: Build output directory not found at $BUILD_OUTPUT" >&2
     exit 1
