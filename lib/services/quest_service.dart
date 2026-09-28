@@ -12,7 +12,7 @@ import 'order_engine.dart';
 import 'sync_service.dart';
 
 class QuestService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.5.5';
+  static const String appCurrentBuildVersion = '1.5.6';
 
   bool _isUnlocked = false;
   bool get isUnlocked => _isUnlocked;
