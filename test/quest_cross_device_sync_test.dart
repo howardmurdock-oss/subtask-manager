@@ -87,7 +87,7 @@ void main() {
       expect(remoteQuest.assignedByPartnerName, equals('Test Submissive'));
     });
 
-    test('Incoming dispatchQuest message activates quest and auto-unlocks player access', () async {
+    test('Incoming dispatchQuest message activates quest without unlocking Patreon features', () async {
       expect(questService.isUnlocked, isFalse);
       expect(questService.activeQuest, isNull);
 
@@ -104,7 +104,8 @@ void main() {
 
       await syncService.handleIncomingSyncMessage(msg);
 
-      expect(questService.isUnlocked, isTrue);
+      expect(questService.isUnlocked, isFalse,
+          reason: 'an assigned quest must not unlock Quests or Scheduled Orders');
       expect(questService.activeQuest, isNotNull);
       expect(questService.activeQuest!.quest.title, equals('Discipline Trial Alpha'));
       expect(questService.activeQuest!.assignedByPartnerName, equals('Sir Director'));

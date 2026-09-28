@@ -67,6 +67,11 @@ class _PlayerQuestViewState extends State<PlayerQuestView> {
     final sync = Provider.of<SyncService>(context, listen: false);
 
     final isLastStep = activeQuest.currentStepIndex + 1 >= activeQuest.quest.steps.length;
+    // Finishing the last step can take this view off screen: a player who has
+    // not unlocked Quests is let in only while their assigned quest is
+    // unfinished, so the hub swaps to the gate the moment it completes. The
+    // completion dialog goes on the root navigator, which is still there.
+    final navigatorContext = Navigator.of(context, rootNavigator: true).context;
 
     await questSvc.completeCurrentStep(
       proofText: _proofNotesCtrl.text.trim().isNotEmpty ? _proofNotesCtrl.text.trim() : null,
@@ -76,29 +81,30 @@ class _PlayerQuestViewState extends State<PlayerQuestView> {
 
     _stepTimer?.cancel();
     _isTimerRunning = false;
-    _proofNotesCtrl.clear();
 
-    if (mounted) {
-      if (isLastStep) {
-        _showCompletionDialog(activeQuest.quest);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle_rounded, color: Colors.greenAccent),
-                const SizedBox(width: 10),
-                Text('Step Complete! +${currentStep.rewardTokens} Tokens Claimed'),
-              ],
-            ),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+    if (isLastStep) {
+      if (mounted) _proofNotesCtrl.clear();
+      if (navigatorContext.mounted) _showCompletionDialog(navigatorContext, activeQuest.quest);
+      return;
     }
+
+    if (!mounted) return;
+    _proofNotesCtrl.clear();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.greenAccent),
+            const SizedBox(width: 10),
+            Text('Step Complete! +${currentStep.rewardTokens} Tokens Claimed'),
+          ],
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
-  void _showCompletionDialog(Quest quest) {
+  void _showCompletionDialog(BuildContext context, Quest quest) {
     showDialog(
       context: context,
       barrierDismissible: false,

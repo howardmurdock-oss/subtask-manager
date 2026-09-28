@@ -455,7 +455,11 @@ class QuestService extends ChangeNotifier {
   }
 
   void assignQuestFromDirector(Quest quest, {String? directorName, String? directorCode}) {
-    _isUnlocked = true; // Auto-unlock assigned quest access on player device
+    // Receiving a quest does not unlock anything. It used to set _isUnlocked,
+    // which is saved as the shared Patreon flag, so one quest from a partner
+    // permanently unlocked Quests and Scheduled Orders on the player's device.
+    // The quests hub lets a player in while an assigned quest is active,
+    // which is all they need to do it.
 
     // Deduplication & Progress Preservation:
     // If this quest is already actively running and not completed, preserve current step progress!

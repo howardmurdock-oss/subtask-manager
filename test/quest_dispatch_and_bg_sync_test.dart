@@ -103,7 +103,7 @@ void main() {
       final result = syncService.dispatchQuestToPlayer(quest, targetPartner: selfContact);
       expect(result, isTrue);
 
-      expect(questService.isUnlocked, isTrue);
+      expect(questService.isUnlocked, isFalse);
       expect(questService.activeQuest, isNotNull);
       expect(questService.activeQuest!.quest.id, equals(quest.id));
       expect(syncService.isQuestConfirmedOnPlayer(quest.id), isTrue);
@@ -126,7 +126,7 @@ void main() {
 
       await syncService.processPendingBackgroundMessages();
 
-      expect(questService.isUnlocked, isTrue);
+      expect(questService.isUnlocked, isFalse);
       expect(questService.activeQuest, isNotNull);
       expect(questService.activeQuest!.quest.title, equals('Precision Ritual'));
       expect(questService.activeQuest!.assignedByPartnerName, equals('Mistress Raven'));
