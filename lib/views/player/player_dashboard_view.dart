@@ -17,6 +17,7 @@ import '../../services/quest_service.dart';
 import '../../models/quest_item.dart';
 import '../quests/player_quest_view.dart';
 import '../../services/debug_settings.dart';
+import '../../widgets/base64_image.dart';
 
 class PlayerDashboardView extends StatelessWidget {
   const PlayerDashboardView({super.key});
@@ -345,8 +346,8 @@ class PlayerDashboardView extends StatelessWidget {
                           children: [
                             ClipRRect(
                               borderRadius: BorderRadius.circular(10),
-                              child: Image.memory(
-                                base64Decode(attachedImageBase64!),
+                              child: Base64Image(
+                                attachedImageBase64!,
                                 height: 180,
                                 width: double.infinity,
                                 fit: BoxFit.cover,
@@ -1088,8 +1089,8 @@ class PlayerDashboardView extends StatelessWidget {
                       const SizedBox(height: 8),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(
-                          base64Decode(active.proofImageBase64!),
+                        child: Base64Image(
+                          active.proofImageBase64!,
                           height: 120,
                           width: double.infinity,
                           fit: BoxFit.cover,

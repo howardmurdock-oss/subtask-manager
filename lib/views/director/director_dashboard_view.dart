@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/sync_service.dart';
@@ -13,6 +12,7 @@ import 'reward_manager_view.dart';
 import '../scheduling/schedule_order_dialog.dart';
 import '../../services/quest_service.dart';
 import '../../models/quest_item.dart';
+import '../../widgets/base64_image.dart';
 
 class DirectorDashboardView extends StatelessWidget {
   const DirectorDashboardView({super.key});
@@ -55,8 +55,8 @@ class DirectorDashboardView extends StatelessWidget {
                   child: InteractiveViewer(
                     minScale: 0.5,
                     maxScale: 4.0,
-                    child: Image.memory(
-                      base64Decode(base64Image),
+                    child: Base64Image(
+                      base64Image,
                       fit: BoxFit.contain,
                     ),
                   ),
@@ -1564,8 +1564,8 @@ class DirectorDashboardView extends StatelessWidget {
                           children: [
                             ClipRRect(
                               borderRadius: BorderRadius.circular(10),
-                              child: Image.memory(
-                                base64Decode(active.proofImageBase64!),
+                              child: Base64Image(
+                                active.proofImageBase64!,
                                 height: 180,
                                 width: double.infinity,
                                 fit: BoxFit.cover,
