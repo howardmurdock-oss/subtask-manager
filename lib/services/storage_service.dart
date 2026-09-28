@@ -7,6 +7,7 @@ import '../models/user_stats.dart';
 import '../models/reward_item.dart';
 import '../models/reward_pack.dart';
 import '../models/active_redemption.dart';
+import '../core/default_pack_data.dart';
 
 class StorageService {
   static const String _keyPacks = 'storage_order_packs';
@@ -265,8 +266,21 @@ class StorageService {
           ),
         ],
       ),
+      ..._bundledRewardPacks(),
     ];
   }
+
+  // The packs in default_pack_data.dart, after the system ones: order_engine
+  // takes the first default order as a placeholder, so that must stay put.
+  static List<OrderPack> _bundledOrderPacks() => [
+        for (final json in [chastityCagePackJson, teaseAndEdgePackJson])
+          OrderPack.fromJson(jsonDecode(json) as Map<String, dynamic>),
+      ];
+
+  static List<RewardPack> _bundledRewardPacks() => [
+        for (final json in [orgasmVaginalPackJson, orgasmsPenisPackJson])
+          RewardPack.fromJson(jsonDecode(json) as Map<String, dynamic>),
+      ];
 
   static List<OrderPack> getDefaultPacks() {
     return [
@@ -346,6 +360,7 @@ class StorageService {
           ),
         ],
       ),
+      ..._bundledOrderPacks(),
     ];
   }
 }
