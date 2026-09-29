@@ -152,6 +152,35 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets("a contact is listed whatever role it was saved with, not hidden as 'nobody paired'",
+      (tester) async {
+    // The case that was reported: a director whose only contact, on 1.0.1,
+    // was saved as a peer. The setup said nobody was paired.
+    await partners.addContact(PartnerContact(
+        id: 'p', displayName: 'PC 1', pairingCode: 'OLD333', pairingSecret: 's', role: PartnerRole.peer));
+    await partners.addContact(PartnerContact(
+        id: 'd', displayName: 'Switchy', pairingCode: 'SWI444', pairingSecret: 's', role: PartnerRole.dominant));
+    await sync.handleIncomingSyncMessage(SyncMessage(
+      type: SyncMessageType.featureHello,
+      senderId: 'x',
+      payload: {'senderCode': 'SWI444', 'features': ['chastityTimer']},
+    ));
+
+    await pump(tester, const TimerSetupView(role: TimerRole.director));
+
+    expect(find.textContaining('Nobody is paired'), findsNothing);
+    expect(find.textContaining("PC 1 can't use the Chastity Timer yet"), findsOneWidget);
+    final switchy = tester.widget<RadioListTile<String?>>(find.widgetWithText(RadioListTile<String?>, 'Switchy'));
+    expect(switchy.enabled, isTrue, reason: 'has the timer, whatever role it was saved with');
+    await finish(tester);
+  });
+
+  testWidgets('with nobody paired at all, it says so', (tester) async {
+    await pump(tester, const TimerSetupView(role: TimerRole.director));
+    expect(find.textContaining('Nobody is paired yet'), findsOneWidget);
+    await finish(tester);
+  });
+
   testWidgets('with no timer, the dashboard card offers to start one', (tester) async {
     await pump(tester, const Scaffold(body: TimerDashboardCard(role: TimerRole.player)));
     expect(find.text('CHASTITY TIMER'), findsOneWidget);

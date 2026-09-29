@@ -82,14 +82,25 @@ class _TimerSetupViewState extends State<TimerSetupView> {
       ? _comboDigits
       : _comboController.text.replaceAll(RegExp(r'\D'), '');
 
-  List<PartnerContact> _candidates(PartnerService partners) =>
-      partners.unblockedContacts
-          .where((c) => !c.isSelf && c.pairingCode.isNotEmpty)
-          // A director picks a player; a player picks a director.
-          .where((c) => _isDirector
-              ? c.role == PartnerRole.submissive
-              : c.role == PartnerRole.dominant)
-          .toList();
+  /// Every paired contact, as the dashboards list them. Not filtered by the
+  /// role saved with the contact: that is often "peer", and devices switch
+  /// sides, so filtering on it hid real partners and said nobody was paired.
+  /// Contacts whose copy lacks the timer are listed too, disabled, with why.
+  List<PartnerContact> _candidates(PartnerService partners, SyncService sync) {
+    int rank(PartnerContact c) {
+      if (!sync.partnerHas(c, chastityTimerFeature)) return 2;
+      final fits = _isDirector ? c.role == PartnerRole.submissive : c.role == PartnerRole.dominant;
+      return fits ? 0 : 1;
+    }
+
+    return partners.unblockedContacts
+        .where((c) => !c.isSelf && c.pairingCode.isNotEmpty)
+        .toList()
+      ..sort((a, b) {
+        final byRank = rank(a).compareTo(rank(b));
+        return byRank != 0 ? byRank : a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+      });
+  }
 
   Future<void> _create() async {
     if (_isDirector && _partner == null) {
@@ -168,7 +179,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
     final theme = Theme.of(context);
     final partners = Provider.of<PartnerService>(context);
     final sync = Provider.of<SyncService>(context);
-    final candidates = _candidates(partners);
+    final candidates = _candidates(partners, sync);
     final partnerChosen = _partner != null;
 
     return Scaffold(
@@ -196,7 +207,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
                   if (candidates.isEmpty && _isDirector)
                     const ListTile(
                         title: Text(
-                            'No players paired yet. Pair with someone in Contacts first.')),
+                            'Nobody is paired yet. Pair with someone in Contacts first.')),
                   ...candidates.map((c) {
                     final has = sync.partnerHas(c, chastityTimerFeature);
                     return RadioListTile<String?>(
