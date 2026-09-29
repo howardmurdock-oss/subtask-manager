@@ -2,11 +2,13 @@
   "name": "subtask-push",
   "private": true,
   "version": "1.0.0",
+  "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "schema": "wrangler d1 execute subtask-push-registry --remote --file=./schema.sql",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail",
+    "test": "node --test \"test/*.test.ts\""
   },
   "dependencies": {
     "@cloudflare/workers-types": "^5.20260911.1",

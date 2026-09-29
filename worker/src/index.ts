@@ -19,6 +19,11 @@
  * app in Doze and let it decide what to show.
  */
 
+import { ChastityTimer, randomToken, sha256Hex } from './timer.ts';
+import { publicPage } from './public_page.ts';
+
+export { ChastityTimer };
+
 export interface Env {
   DB: D1Database;
   TOKEN_CACHE: KVNamespace;
@@ -29,6 +34,11 @@ export interface Env {
   // Comma-separated salted SHA-256 digests of the valid Patreon codes: the
   // same digests the app checks against (PatreonAccess), public in its source.
   PATREON_CODE_DIGESTS: string;
+  CHASTITY_TIMER: DurableObjectNamespace;
+  // Cloudflare Turnstile for public votes. Both unset: votes are not
+  // challenged (the per-visitor and daily caps still apply).
+  TURNSTILE_SITE_KEY?: string;
+  TURNSTILE_SECRET?: string;
 }
 
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -896,6 +906,145 @@ async function handlePatreonFile(request: Request, url: URL, env: Env): Promise<
   });
 }
 
+// ---------------------------------------------------------------------------
+// Chastity timer
+// ---------------------------------------------------------------------------
+
+/** Public link id -> timer id. The link can be replaced or switched off
+ * without the timer, and its keys, changing. */
+async function ensureTimerLinksTable(env: Env): Promise<void> {
+  await env.DB.exec(
+    'CREATE TABLE IF NOT EXISTS timer_links (public_id TEXT PRIMARY KEY, timer_id TEXT NOT NULL)',
+  );
+}
+
+function timerStub(env: Env, timerId: string): DurableObjectStub {
+  return env.CHASTITY_TIMER.get(env.CHASTITY_TIMER.idFromName(timerId));
+}
+
+function callTimer(env: Env, timerId: string, op: string, body: unknown, key?: string | null): Promise<Response> {
+  return timerStub(env, timerId).fetch(`https://timer/${op}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(key ? { 'X-Timer-Key': key } : {}) },
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+/** Keeps timer_links in step with whatever link id the timer now has. */
+async function syncLink(env: Env, timerId: string, previous: string | null, current: string | null): Promise<void> {
+  if (previous === current) return;
+  await ensureTimerLinksTable(env);
+  if (previous) await env.DB.prepare('DELETE FROM timer_links WHERE public_id = ?').bind(previous).run();
+  if (current) {
+    await env.DB.prepare('INSERT OR REPLACE INTO timer_links (public_id, timer_id) VALUES (?, ?)')
+      .bind(current, timerId).run();
+  }
+}
+
+async function handleTimerCreate(request: Request, env: Env): Promise<Response> {
+  const body: any = await request.json().catch(() => ({}));
+  const id = randomToken(16);
+  const playerKey = randomToken(24);
+  const directorKey = randomToken(24);
+  const publicId = randomToken(9);
+  const created = await callTimer(env, id, 'create', {
+    id,
+    managedBy: body.managedBy === 'player' ? 'player' : 'director',
+    config: body.config,
+    playerKeyHash: await sha256Hex(playerKey),
+    directorKeyHash: await sha256Hex(directorKey),
+    publicId,
+  });
+  if (!created.ok) return created;
+  const { publicId: linked } = (await created.json()) as { publicId: string | null };
+  await syncLink(env, id, null, linked);
+  // Both keys go to the creator, who passes the other party theirs over the
+  // partners' encrypted channel. Only their hashes are kept here.
+  return json({ id, playerKey, directorKey, publicId: linked });
+}
+
+async function handleTimerOp(request: Request, env: Env, timerId: string, op: string): Promise<Response> {
+  const key = request.headers.get('X-Timer-Key');
+  const body: any = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
+
+  if (op === 'view') return callTimer(env, timerId, 'view', {}, key);
+  if (op === 'adjust' || op === 'release') return callTimer(env, timerId, op, body, key);
+
+  if (op === 'configure' || op === 'replace-link') {
+    const before = (await (await callTimer(env, timerId, 'view', {}, key)).json()) as { publicId?: string | null };
+    const response = await callTimer(env, timerId, op, { ...body, newPublicId: randomToken(9) }, key);
+    if (!response.ok) return response;
+    const after: any = await response.json();
+    await syncLink(env, timerId, before.publicId ?? after.previous ?? null, after.publicId ?? null);
+    return json(after);
+  }
+  return json({ error: 'not found' }, 404);
+}
+
+const PUBLIC_CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'content-type',
+};
+
+function withCors(response: Response): Response {
+  const out = new Response(response.body, response);
+  for (const [k, v] of Object.entries(PUBLIC_CORS)) out.headers.set(k, v);
+  return out;
+}
+
+async function verifyTurnstile(env: Env, token: unknown, ip: string | null): Promise<boolean> {
+  if (!env.TURNSTILE_SECRET) return true;
+  if (typeof token !== 'string' || !token) return false;
+  const form = new FormData();
+  form.append('secret', env.TURNSTILE_SECRET);
+  form.append('response', token);
+  if (ip) form.append('remoteip', ip);
+  const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body: form });
+  const result = (await r.json().catch(() => ({}))) as { success?: boolean };
+  return result.success === true;
+}
+
+async function handlePublicTimer(request: Request, env: Env, publicId: string, op: string): Promise<Response> {
+  if (!op) {
+    return new Response(publicPage(publicId, env.TURNSTILE_SITE_KEY ?? null), {
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-robots-tag': 'noindex, nofollow',
+        'referrer-policy': 'no-referrer',
+      },
+    });
+  }
+
+  await ensureTimerLinksTable(env);
+  const row = await env.DB.prepare('SELECT timer_id FROM timer_links WHERE public_id = ?')
+    .bind(publicId).first<{ timer_id: string }>();
+  if (!row) return withCors(json({ error: 'no such timer' }, 404));
+
+  if (op === 'state' && request.method === 'GET') {
+    return withCors(await callTimer(env, row.timer_id, 'public-view', { publicId }));
+  }
+
+  if (op === 'vote' && request.method === 'POST') {
+    const body: any = await request.json().catch(() => ({}));
+    const ip = request.headers.get('CF-Connecting-IP');
+    if (!(await verifyTurnstile(env, body.turnstileToken, ip))) {
+      return withCors(json({ error: 'turnstile' }, 403));
+    }
+    // A visitor is their address, for this link, for today - hashed, so no
+    // address is stored. It is what the per-visitor cap counts against.
+    const day = new Date().toISOString().slice(0, 10);
+    const visitor = (await sha256Hex(`${ip ?? 'unknown'}:${publicId}:${day}`)).slice(0, 16);
+    return withCors(await callTimer(env, row.timer_id, 'public-vote', {
+      publicId,
+      visitor,
+      direction: body.direction === -1 ? -1 : 1,
+    }));
+  }
+  return withCors(json({ error: 'not found' }, 404));
+}
+
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(runDueSchedules(env));
@@ -968,6 +1117,20 @@ export default {
 
     if (request.method === 'GET' && url.pathname === '/blob') {
       return handleBlobGet(url, env).catch((e) => json({ error: String(e) }, 500));
+    }
+
+    if (request.method === 'POST' && url.pathname === '/timer') {
+      return handleTimerCreate(request, env).catch((e) => json({ error: String(e) }, 500));
+    }
+    const timerRoute = url.pathname.match(/^\/timer\/([A-Za-z0-9_-]{8,64})\/([a-z-]+)$/);
+    if (timerRoute) {
+      return handleTimerOp(request, env, timerRoute[1], timerRoute[2]).catch((e) => json({ error: String(e) }, 500));
+    }
+    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote))?\/?$/);
+    if (publicRoute) {
+      if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
+      return handlePublicTimer(request, env, publicRoute[1], publicRoute[2] ?? '')
+        .catch((e) => withCors(json({ error: String(e) }, 500)));
     }
 
     if (request.method === 'GET' && url.pathname.startsWith('/patreon/')) {

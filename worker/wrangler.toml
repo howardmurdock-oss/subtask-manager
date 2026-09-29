@@ -53,3 +53,13 @@ class_name = "TopicHub"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["TopicHub"]
+
+# One per chastity timer: its settings and change log, and the only place its
+# end time is worked out. See src/timer.ts.
+[[durable_objects.bindings]]
+name = "CHASTITY_TIMER"
+class_name = "ChastityTimer"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ChastityTimer"]
