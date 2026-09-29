@@ -998,10 +998,13 @@ function withCors(response: Response): Response {
 }
 
 async function verifyTurnstile(env: Env, token: unknown, ip: string | null): Promise<boolean> {
-  if (!env.TURNSTILE_SECRET) return true;
+  // Trimmed: a secret piped in from Windows PowerShell arrives with a
+  // trailing carriage return, which Turnstile would reject as a wrong secret.
+  const secret = env.TURNSTILE_SECRET?.trim();
+  if (!secret) return true;
   if (typeof token !== 'string' || !token) return false;
   const form = new FormData();
-  form.append('secret', env.TURNSTILE_SECRET);
+  form.append('secret', secret);
   form.append('response', token);
   if (ip) form.append('remoteip', ip);
   const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body: form });
@@ -1068,7 +1071,8 @@ async function countDownload(env: Env, platform: string): Promise<void> {
 
 async function handleDownload(request: Request, env: Env, ctx: ExecutionContext, platform: string): Promise<Response> {
   if (platform === 'stats') {
-    if (!(await hasStatsPassword(request.headers.get('Authorization'), env.STATS_PASSWORD))) {
+    // Trimmed, as for the Turnstile secret: PowerShell adds a line ending.
+    if (!(await hasStatsPassword(request.headers.get('Authorization'), env.STATS_PASSWORD?.trim()))) {
       return new Response('Password required.', {
         status: 401,
         headers: { 'www-authenticate': 'Basic realm="SubTask Manager downloads", charset="UTF-8"', 'cache-control': 'no-store' },
