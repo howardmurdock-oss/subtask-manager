@@ -412,7 +412,23 @@ section.hero {
   justify-content: center;
   gap: 16px;
   flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.community-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 40px;
+}
+
+.community-label {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-right: 4px;
 }
 
 .trust-badges {
