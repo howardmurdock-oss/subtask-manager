@@ -24,6 +24,8 @@ import 'push_service.dart';
 import 'worker_socket_service.dart';
 import 'chat_service.dart';
 import 'quest_service.dart';
+import 'chastity_timer_service.dart';
+import '../models/chastity_timer.dart';
 
 enum ConnectionRole { none, player, director }
 enum ConnectionStatus { disconnected, listening, connecting, connected }
@@ -34,6 +36,7 @@ class SyncService extends ChangeNotifier {
   PartnerService? _partnerService;
   ChatService? _chatService;
   QuestService? _questService;
+  ChastityTimerService? _timerService;
   final StreamController<ActiveOrder> _incomingOrderController = StreamController<ActiveOrder>.broadcast();
 
   Stream<ActiveOrder> get onOrderReceived => _incomingOrderController.stream;
@@ -1786,6 +1789,163 @@ class SyncService extends ChangeNotifier {
       _statusMessage = 'Could not connect to $hostIp:$port';
       notifyListeners();
       return false;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Features, and the chastity timer
+  //
+  // Paired copies of the app tell each other which features they have, so a
+  // director is not offered a timer their player's copy cannot show. Anything
+  // before 1.1 never says, and is taken to have none: an older copy reads an
+  // unknown message type as a ping, which is harmless, so these can be sent
+  // to anyone.
+  // -------------------------------------------------------------------------
+
+  /// What this copy of the app can do, as announced to partners.
+  static const Set<String> myFeatures = {'chastityTimer'};
+  static const String partnerFeaturesKey = 'partner_features_v1';
+
+  /// Partner pairing code -> the features their copy announced. A code with
+  /// no entry has never said, and is treated as having none.
+  final Map<String, Set<String>> _partnerFeatures = {};
+
+  void attachTimerService(ChastityTimerService timerService) {
+    _timerService = timerService;
+    _loadPartnerFeatures().then((_) => announceFeatures());
+  }
+
+  ChastityTimerService? get timerService => _timerService;
+
+  /// The features [contact]'s copy announced, or null if it never has.
+  Set<String>? featuresOf(PartnerContact contact) =>
+      _partnerFeatures[PartnerService.normalizeCode(contact.pairingCode)];
+
+  bool partnerHas(PartnerContact contact, String feature) =>
+      featuresOf(contact)?.contains(feature) ?? false;
+
+  Future<void> _loadPartnerFeatures() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(partnerFeaturesKey);
+      if (raw == null) return;
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      _partnerFeatures
+        ..clear()
+        ..addAll(decoded.map((code, list) => MapEntry(code, Set<String>.from(list as List))));
+    } catch (_) {}
+  }
+
+  Future<void> _savePartnerFeatures() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        partnerFeaturesKey,
+        jsonEncode(_partnerFeatures.map((code, set) => MapEntry(code, set.toList()))),
+      );
+    } catch (_) {}
+  }
+
+  /// Tells every partner what this copy can do, asking them to say back.
+  Future<void> announceFeatures() async {
+    final contacts = _partnerService?.unblockedContacts
+            .where((c) => !c.isSelf && c.pairingCode.isNotEmpty)
+            .toList() ??
+        const <PartnerContact>[];
+    for (final c in contacts) {
+      await _sendFeatureHello(c, askBack: true);
+    }
+  }
+
+  Future<void> _sendFeatureHello(PartnerContact contact, {required bool askBack}) =>
+      _sendToContact(
+        contact,
+        SyncMessage(
+          type: SyncMessageType.featureHello,
+          senderId: _deviceId,
+          payload: {
+            'senderCode': _pairingCode,
+            'features': myFeatures.toList(),
+            'askBack': askBack,
+          },
+        ),
+      );
+
+  /// Hands [contact] their key to a timer this device just set up.
+  Future<bool> shareTimer(PartnerContact contact, {required String timerId, required String key, required TimerRole theirRole}) =>
+      _sendToContact(
+        contact,
+        SyncMessage(
+          type: SyncMessageType.timerShare,
+          senderId: _deviceId,
+          payload: {
+            'senderCode': _pairingCode,
+            'senderName': _nickname,
+            'timerId': timerId,
+            'key': key,
+            'role': theirRole.name,
+          },
+        ),
+      );
+
+  /// Tells [contact] a timer they share changed, so they fetch it again.
+  Future<bool> notifyTimerChanged(PartnerContact contact, String timerId, {String? summary}) =>
+      _sendToContact(
+        contact,
+        SyncMessage(
+          type: SyncMessageType.timerChanged,
+          senderId: _deviceId,
+          payload: {
+            'senderCode': _pairingCode,
+            'senderName': _nickname,
+            'timerId': timerId,
+            if (summary != null) 'summary': summary,
+          },
+        ),
+      );
+
+  Future<void> _onFeatureHello(SyncMessage msg) async {
+    final code = PartnerService.normalizeCode(msg.payload['senderCode'] as String? ?? '');
+    final contact = _contactFor(code: code, id: msg.senderId);
+    if (contact == null || code.isEmpty) return;
+    final features = (msg.payload['features'] as List? ?? const []).whereType<String>().toSet();
+    _partnerFeatures[code] = features;
+    await _savePartnerFeatures();
+    notifyListeners();
+    if (msg.payload['askBack'] == true) await _sendFeatureHello(contact, askBack: false);
+  }
+
+  Future<void> _onTimerShare(SyncMessage msg) async {
+    final timers = _timerService;
+    final code = msg.payload['senderCode'] as String? ?? '';
+    final contact = _contactFor(code: code, id: msg.senderId);
+    final timerId = msg.payload['timerId'] as String?;
+    final key = msg.payload['key'] as String?;
+    // Only from someone this device is paired with.
+    if (timers == null || contact == null || timerId == null || key == null) return;
+    final role = msg.payload['role'] == 'director' ? TimerRole.director : TimerRole.player;
+    await timers.addShared(
+      id: timerId,
+      role: role,
+      key: key,
+      partnerCode: contact.pairingCode,
+      partnerName: contact.displayName,
+    );
+    NotificationService.showGenericNotification(
+      title: 'New timer from ${contact.displayName}',
+      body: 'Open the app to see it.',
+    );
+  }
+
+  Future<void> _onTimerChanged(SyncMessage msg) async {
+    final timers = _timerService;
+    final timerId = msg.payload['timerId'] as String?;
+    if (timers == null || timerId == null || timers.recordOf(timerId) == null) return;
+    await timers.refresh(timerId);
+    final contact = _contactFor(code: msg.payload['senderCode'] as String?, id: msg.senderId);
+    final summary = msg.payload['summary'] as String?;
+    if (contact != null && summary != null) {
+      NotificationService.showGenericNotification(title: 'Timer updated by ${contact.displayName}', body: summary);
     }
   }
 
@@ -3558,6 +3718,19 @@ class SyncService extends ChangeNotifier {
 
       case SyncMessageType.pong:
         break;
+
+      case SyncMessageType.featureHello:
+        await _onFeatureHello(msg);
+        break;
+
+      case SyncMessageType.timerShare:
+        await _onTimerShare(msg);
+        break;
+
+      case SyncMessageType.timerChanged:
+        await _onTimerChanged(msg);
+        break;
+
       default:
         break;
     }

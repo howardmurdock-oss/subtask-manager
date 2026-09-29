@@ -29,6 +29,16 @@ enum SyncMessageType {
   identityMigrated,
   identityMigratedAck,
   pairingConfirm,
+
+  /// Which features this copy of the app has. A copy that never sends one -
+  /// anything before 1.1 - is taken to have none of them.
+  featureHello,
+
+  /// Hands a partner their key to a chastity timer.
+  timerShare,
+
+  /// A nudge that a shared timer changed, so the partner fetches it again.
+  timerChanged,
 }
 
 class SyncMessage {

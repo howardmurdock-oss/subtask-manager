@@ -14,6 +14,7 @@ import 'services/schedule_service.dart';
 import 'services/background_link_service.dart';
 import 'services/push_service.dart';
 import 'services/debug_settings.dart';
+import 'services/chastity_timer_service.dart';
 import 'views/home_screen.dart';
 import 'views/disguise/panic_decoy_view.dart';
 import 'views/security/pin_lock_screen.dart';
@@ -47,6 +48,13 @@ void main() async {
   final isPinLocked = securityService.isPinRequired && !securityService.isUnlocked;
   await DebugSettings.instance.load();
   await syncService.init(deferNetwork: isPinLocked);
+
+  // After init, so partners are told this copy's features under the right
+  // pairing code.
+  final timerService = ChastityTimerService();
+  await timerService.load();
+  syncService.attachTimerService(timerService);
+  timerService.refreshAll();
 
   // Register for push once the pairing code is loaded, so the Worker learns
   // which topic this device answers to. The topic is the same hashed code the
@@ -83,6 +91,7 @@ void main() async {
         ChangeNotifierProvider.value(value: questService),
         ChangeNotifierProvider.value(value: scheduleService),
         ChangeNotifierProvider.value(value: syncService),
+        ChangeNotifierProvider.value(value: timerService),
       ],
       child: const OrdersApp(),
     ),
