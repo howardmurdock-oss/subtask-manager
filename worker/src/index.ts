@@ -25,6 +25,10 @@ export interface Env {
   TOPIC_HUB: DurableObjectNamespace;
   FCM_PROJECT_ID: string;
   FCM_SERVICE_ACCOUNT: string; // service-account JSON, set via `wrangler secret put`
+  PATREON_BUILDS: R2Bucket;
+  // Comma-separated salted SHA-256 digests of the valid Patreon codes: the
+  // same digests the app checks against (PatreonAccess), public in its source.
+  PATREON_CODE_DIGESTS: string;
 }
 
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -839,6 +843,59 @@ async function handleDiagSummary(env: Env): Promise<Response> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Patreon early-access builds
+// ---------------------------------------------------------------------------
+
+/**
+ * Serves the Patreon channel's manifest, its signature and its downloads, to
+ * requests carrying a valid Patreon code in X-Patreon-Code.
+ *
+ * The repository is public, so these addresses are no secret; the code is
+ * what keeps the builds to supporters. It is checked the way the app checks
+ * it - trimmed, upper-cased, salted, hashed - so one code works in both
+ * places. It arrives in a header rather than the URL because URLs are logged.
+ *
+ * The files live in R2 under the same names as their paths here:
+ * latest.json, latest.json.sig and download/<file>.
+ */
+async function isPatreonCode(code: string | null, env: Env): Promise<boolean> {
+  if (!code) return false;
+  const salted = new TextEncoder().encode(`patreon_quest_salt_v1_${code.trim().toUpperCase()}`);
+  const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', salted))]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return (env.PATREON_CODE_DIGESTS ?? '')
+    .split(',')
+    .map((d) => d.trim().toLowerCase())
+    .includes(digest);
+}
+
+async function handlePatreonFile(request: Request, url: URL, env: Env): Promise<Response> {
+  if (!(await isPatreonCode(request.headers.get('X-Patreon-Code'), env))) {
+    return json({ error: 'a valid Patreon code is required' }, 403);
+  }
+
+  const key = url.pathname.slice('/patreon/'.length);
+  const allowed =
+    key === 'latest.json' ||
+    key === 'latest.json.sig' ||
+    /^download\/[A-Za-z0-9._-]+$/.test(key);
+  if (!allowed) return json({ error: 'not found' }, 404);
+
+  const object = await env.PATREON_BUILDS.get(key);
+  if (!object) return json({ error: 'not found' }, 404);
+
+  return new Response(object.body, {
+    headers: {
+      'content-type': key === 'latest.json' ? 'application/json; charset=utf-8' : 'application/octet-stream',
+      'content-length': String(object.size),
+      // Per-supporter responses; nothing between here and the app keeps them.
+      'cache-control': 'private, no-store',
+    },
+  });
+}
+
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(runDueSchedules(env));
@@ -911,6 +968,10 @@ export default {
 
     if (request.method === 'GET' && url.pathname === '/blob') {
       return handleBlobGet(url, env).catch((e) => json({ error: String(e) }, 500));
+    }
+
+    if (request.method === 'GET' && url.pathname.startsWith('/patreon/')) {
+      return handlePatreonFile(request, url, env).catch((e) => json({ error: String(e) }, 500));
     }
 
     return json({ error: 'not found' }, 404);

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'manifest_signature.dart';
+import 'patreon_channel.dart';
 import 'schedule_service.dart';
 
 /// A newer release, as described by the published manifest.
@@ -17,6 +18,7 @@ class AppUpdate {
     this.sizeBytes,
     this.sha256,
     this.manifestVerified = false,
+    this.accessCode,
   });
 
   final String version;
@@ -37,6 +39,10 @@ class AppUpdate {
   /// release key. Notifying about an update does not require it; installing
   /// one does.
   final bool manifestVerified;
+
+  /// The Patreon code, for an early-access build: the Worker serves its
+  /// download only to a request carrying one. Null for public releases.
+  final String? accessCode;
 
   String? get sizeLabel =>
       sizeBytes == null ? null : '${(sizeBytes! / (1024 * 1024)).toStringAsFixed(1)} MB';
@@ -73,6 +79,8 @@ class UpdateService {
     'www.subtaskmanager.com',
     'github.com',
     'objects.githubusercontent.com',
+    // Serves the Patreon early-access builds (PatreonChannel).
+    'subtask-push.howard-murdock.workers.dev',
   };
 
   /// Kept in step with pubspec by the release script, which rewrites it.
@@ -101,22 +109,44 @@ class UpdateService {
 
   /// Negative when [a] is older than [b]. Missing components count as zero, so
   /// "1.4" and "1.4.0" are the same version.
+  ///
+  /// A suffix after a hyphen marks an early build of that version, and comes
+  /// before it: 1.0.1 < 1.1.0-p1 < 1.1.0-p2 < 1.1.0. That is how a Patreon
+  /// build is numbered, and why its public release still counts as an update
+  /// to it. The suffix used to be read as a fourth number, which put 1.1.0-p1
+  /// after 1.1.0. Anything after a "+" is build metadata and ignored.
   @visibleForTesting
   static int compareVersions(String a, String b) {
-    List<int> parts(String v) => v
-        .trim()
-        .split(RegExp(r'[.+\-]'))
+    List<int> numbers(String s) => s
+        .split('.')
         .map((p) => int.tryParse(p.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0)
         .toList();
 
-    final left = parts(a);
-    final right = parts(b);
-    for (var i = 0; i < (left.length > right.length ? left.length : right.length); i++) {
-      final l = i < left.length ? left[i] : 0;
-      final r = i < right.length ? right[i] : 0;
-      if (l != r) return l.compareTo(r);
+    int compareNumbers(List<int> left, List<int> right) {
+      for (var i = 0; i < (left.length > right.length ? left.length : right.length); i++) {
+        final l = i < left.length ? left[i] : 0;
+        final r = i < right.length ? right[i] : 0;
+        if (l != r) return l.compareTo(r);
+      }
+      return 0;
     }
-    return 0;
+
+    (List<int>, List<int>?) split(String v) {
+      final withoutBuild = v.trim().split('+').first;
+      final dash = withoutBuild.indexOf('-');
+      if (dash < 0) return (numbers(withoutBuild), null);
+      final suffix = withoutBuild.substring(dash + 1);
+      return (numbers(withoutBuild.substring(0, dash)), suffix.isEmpty ? null : numbers(suffix));
+    }
+
+    final (leftCore, leftEarly) = split(a);
+    final (rightCore, rightEarly) = split(b);
+    final core = compareNumbers(leftCore, rightCore);
+    if (core != 0) return core;
+    if (leftEarly == null && rightEarly == null) return 0;
+    if (leftEarly == null) return 1;
+    if (rightEarly == null) return -1;
+    return compareNumbers(leftEarly, rightEarly);
   }
 
   static bool isNewer(String candidate, String current) =>
@@ -145,6 +175,7 @@ class UpdateService {
     required String currentVersion,
     required String platformKey,
     bool manifestVerified = false,
+    String? accessCode,
   }) {
     try {
       // A byte-order mark is invisible and fatal to jsonDecode. Tools on the
@@ -168,6 +199,7 @@ class UpdateService {
         sizeBytes: forPlatform is Map ? (forPlatform['size'] as num?)?.toInt() : null,
         sha256: forPlatform is Map ? _hexDigest(forPlatform['sha256']) : null,
         manifestVerified: manifestVerified,
+        accessCode: accessCode,
       );
     } catch (_) {
       return null;
@@ -189,32 +221,61 @@ class UpdateService {
         }
       }
 
-      final body = await fetch(Uri.parse(manifestUrl));
+      final public = await _checkChannel(
+        manifest: Uri.parse(manifestUrl),
+        signature: Uri.parse(signatureUrl),
+        fetchWith: fetch,
+      );
       await prefs.setString(lastCheckedKey, DateTime.now().toIso8601String());
-      if (body == null) return null;
 
-      // An unsigned or badly signed manifest still tells the user a version
-      // exists - that only opens a browser. It is installing from one that is
-      // refused, further down in UpdateDownloader.
-      final signature = await fetch(Uri.parse(signatureUrl));
-      final verified = ManifestSignature.verify(
-        manifestBytes: body,
-        signature: signature,
-      );
+      // A supporter also hears about early-access builds. Whichever is newer
+      // is offered: a Patreon build until its public release, then that.
+      final code = await PatreonChannel.storedCode();
+      final early = code == null
+          ? null
+          : await _checkChannel(
+              manifest: Uri.parse(PatreonChannel.manifestUrl),
+              signature: Uri.parse(PatreonChannel.signatureUrl),
+              fetchWith: (url) => PatreonChannel.fetch(url, code),
+              accessCode: code,
+            );
 
-      // Deliberately not filtered by [skip] here: that decides whether to
-      // interrupt someone, not whether an update exists. A user who asks
-      // outright should be told about a version they waved away earlier.
-      return parseManifest(
-        utf8.decode(body, allowMalformed: true),
-        currentVersion: currentVersion,
-        platformKey: platformKey,
-        manifestVerified: verified,
-      );
+      if (public == null) return early;
+      if (early == null) return public;
+      return isNewer(early.version, public.version) ? early : public;
     } catch (e) {
       if (kDebugMode) print('UpdateService.check error: $e');
       return null;
     }
+  }
+
+  static Future<AppUpdate?> _checkChannel({
+    required Uri manifest,
+    required Uri signature,
+    required Future<Uint8List?> Function(Uri url) fetchWith,
+    String? accessCode,
+  }) async {
+    final body = await fetchWith(manifest);
+    if (body == null) return null;
+
+    // An unsigned or badly signed manifest still tells the user a version
+    // exists - that only opens a browser. It is installing from one that is
+    // refused, further down in UpdateDownloader.
+    final verified = ManifestSignature.verify(
+      manifestBytes: body,
+      signature: await fetchWith(signature),
+    );
+
+    // Deliberately not filtered by [skip] here: that decides whether to
+    // interrupt someone, not whether an update exists. A user who asks
+    // outright should be told about a version they waved away earlier.
+    return parseManifest(
+      utf8.decode(body, allowMalformed: true),
+      currentVersion: currentVersion,
+      platformKey: platformKey,
+      manifestVerified: verified,
+      accessCode: accessCode,
+    );
   }
 
   /// Whether the user has waved this version away. Checked before interrupting

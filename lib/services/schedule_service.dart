@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/security/patreon_access.dart';
+import 'patreon_channel.dart';
 import '../models/scheduled_order_rule.dart';
 import '../models/order_item.dart';
 import '../models/partner_contact.dart';
@@ -471,6 +472,8 @@ class ScheduleService extends ChangeNotifier {
   bool unlockWithPasscode(String passcode) {
     if (PatreonAccess.isValid(passcode)) {
       _isUnlocked = true;
+      // Kept for fetching Patreon early-access builds (PatreonChannel).
+      PatreonChannel.remember(passcode);
       _saveToStorage();
       notifyListeners();
       return true;
@@ -480,6 +483,7 @@ class ScheduleService extends ChangeNotifier {
 
   void relock() {
     _isUnlocked = false;
+    PatreonChannel.forget();
     _saveToStorage();
     notifyListeners();
   }

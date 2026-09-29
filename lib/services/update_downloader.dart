@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
+import 'patreon_channel.dart';
 import 'update_service.dart';
 
 /// Why a download ended.
@@ -82,6 +83,12 @@ class UpdateDownloader {
   @visibleForTesting
   static DownloadOpener opener = _openOverHttps;
 
+  /// For Patreon early-access builds, which the Worker serves only with the
+  /// code attached. Replaced in tests.
+  @visibleForTesting
+  static Future<DownloadSource> Function(Uri url, String code) patreonOpener =
+      (url, code) => _openOverHttps(url, headers: {PatreonChannel.codeHeader: code});
+
   static const String fileNamePrefix = 'subtask-update-';
 
   static Future<UpdateDownloadResult> download({
@@ -126,7 +133,11 @@ class UpdateDownloader {
       // Any earlier attempt is replaced rather than appended to.
       if (await target.exists()) await target.delete();
 
-      final source = await opener(uri);
+      // The code goes to the Worker and nowhere else, whatever a manifest says.
+      final code = update.accessCode;
+      final source = code != null && uri.host == PatreonChannel.host
+          ? await patreonOpener(uri, code)
+          : await opener(uri);
       final digest = _DigestSink();
       final hasher = sha256.startChunkedConversion(digest);
 
@@ -189,9 +200,10 @@ class UpdateDownloader {
     return '';
   }
 
-  static Future<DownloadSource> _openOverHttps(Uri url) async {
+  static Future<DownloadSource> _openOverHttps(Uri url, {Map<String, String>? headers}) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
     final request = await client.getUrl(url);
+    headers?.forEach(request.headers.set);
     final response = await request.close();
     if (response.statusCode != 200) {
       client.close(force: true);

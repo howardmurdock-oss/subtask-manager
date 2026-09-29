@@ -8,6 +8,7 @@ import '../models/order_item.dart';
 import '../models/user_stats.dart';
 import '../core/security/encryption_helper.dart';
 import '../core/security/patreon_access.dart';
+import 'patreon_channel.dart';
 import 'order_engine.dart';
 import 'sync_service.dart';
 
@@ -177,6 +178,8 @@ class QuestService extends ChangeNotifier {
   bool unlockWithPasscode(String passcode) {
     if (PatreonAccess.isValid(passcode)) {
       _isUnlocked = true;
+      // Kept for fetching Patreon early-access builds (PatreonChannel).
+      PatreonChannel.remember(passcode);
       _saveToStorage();
       notifyListeners();
       return true;
@@ -186,6 +189,7 @@ class QuestService extends ChangeNotifier {
 
   void relock() {
     _isUnlocked = false;
+    PatreonChannel.forget();
     _saveToStorage();
     notifyListeners();
   }

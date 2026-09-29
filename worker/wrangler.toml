@@ -9,6 +9,10 @@ compatibility_date = "2026-09-01"
 # Firebase project id, e.g. "subtask-manager-1a2b3". Not a secret.
 FCM_PROJECT_ID = "subtask-manager"
 
+# Salted SHA-256 of each valid Patreon code, comma-separated - the same digests
+# lib/core/security/patreon_access.dart checks. Change them together.
+PATREON_CODE_DIGESTS = "41b8e53589df24f399069c68e060d25c9eac2c20eca096f8d6fc6a20ba99895e"
+
 # The service-account JSON is a secret and is NOT set here. Load it with:
 #   npx wrangler secret put FCM_SERVICE_ACCOUNT
 
@@ -16,6 +20,12 @@ FCM_PROJECT_ID = "subtask-manager"
 binding = "DB"
 database_name = "subtask-push-registry"
 database_id = "c10bb87d-867e-442f-b3e0-81b6aef93f1e"
+
+# Patreon early-access builds: latest.json, latest.json.sig and download/<file>,
+# served only to requests carrying a valid Patreon code.
+[[r2_buckets]]
+binding = "PATREON_BUILDS"
+bucket_name = "subtask-patreon-builds"
 
 [[kv_namespaces]]
 binding = "TOKEN_CACHE"

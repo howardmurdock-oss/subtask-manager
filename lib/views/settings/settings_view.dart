@@ -21,6 +21,9 @@ import '../../services/update_flow.dart';
 import '../../services/update_service.dart';
 import '../player/stats_view.dart';
 import '../../services/schedule_service.dart';
+import '../../services/quest_service.dart';
+import '../../services/patreon_channel.dart';
+import '../../core/security/patreon_access.dart';
 import '../../services/sync_service.dart';
 import '../../services/background_link_service.dart';
 import '../../core/notifications/notification_service.dart';
@@ -43,6 +46,9 @@ class _SettingsViewState extends State<SettingsView> {
   /// Diagnostics are for working out why something did not arrive. They are
   /// noise the rest of the time, so the panel starts closed.
   bool _showDebugPanel = false;
+
+  /// Whether a Patreon code is kept for early-access builds. Null until read.
+  bool? _hasPatreonCode;
 
   /// Result of the last explicit check, so the card can report back.
   AppUpdate? _update;
@@ -136,6 +142,85 @@ class _SettingsViewState extends State<SettingsView> {
     super.initState();
     _refreshSoundState();
     _isBatterySaver = BackgroundLinkService.isBatterySaver;
+    _loadPatreonCode();
+  }
+
+  Future<void> _loadPatreonCode() async {
+    final code = await PatreonChannel.storedCode();
+    if (mounted) setState(() => _hasPatreonCode = code != null);
+  }
+
+  /// Asks for the Patreon code. Anyone who unlocked before 1.0.1 has to enter
+  /// it once more: the app used to keep only the fact of the unlock, and the
+  /// Worker needs the code to hand out early-access builds. It is the same
+  /// code, so it unlocks Quests and Scheduled Orders too.
+  Future<void> _enterPatreonCode() async {
+    final controller = TextEditingController();
+    String? error;
+    final entered = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Patreon early-access builds'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Enter your Patreon code to be offered new features before everyone else. '
+                'If you unlocked Quests before version 1.0.1, enter it once more here.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                textCapitalization: TextCapitalization.characters,
+                decoration: InputDecoration(
+                  hintText: 'Access code',
+                  errorText: error,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => CommunityLinks.open(CommunityLinks.patreon),
+              child: const Text('Get the code on Patreon'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (PatreonAccess.isValid(controller.text)) {
+                  Navigator.pop(ctx, controller.text);
+                } else {
+                  setDialogState(() => error = 'That code is not valid.');
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (entered == null || !mounted) return;
+
+    Provider.of<QuestService>(context, listen: false).unlockWithPasscode(entered);
+    Provider.of<ScheduleService>(context, listen: false).unlockWithPasscode(entered);
+    await PatreonChannel.remember(entered);
+    await _loadPatreonCode();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Saved. You will be offered Patreon builds when they are out.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   void _refreshSoundState() {
@@ -806,6 +891,31 @@ class _SettingsViewState extends State<SettingsView> {
                   ),
                   trailing: const Icon(Icons.open_in_new_rounded, size: 18),
                   onTap: () => CommunityLinks.open(CommunityLinks.patreon),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: Colors.amber.withValues(alpha: 0.18),
+                    child: Icon(
+                      _hasPatreonCode == true
+                          ? Icons.verified_rounded
+                          : Icons.new_releases_rounded,
+                      color: Colors.amber,
+                    ),
+                  ),
+                  title: const Text('Patreon early-access builds',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    _hasPatreonCode == true
+                        ? 'On. New features will be offered here before their public release.'
+                        : 'Enter your Patreon code to get new features before everyone else.',
+                    style: TextStyle(
+                        fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
+                  ),
+                  trailing: _hasPatreonCode == true
+                      ? null
+                      : const Icon(Icons.chevron_right_rounded),
+                  onTap: _hasPatreonCode == true ? null : _enterPatreonCode,
                 ),
                 const Divider(height: 1),
                 ListTile(
