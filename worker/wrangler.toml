@@ -25,6 +25,11 @@ FCM_PROJECT_ID = "subtask-manager"
 # lib/core/security/patreon_access.dart checks. Change them together.
 PATREON_CODE_DIGESTS = "41b8e53589df24f399069c68e060d25c9eac2c20eca096f8d6fc6a20ba99895e"
 
+# Cloudflare Turnstile on public timer votes ("SubTask Manager timer votes",
+# hostname subtaskmanager.com). The site key is public; the secret is set with
+#   npx wrangler secret put TURNSTILE_SECRET
+TURNSTILE_SITE_KEY = "0x4AAAAAAFJK2D3-fqhWf7my"
+
 # The service-account JSON is a secret and is NOT set here. Load it with:
 #   npx wrangler secret put FCM_SERVICE_ACCOUNT
 
