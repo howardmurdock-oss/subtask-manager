@@ -137,6 +137,11 @@ class _TimerDetailViewState extends State<TimerDetailView> {
     final view = timers.viewOf(widget.timerId);
     final theme = Theme.of(context);
 
+    // Looking at a finished timer is seeing how it ended.
+    if (view != null && timers.needsAttention(widget.timerId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => timers.acknowledge(widget.timerId));
+    }
+
     if (record == null) {
       return Scaffold(appBar: AppBar(), body: const Center(child: Text('This timer is no longer on this device.')));
     }

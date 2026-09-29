@@ -49,12 +49,27 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
     }
     final theme = Theme.of(context);
     final mine = timers.active(role: widget.role);
-    final record = mine.isEmpty ? null : mine.first;
+    // Nothing running: a timer that ended and has not been looked at yet
+    // comes first - its combination is what the player is waiting for.
+    final unseen = mine.isEmpty ? timers.finishedUnseen(role: widget.role) : const <TimerRecord>[];
+    final record = mine.isNotEmpty ? mine.first : (unseen.isEmpty ? null : unseen.first);
     final view = record == null ? null : timers.viewOf(record.id);
+    final finished = view != null && view.isOver;
 
     String headline;
     String detail;
-    if (record == null) {
+    if (record != null && finished) {
+      final released = view.status == TimerStatus.released;
+      if (widget.role == TimerRole.player) {
+        headline = released ? 'Timer released' : 'Timer finished';
+        detail = view.config.combinationEnabled
+            ? 'Your combination is ready. Tap to see it.'
+            : "You're free. Tap to see how it went.";
+      } else {
+        headline = released ? 'Timer released' : 'Timer finished';
+        detail = '${record.partnerName ?? 'Your player'}${released && view.releasedBy == TimerRole.player ? ' used the emergency release' : "'s timer is over"}. Tap to see how it went.';
+      }
+    } else if (record == null) {
       headline = widget.role == TimerRole.player ? 'No timer running' : 'No timers running';
       detail = widget.role == TimerRole.player ? 'Start one, or wait for your director to.' : 'Start a timer for a partner.';
     } else if (view == null) {
@@ -69,7 +84,7 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
           ? 'left for ${record.partnerName ?? 'your player'}'
           : 'left on your timer';
     }
-    if (mine.length > 1) detail = '$detail  ·  ${mine.length - 1} more';
+    if (!finished && mine.length > 1) detail = '$detail  ·  ${mine.length - 1} more';
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -77,7 +92,7 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
         onTap: () => Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => record == null
               ? TimerHubView(role: widget.role)
-              : mine.length > 1
+              : mine.length > 1 && !finished
                   ? TimerHubView(role: widget.role)
                   : TimerDetailView(timerId: record.id),
         )),
@@ -86,8 +101,11 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
           child: Row(
             children: [
               CircleAvatar(
-                backgroundColor: Colors.pinkAccent.withValues(alpha: 0.15),
-                child: const Icon(Icons.lock_clock_rounded, color: Colors.pinkAccent),
+                backgroundColor: (finished ? Colors.greenAccent : Colors.pinkAccent).withValues(alpha: 0.15),
+                child: Icon(
+                  finished ? Icons.lock_open_rounded : Icons.lock_clock_rounded,
+                  color: finished ? Colors.greenAccent[400] : Colors.pinkAccent,
+                ),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -107,7 +125,7 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
                     Text(
                       headline,
                       style: TextStyle(
-                        fontSize: record != null && view?.remaining != null ? 22 : 16,
+                        fontSize: record != null && !finished && view?.remaining != null ? 22 : 16,
                         fontWeight: FontWeight.bold,
                         fontFeatures: const [FontFeature.tabularFigures()],
                       ),

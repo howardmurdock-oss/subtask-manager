@@ -226,6 +226,35 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets('a finished timer stays on the card until seen, pointing at the combination', (tester) async {
+    ChastityTimerService.request =
+        (m, u, {key, body}) async => TimerApiResponse(200, view(role: 'player', over: true, digits: '4821'));
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
+
+    await pump(tester, const Scaffold(body: TimerDashboardCard(role: TimerRole.player)));
+    expect(find.text('Timer finished'), findsOneWidget);
+    expect(find.text('Your combination is ready. Tap to see it.'), findsOneWidget);
+    expect(find.text('No timer running'), findsNothing);
+
+    await timers.acknowledge('t1');
+    await tester.pump();
+    expect(find.text('No timer running'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('opening a finished timer counts as seeing it', (tester) async {
+    ChastityTimerService.request =
+        (m, u, {key, body}) async => TimerApiResponse(200, view(role: 'player', over: true, digits: '4821'));
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
+    expect(timers.needsAttention('t1'), isTrue);
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+    await tester.pump();
+
+    expect(timers.needsAttention('t1'), isFalse);
+    await finish(tester);
+  });
+
   testWidgets('with no timer, the dashboard card offers to start one', (tester) async {
     await pump(tester, const Scaffold(body: TimerDashboardCard(role: TimerRole.player)));
     expect(find.text('CHASTITY TIMER'), findsOneWidget);

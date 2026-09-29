@@ -55,6 +55,7 @@ void main() async {
   await timerService.load();
   syncService.attachTimerService(timerService);
   timerService.refreshAll();
+  timerService.startWatching();
 
   // Register for push once the pairing code is loaded, so the Worker learns
   // which topic this device answers to. The topic is the same hashed code the

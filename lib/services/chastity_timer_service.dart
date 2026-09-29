@@ -56,6 +56,9 @@ class ChastityTimerService extends ChangeNotifier {
 
   static const String recordsKey = 'chastity_timer_records_v1';
 
+  /// Finished timers whose end this device has shown its person.
+  static const String seenFinishedKey = 'chastity_timer_seen_finished_v1';
+
   /// Where the public link page is served (a route on the website's domain).
   static const String publicLinkBase = 'https://subtaskmanager.com/t/';
 
@@ -70,6 +73,22 @@ class ChastityTimerService extends ChangeNotifier {
   final Map<String, ChastityTimerView> _views = {};
   bool _loaded = false;
 
+  /// A timer that is over stays in front of its person until they have seen
+  /// how it ended - above all the combination. "No timer running" was true
+  /// the moment it ended, and hid the one thing they were waiting for.
+  final Set<String> _seenFinished = {};
+
+  /// Timers already announced through [justFinished] this session.
+  final Set<String> _announced = {};
+  final _finished = StreamController<ChastityTimerView>.broadcast();
+
+  /// Fires once per timer, the first time this device sees it over and not
+  /// yet seen - as it ends while the app is open, or on the next launch.
+  Stream<ChastityTimerView> get justFinished => _finished.stream;
+
+  Timer? _watchdog;
+  final Map<String, DateTime> _lastFetched = {};
+
   List<TimerRecord> get records => List.unmodifiable(_records);
   ChastityTimerView? viewOf(String id) => _views[id];
   bool get isLoaded => _loaded;
@@ -83,6 +102,57 @@ class ChastityTimerService extends ChangeNotifier {
 
   static String publicLinkFor(String publicId) => '$publicLinkBase$publicId';
 
+  /// Whether [id] is over and its person has not yet seen how it ended.
+  bool needsAttention(String id) =>
+      (_views[id]?.isOver ?? false) && !_seenFinished.contains(id);
+
+  /// Finished timers not yet seen, most recent first, for [role].
+  List<TimerRecord> finishedUnseen({TimerRole? role}) => _records
+      .where((r) => role == null || r.role == role)
+      .where((r) => needsAttention(r.id))
+      .toList()
+    ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
+
+  /// Marks a finished timer as seen, so it stops being put in front of them.
+  Future<void> acknowledge(String id) async {
+    if (!(_views[id]?.isOver ?? false) || !_seenFinished.add(id)) return;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(seenFinishedKey, _seenFinished.toList());
+    } catch (_) {}
+  }
+
+  /// Notices timers ending while the app is open.
+  ///
+  /// The end is only known for certain by the Worker - and only the Worker
+  /// hands over the combination. So a timer is fetched again as its end
+  /// passes on this clock, and a hidden one, whose end this device does not
+  /// know, once a minute.
+  void startWatching({Duration every = const Duration(seconds: 10)}) {
+    _watchdog?.cancel();
+    _watchdog = Timer.periodic(every, (_) => _watch());
+  }
+
+  Future<void> _watch() async {
+    final now = DateTime.now();
+    for (final r in List.of(_records)) {
+      final view = _views[r.id];
+      if (view == null || view.status != TimerStatus.running) continue;
+      final pastEnd = view.endAt != null && !view.serverNow.isBefore(view.endAt!);
+      final last = _lastFetched[r.id];
+      final stale = view.endAt == null && (last == null || now.difference(last) >= const Duration(minutes: 1));
+      if (pastEnd || stale) await refresh(r.id);
+    }
+  }
+
+  @override
+  void dispose() {
+    _watchdog?.cancel();
+    _finished.close();
+    super.dispose();
+  }
+
   Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -94,6 +164,9 @@ class ChastityTimerService extends ChangeNotifier {
             : (jsonDecode(raw) as List)
                 .whereType<Map>()
                 .map((m) => TimerRecord.fromJson(Map<String, dynamic>.from(m))));
+      _seenFinished
+        ..clear()
+        ..addAll(prefs.getStringList(seenFinishedKey) ?? const []);
     } catch (e) {
       if (kDebugMode) print('ChastityTimerService: load error: $e');
     }
@@ -189,6 +262,7 @@ class ChastityTimerService extends ChangeNotifier {
   Future<ChastityTimerView?> refresh(String id) async {
     final record = recordOf(id);
     if (record == null) return null;
+    _lastFetched[id] = DateTime.now();
     final response = await _call('GET', Uri.parse('$apiBase/$id/view'), key: record.key);
     if (!response.ok) {
       if (response.status == 403 || response.status == 404) {
@@ -241,6 +315,9 @@ class ChastityTimerService extends ChangeNotifier {
     _views[view.id] = view;
     _armEndNotification(view);
     notifyListeners();
+    if (view.isOver && !_seenFinished.contains(view.id) && _announced.add(view.id)) {
+      _finished.add(view);
+    }
     return view;
   }
 

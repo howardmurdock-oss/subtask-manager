@@ -149,6 +149,62 @@ void main() {
     expect(v.remaining!.inMinutes, inInclusiveRange(9, 10));
   });
 
+  group('when a timer ends', () {
+    test('it is announced once, and stays in front of its person until seen', () async {
+      serve((_, __, ___, ____) => TimerApiResponse(200, view(status: 'ended', endAt: now - 1000)));
+      final service = ChastityTimerService();
+      final announced = <String>[];
+      service.justFinished.listen((v) => announced.add(v.id));
+
+      await service.addShared(id: 't1', role: TimerRole.player, key: 'P');
+      await service.refresh('t1');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(announced, ['t1'], reason: 'once, however often it is fetched');
+      expect(service.finishedUnseen(role: TimerRole.player).single.id, 't1');
+      expect(service.active(role: TimerRole.player), isEmpty);
+
+      await service.acknowledge('t1');
+      expect(service.finishedUnseen(role: TimerRole.player), isEmpty);
+    });
+
+    test('having seen it is remembered across a restart', () async {
+      serve((_, __, ___, ____) => TimerApiResponse(200, view(status: 'ended', endAt: now - 1000)));
+      final first = ChastityTimerService();
+      await first.addShared(id: 't1', role: TimerRole.player, key: 'P');
+      await first.acknowledge('t1');
+
+      final second = ChastityTimerService();
+      await second.load();
+      final announced = <String>[];
+      second.justFinished.listen((v) => announced.add(v.id));
+      await second.refresh('t1');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(announced, isEmpty);
+      expect(second.needsAttention('t1'), isFalse);
+    });
+
+    test('a timer whose end passes while the app is open is fetched again', () async {
+      var ended = false;
+      serve((_, __, ___, ____) => TimerApiResponse(
+          200,
+          ended
+              ? view(status: 'ended', endAt: now - 1000)
+              : view(endAt: DateTime.now().millisecondsSinceEpoch + 150)));
+      final service = ChastityTimerService();
+      await service.addShared(id: 't1', role: TimerRole.player, key: 'P');
+      final finished = service.justFinished.first;
+
+      ended = true;
+      service.startWatching(every: const Duration(milliseconds: 50));
+      final v = await finished.timeout(const Duration(seconds: 2));
+      service.dispose();
+
+      expect(v.status, TimerStatus.ended);
+    });
+  });
+
   test('forgetting a timer removes it from this device only', () async {
     serve((_, __, ___, ____) => TimerApiResponse(200, view()));
     final service = ChastityTimerService();

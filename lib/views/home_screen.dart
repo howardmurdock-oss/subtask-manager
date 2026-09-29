@@ -17,6 +17,9 @@ import 'contacts/partners_and_chat_view.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/update_flow.dart';
 import '../services/update_service.dart';
+import '../services/chastity_timer_service.dart';
+import '../models/chastity_timer.dart';
+import 'chastity_timer/timer_detail_view.dart';
 import '../services/windows_updater.dart';
 import 'pairing/pairing_view.dart';
 import 'settings/settings_view.dart';
@@ -40,6 +43,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   AppUpdate? _update;
   bool _isRequestDialogShowing = false;
   StreamSubscription<ActiveOrder>? _orderSubscription;
+  StreamSubscription<ChastityTimerView>? _timerFinishedSubscription;
+  final Set<String> _timerDialogsShown = {};
   Timer? _updateTimer;
 
   /// A download from an update that never finished installing.
@@ -69,6 +74,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _checkForUpdate(force: true);
       _checkUnfinishedUpdate();
 
+      try {
+        final timers = Provider.of<ChastityTimerService>(context, listen: false);
+        _timerFinishedSubscription = timers.justFinished.listen((view) {
+          if (mounted && view.role == TimerRole.player) _showTimerFinishedDialog(view);
+        });
+        // Timers are fetched at launch, before this was listening: one that
+        // ended while the app was closed may already have been announced.
+        for (final r in timers.finishedUnseen(role: TimerRole.player)) {
+          final view = timers.viewOf(r.id);
+          if (view != null) _showTimerFinishedDialog(view);
+        }
+      } catch (_) {}
+
       // And again while it stays open. A desktop copy can sit running for
       // days, and would otherwise never ask a second time.
       _updateTimer = Timer.periodic(
@@ -83,7 +101,58 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _updateTimer?.cancel();
     _orderSubscription?.cancel();
+    _timerFinishedSubscription?.cancel();
     super.dispose();
+  }
+
+  /// The player's timer is over: said on the spot, with the combination when
+  /// there is one, rather than left for them to find. "Later" keeps it on the
+  /// dashboard card until they look.
+  Future<void> _showTimerFinishedDialog(ChastityTimerView view) async {
+    if (!_timerDialogsShown.add(view.id)) return;
+    final released = view.status == TimerStatus.released;
+    final digits = view.config.combinationDigits;
+    final open = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.lock_open_rounded, size: 40, color: Colors.greenAccent[400]),
+        title: Text(released ? 'Your timer was released' : 'Your timer is up'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              released && view.releasedBy == TimerRole.director
+                  ? 'Your director ended it early.'
+                  : released
+                      ? 'The emergency release was used.'
+                      : "You're free to unlock.",
+              textAlign: TextAlign.center,
+            ),
+            if (digits != null) ...[
+              const SizedBox(height: 16),
+              const Text('Your combination', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              Text(
+                digits.split('').join(' '),
+                style: const TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 4,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Later')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Open')),
+        ],
+      ),
+    );
+    if (open == true && mounted) {
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => TimerDetailView(timerId: view.id)));
+    }
   }
 
   Future<void> _loadSavedRole() async {
