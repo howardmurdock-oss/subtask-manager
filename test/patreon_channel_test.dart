@@ -58,6 +58,14 @@ void main() {
       expect(UpdateService.compareVersions('1.1.0-p1', '1.1.0-p1'), 0);
     });
 
+    test('an early build is shown as people know it', () {
+      expect(UpdateService.displayVersion('1.1.0-p1'), '1.1p');
+      expect(UpdateService.displayVersion('1.1.0-p2'), '1.1p2');
+      expect(UpdateService.displayVersion('2.3.0-p1'), '2.3p');
+      expect(UpdateService.displayVersion('1.0.1'), '1.0.1');
+      expect(UpdateService.displayVersion('1.1.0'), '1.1.0');
+    });
+
     test('build metadata after a plus does not count', () {
       expect(UpdateService.compareVersions('1.0.0+66', '1.0.0'), 0);
       expect(UpdateService.compareVersions('1.0.0+66', '1.0.0+65'), 0);

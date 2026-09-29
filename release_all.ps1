@@ -19,12 +19,21 @@
     .\release_all.ps1
     .\release_all.ps1 -Version "1.2.0"
     .\release_all.ps1 -SkipCloudBuild
+    .\release_all.ps1 -Patreon -Version "1.1.0-p1"
+
+.NOTES
+    -Patreon publishes an early-access build to Patreon supporters only, from
+    a patreon-* branch: Windows and Android, uploaded to the Worker's R2 bucket
+    with a signed manifest the app fetches with the Patreon code. Nothing is
+    pushed to GitHub, no GitHub release is made and the website is untouched -
+    the code stays off the public repository until its public release.
 #>
 
 param (
     [string]$Version,
     [switch]$SkipCloudBuild,
-    [switch]$SkipDeploy
+    [switch]$SkipDeploy,
+    [switch]$Patreon
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,11 +66,34 @@ function Read-Utf8([string]$path) { [System.IO.File]::ReadAllText((Join-Path $PW
 function Write-Utf8([string]$path, [string]$text) { [System.IO.File]::WriteAllText((Join-Path $PWD $path), $text, $utf8NoBom) }
 
 # ---------------------------------------------------------------------------
+# 0. Public or Patreon
+# ---------------------------------------------------------------------------
+# Checked before anything is changed. A public release from Patreon work would
+# build it, commit it and try to push it - the pre-push hook stops the push,
+# but only after everything else. The reverse would publish unreleased work
+# nowhere useful.
+$branch = (git rev-parse --abbrev-ref HEAD).Trim()
+$isPatreonWork = ($branch -like 'patreon-*') -or (Test-Path 'PATREON_EARLY_ACCESS')
+if ($Patreon) {
+    if (-not $isPatreonWork) {
+        Write-Error "-Patreon is for Patreon early-access work (a patreon-* branch). This is '$branch'."
+        exit 1
+    }
+    if (-not $Version -or $Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+-p[0-9]+$') {
+        Write-Error 'A Patreon build needs -Version numbered like 1.1.0-p1: it must sort before its public release.'
+        exit 1
+    }
+} elseif ($isPatreonWork) {
+    Write-Error "'$branch' holds Patreon early-access work. Run with -Patreon, or release public builds from main."
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
 # 1. Version Management
 # ---------------------------------------------------------------------------
 $pubspecContent = Read-Utf8 "pubspec.yaml"
 $currentVersion = "1.1.0"
-if ($pubspecContent -match 'version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+?([0-9]*)') {
+if ($pubspecContent -match 'version:\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?)\+?([0-9]*)') {
     $currentVersion = $matches[1]
     if ($matches[2]) { $currentBuild = [int]$matches[2] } else { $currentBuild = 1 }
 } else {
@@ -74,7 +106,7 @@ if ($Version) {
     Write-Host "==> Bumping version from $currentVersion+$currentBuild to $targetVersion+$newBuild..." -ForegroundColor Yellow
 
     # Update pubspec.yaml
-    $pubspecContent = $pubspecContent -replace 'version:\s*[0-9]+\.[0-9]+\.[0-9]+\+?[0-9]*', "version: $targetVersion+$newBuild"
+    $pubspecContent = $pubspecContent -replace 'version:\s*[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?\+?[0-9]*', "version: $targetVersion+$newBuild"
     Write-Utf8 "pubspec.yaml" $pubspecContent
 
     # Update the version constant in the Dart services
@@ -147,6 +179,8 @@ Write-Host "  [OK] Android APK built." -ForegroundColor Green
 # 4. Local Drives Sync (G:\ and F:\)
 # ---------------------------------------------------------------------------
 $gdriveTarget = "G:\My Drive\Orders App"
+# Patreon builds go beside the public ones, never over them.
+if ($Patreon) { $gdriveTarget = "$gdriveTarget\Patreon" }
 if (Test-Path "G:\My Drive") {
     Write-Host "`n==> Step 4: Syncing to Google Drive ($gdriveTarget)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path $gdriveTarget | Out-Null
@@ -157,6 +191,91 @@ if (Test-Path "G:\My Drive") {
     Copy-Item -Path "subTaskManager-Windows-Release.zip" -Destination "$gdriveTarget\" -Force
     Copy-Item -Path "subTaskManager-Android-Release.apk" -Destination "$gdriveTarget\" -Force
     Write-Host "  [OK] Google Drive updated (Windows, Android)." -ForegroundColor Green
+}
+
+# ---------------------------------------------------------------------------
+# 5P. Patreon: commit locally, publish to R2, stop
+# ---------------------------------------------------------------------------
+if ($Patreon) {
+    Write-Host "`n==> Step 5: Committing locally (Patreon work is never pushed)..." -ForegroundColor Cyan
+    git add .
+    if (git status --porcelain) { git commit -m "Release $releaseTag (Patreon early access)" | Out-Null }
+    Write-Host "  [OK] Committed on $branch. Not pushed." -ForegroundColor Green
+
+    Write-Host "`n==> Step 6: Publishing to the Patreon channel (R2)..." -ForegroundColor Cyan
+    $bucket = "subtask-patreon-builds"
+    $channelBase = "https://subtask-push.howard-murdock.workers.dev/patreon"
+    $stage = Join-Path $env:TEMP "subtask-patreon-$targetVersion"
+    New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+    function Put-R2([string]$key, [string]$file, [string]$type) {
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        Push-Location worker
+        cmd.exe /c "npx wrangler r2 object put `"$bucket/$key`" --file `"$file`" --content-type $type --remote 2>&1" | Out-Null
+        $ok = ($LASTEXITCODE -eq 0)
+        Pop-Location
+        $ErrorActionPreference = $previous
+        if (-not $ok) { Write-Error "Upload of $key failed. Nothing more is published."; exit 1 }
+        Write-Host "  [OK] $key" -ForegroundColor Green
+    }
+
+    # The builds first, the manifest last: a manifest must never name a file
+    # that is not there yet.
+    $channelDownloads = @{}
+    foreach ($entry in @(
+            @{ key = 'windows'; file = 'subTaskManager-Windows-Release.zip'; type = 'application/zip' },
+            @{ key = 'android'; file = 'subTaskManager-Android-Release.apk'; type = 'application/vnd.android.package-archive' })) {
+        Put-R2 "download/$($entry.file)" (Resolve-Path $entry.file).Path $entry.type
+        $channelDownloads[$entry.key] = @{
+            url    = "$channelBase/download/$($entry.file)"
+            sha256 = (Get-FileHash $entry.file -Algorithm SHA256).Hash.ToLower()
+            size   = (Get-Item $entry.file).Length
+            name   = $entry.file
+        }
+    }
+
+    $channelManifest = [ordered]@{
+        version   = $targetVersion
+        build     = $newBuild
+        released  = (Get-Date).ToString('yyyy-MM-dd')
+        channel   = 'patreon'
+        downloads = $channelDownloads
+    } | ConvertTo-Json -Depth 5
+    $manifestFile = Join-Path $stage "latest.json"
+    [System.IO.File]::WriteAllText($manifestFile, $channelManifest, $utf8NoBom)
+
+    $manifestKey = "C:\Users\howar\Documents\antigravity\subtask-secrets\subtask-manifest-key.pem"
+    $opensslExe = @(
+        "C:\Program Files\Git\usr\bin\openssl.exe",
+        "C:\Program Files\OpenSSL-Win64\bin\openssl.exe"
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $sigFile = Join-Path $stage "latest.json.sig"
+    if (-not ((Test-Path $manifestKey) -and $opensslExe)) {
+        Write-Error "No signing key or openssl: a Patreon build is not published unsigned."
+        exit 1
+    }
+    & $opensslExe dgst -sha256 -sign $manifestKey -out $sigFile $manifestFile
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $sigFile)) { Write-Error "Signing failed."; exit 1 }
+    Write-Host "  [OK] Manifest signed." -ForegroundColor Green
+
+    Put-R2 "latest.json" $manifestFile "application/json"
+    Put-R2 "latest.json.sig" $sigFile "application/octet-stream"
+
+    if (Test-Path ".\backup_to_f.ps1") {
+        Write-Host "`n==> Step 7: Mirroring full backup to F:\subTask Manager..." -ForegroundColor Cyan
+        & powershell -ExecutionPolicy Bypass -File .\backup_to_f.ps1 | Out-Null
+        Write-Host "  [OK] F: drive backup synchronized." -ForegroundColor Green
+    }
+
+    Write-Host "`n============================================================" -ForegroundColor Green
+    Write-Host "   PATREON BUILD PUBLISHED ($releaseTag)                    " -ForegroundColor Green
+    Write-Host "============================================================" -ForegroundColor Green
+    Write-Host " * Windows and Android, on the Patreon channel (R2)."
+    Write-Host " * Devices with a Patreon code are offered it within a day."
+    Write-Host " * Nothing was pushed to GitHub; the website is unchanged."
+    Write-Host "============================================================`n" -ForegroundColor Green
+    exit 0
 }
 
 # ---------------------------------------------------------------------------

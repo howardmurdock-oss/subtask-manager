@@ -422,7 +422,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       leading: Icon(Icons.info_outline_rounded, color: theme.colorScheme.error),
       content: Text(
         'The last update downloaded but could not be installed. This copy is '
-        'still version ${UpdateService.currentVersion}, and the download is '
+        'still version ${UpdateService.currentDisplayVersion}, and the download is '
         'still on disk.',
         style: theme.textTheme.bodyMedium,
       ),
@@ -453,19 +453,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         case UpdatePhase.downloading:
           final pct = flow.progress;
           return pct == null
-              ? 'Downloading version ${update.version}...'
-              : 'Downloading version ${update.version} - ${(pct * 100).round()}%';
+              ? 'Downloading version ${UpdateService.displayVersion(update.version)}...'
+              : 'Downloading version ${UpdateService.displayVersion(update.version)} - ${(pct * 100).round()}%';
         case UpdatePhase.readyToInstall:
         case UpdatePhase.installing:
-          return flow.message ?? 'Installing version ${update.version}...';
+          return flow.message ?? 'Installing version ${UpdateService.displayVersion(update.version)}...';
         case UpdatePhase.permissionRequired:
         case UpdatePhase.failed:
           return flow.message ?? 'That did not work.';
         case UpdatePhase.offered:
         case UpdatePhase.dismissed:
           final size = update.sizeLabel;
-          return 'Version ${update.version} is available'
-              '${size != null ? ' ($size)' : ''}. You are on ${UpdateService.currentVersion}.';
+          return 'Version ${UpdateService.displayVersion(update.version)} is available'
+              '${size != null ? ' ($size)' : ''}. You are on ${UpdateService.currentDisplayVersion}.';
       }
     }
 

@@ -96,7 +96,7 @@ class _SettingsViewState extends State<SettingsView> {
             if (mounted) {
               setState(() {
                 _update = null;
-                _updateCheckMessage = 'Version ${update.version} skipped.';
+                _updateCheckMessage = 'Version ${UpdateService.displayVersion(update.version)} skipped.';
               });
             }
           },
@@ -835,13 +835,13 @@ class _SettingsViewState extends State<SettingsView> {
                 ),
                 title: Text(
                   _update != null
-                      ? 'Version ${_update!.version} available'
-                      : 'Version ${UpdateService.currentVersion}',
+                      ? 'Version ${UpdateService.displayVersion(_update!.version)} available'
+                      : 'Version ${UpdateService.currentDisplayVersion}',
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 subtitle: Text(
                   _update != null
-                      ? 'You are on ${UpdateService.currentVersion}.'
+                      ? 'You are on ${UpdateService.currentDisplayVersion}.'
                           '${_update!.sizeLabel != null ? ' Download is ${_update!.sizeLabel}.' : ''}'
                       : (_updateCheckMessage ?? 'Checked against subtaskmanager.com.'),
                   style: TextStyle(
@@ -1055,7 +1055,7 @@ class _SettingsViewState extends State<SettingsView> {
                                 ),
                               ),
                               child: Text(
-                                'v${ScheduleService.appCurrentBuildVersion}',
+                                'v${UpdateService.currentDisplayVersion}',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold,

@@ -149,6 +149,19 @@ class UpdateService {
     return compareNumbers(leftEarly, rightEarly);
   }
 
+  /// A version as people see it. A Patreon early-access build is numbered
+  /// 1.1.0-p1 so it sorts before its public release; it is shown as "1.1p"
+  /// (and a second one as "1.1p2"). Anything else is shown as it is.
+  static String displayVersion(String version) {
+    final m = RegExp(r'^(\d+)\.(\d+)\.0-p(\d+)$').firstMatch(version.trim());
+    if (m == null) return version.trim();
+    final n = int.parse(m.group(3)!);
+    return '${m.group(1)}.${m.group(2)}p${n > 1 ? n : ''}';
+  }
+
+  /// This copy's version, as shown to people.
+  static String get currentDisplayVersion => displayVersion(currentVersion);
+
   static bool isNewer(String candidate, String current) =>
       compareVersions(candidate, current) > 0;
 
