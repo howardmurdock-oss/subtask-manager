@@ -106,3 +106,9 @@ flutter run -d android
 flutter build windows
 flutter build apk --release
 ```
+
+---
+
+## License
+
+The code is public so you can see how the app works and check what it does with your data, but it is **not open source**. All rights are reserved by Tessa Murdock: you may read it, and build it for your own personal use, but copying, modifying, redistributing or reusing any of it needs permission. See [LICENSE](LICENSE) for the terms, and ask in the [community Discord](https://discord.gg/NFTWR4NBGt) for anything beyond them.
