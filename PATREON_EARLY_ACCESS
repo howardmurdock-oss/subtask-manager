@@ -1,0 +1,5 @@
+This branch holds Patreon early-access work that must not reach the public
+repository before its public release.
+
+A local pre-push hook (.git/hooks/pre-push) refuses to push any commit
+containing this file. Delete it in the commit that makes the feature public.
