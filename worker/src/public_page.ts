@@ -83,6 +83,7 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     'not-allowed': "Removing time isn't allowed on this timer.",
     'public-disabled': "This timer isn't taking votes.",
     'turnstile': 'Please complete the check below first.',
+    'at-maximum': 'This timer is already at its maximum length.',
   };
 
   function render() {
@@ -101,7 +102,14 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     $('remove').textContent = 'Remove ' + step;
     $('remove').hidden = !view.allowRemove;
     const canVote = view.acceptingVotes && (!siteKey || token);
-    $('add').disabled = $('remove').disabled = !canVote;
+    $('add').disabled = !canVote || view.atMaximum;
+    $('remove').disabled = !canVote;
+    // Said outright: a greyed-out button alone looks broken.
+    if (running && view.atMaximum && !$('msg').textContent) {
+      $('msg').textContent = view.allowRemove
+        ? 'This timer is at its maximum length. Time can only be removed.'
+        : 'This timer is at its maximum length. No more time can be added.';
+    }
   }
 
   async function load() {

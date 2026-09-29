@@ -29,7 +29,8 @@ class _TimerDetailViewState extends State<TimerDetailView> {
   Timer? _poll;
   bool _busy = false;
 
-  ChastityTimerService get _timers => Provider.of<ChastityTimerService>(context, listen: false);
+  ChastityTimerService get _timers =>
+      Provider.of<ChastityTimerService>(context, listen: false);
 
   @override
   void initState() {
@@ -39,8 +40,10 @@ class _TimerDetailViewState extends State<TimerDetailView> {
     });
     // Strangers and the random schedule change it without a nudge; look
     // again now and then while it is on screen.
-    _poll = Timer.periodic(const Duration(seconds: 30), (_) => _timers.refresh(widget.timerId));
-    WidgetsBinding.instance.addPostFrameCallback((_) => _timers.refresh(widget.timerId));
+    _poll = Timer.periodic(
+        const Duration(seconds: 30), (_) => _timers.refresh(widget.timerId));
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _timers.refresh(widget.timerId));
   }
 
   @override
@@ -53,15 +56,17 @@ class _TimerDetailViewState extends State<TimerDetailView> {
   PartnerContact? _partnerOf(TimerRecord record) {
     final code = record.partnerCode;
     if (code == null || code.isEmpty) return null;
-    return Provider.of<PartnerService>(context, listen: false).findContactByCode(code);
+    return Provider.of<PartnerService>(context, listen: false)
+        .findContactByCode(code);
   }
 
-  void _snack(String text) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text), behavior: SnackBarBehavior.floating));
+  void _snack(String text) => ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), behavior: SnackBarBehavior.floating));
 
   /// Runs [action]; on success tells the partner, with [summary] unless the
   /// timer hides amounts from the player.
-  Future<void> _run(Future<String?> Function() action, {required String done, String? partnerSummary}) async {
+  Future<void> _run(Future<String?> Function() action,
+      {required String done, String? partnerSummary}) async {
     setState(() => _busy = true);
     final error = await action();
     if (!mounted) return;
@@ -79,12 +84,17 @@ class _TimerDetailViewState extends State<TimerDetailView> {
     }
   }
 
-  Future<void> _change(ChastityTimerView view, {required bool add, Duration? amount}) async {
-    final picked = amount ?? await showDurationDialog(context, title: add ? 'Add time' : 'Remove time');
+  Future<void> _change(ChastityTimerView view,
+      {required bool add, Duration? amount}) async {
+    final picked = amount ??
+        await showDurationDialog(context,
+            title: add ? 'Add time' : 'Remove time');
     if (picked == null || picked == Duration.zero || !mounted) return;
     final signed = add ? picked : -picked;
-    final hiddenFromPlayer = view.config.hidden && view.role == TimerRole.director;
-    final who = view.role == TimerRole.director ? 'Your director' : 'Your player';
+    final hiddenFromPlayer =
+        view.config.hidden && view.role == TimerRole.director;
+    final who =
+        view.role == TimerRole.director ? 'Your director' : 'Your player';
     await _run(
       () => _timers.adjust(widget.timerId, signed),
       done: '${add ? 'Added' : 'Removed'} ${formatSpan(picked)}.',
@@ -106,7 +116,9 @@ class _TimerDetailViewState extends State<TimerDetailView> {
             : 'This ends the timer straight away and shows the player the combination, if there is one. '
                 'It cannot be undone.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.pop(ctx, true),
@@ -119,7 +131,9 @@ class _TimerDetailViewState extends State<TimerDetailView> {
     await _run(
       () => _timers.release(widget.timerId),
       done: isPlayer ? 'Released.' : 'Timer ended.',
-      partnerSummary: isPlayer ? 'Your player used the emergency release.' : 'Your director ended your timer early.',
+      partnerSummary: isPlayer
+          ? 'Your player used the emergency release.'
+          : 'Your director ended your timer early.',
     );
   }
 
@@ -139,11 +153,15 @@ class _TimerDetailViewState extends State<TimerDetailView> {
 
     // Looking at a finished timer is seeing how it ended.
     if (view != null && timers.needsAttention(widget.timerId)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => timers.acknowledge(widget.timerId));
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => timers.acknowledge(widget.timerId));
     }
 
     if (record == null) {
-      return Scaffold(appBar: AppBar(), body: const Center(child: Text('This timer is no longer on this device.')));
+      return Scaffold(
+          appBar: AppBar(),
+          body: const Center(
+              child: Text('This timer is no longer on this device.')));
     }
 
     return Scaffold(
@@ -179,7 +197,9 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                   children: [
                     const CircularProgressIndicator(),
                     const SizedBox(height: 16),
-                    TextButton(onPressed: () => timers.refresh(widget.timerId), child: const Text('Try again')),
+                    TextButton(
+                        onPressed: () => timers.refresh(widget.timerId),
+                        child: const Text('Try again')),
                   ],
                 ),
               ),
@@ -188,7 +208,8 @@ class _TimerDetailViewState extends State<TimerDetailView> {
               onRefresh: () => timers.refresh(widget.timerId),
               child: ListView(
                 // Room for the system navigation bar: Android draws the app behind it.
-                padding: EdgeInsets.fromLTRB(16, 12, 16, 32 + MediaQuery.paddingOf(context).bottom),
+                padding: EdgeInsets.fromLTRB(
+                    16, 12, 16, 32 + MediaQuery.paddingOf(context).bottom),
                 children: [
                   _countdownCard(view, theme),
                   const SizedBox(height: 12),
@@ -214,7 +235,9 @@ class _TimerDetailViewState extends State<TimerDetailView> {
     final String small;
     if (view.status == TimerStatus.released) {
       big = 'Unlocked';
-      small = view.releasedBy == TimerRole.player ? 'Ended by emergency release' : 'Ended early by the director';
+      small = view.releasedBy == TimerRole.player
+          ? 'Ended by emergency release'
+          : 'Ended early by the director';
     } else if (view.isOver) {
       big = 'Unlocked';
       small = 'The timer has finished';
@@ -231,20 +254,33 @@ class _TimerDetailViewState extends State<TimerDetailView> {
         child: Column(
           children: [
             Icon(view.isOver ? Icons.lock_open_rounded : Icons.lock_rounded,
-                size: 36, color: view.isOver ? Colors.greenAccent[400] : Colors.pinkAccent),
+                size: 36,
+                color:
+                    view.isOver ? Colors.greenAccent[400] : Colors.pinkAccent),
             const SizedBox(height: 10),
             FittedBox(
               child: Text(
                 big,
-                style: const TextStyle(fontSize: 44, fontWeight: FontWeight.w800,
+                style: const TextStyle(
+                    fontSize: 44,
+                    fontWeight: FontWeight.w800,
                     fontFeatures: [FontFeature.tabularFigures()]),
               ),
             ),
-            Text(small, style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.65))),
-            if (view.config.maxTotalSeconds != null && !view.isOver && view.remaining != null) ...[
+            Text(small,
+                style: TextStyle(
+                    color:
+                        theme.colorScheme.onSurface.withValues(alpha: 0.65))),
+            if (view.config.maxTotalSeconds != null &&
+                !view.isOver &&
+                view.remaining != null) ...[
               const SizedBox(height: 6),
-              Text('Can never run past ${formatSpan(Duration(seconds: view.config.maxTotalSeconds!))} in total',
-                  style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.5))),
+              Text(
+                  'Can never run past ${formatSpan(Duration(seconds: view.config.maxTotalSeconds!))} in total',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color:
+                          theme.colorScheme.onSurface.withValues(alpha: 0.5))),
             ],
           ],
         ),
@@ -254,7 +290,8 @@ class _TimerDetailViewState extends State<TimerDetailView> {
 
   Widget _actionsCard(ChastityTimerView view, ThemeData theme) {
     final isDirector = view.role == TimerRole.director;
-    final canAdd = isDirector ? view.config.director.canAdd : true;
+    final canAdd =
+        (isDirector ? view.config.director.canAdd : true) && !view.atMaximum;
     final canRemove = isDirector && view.config.director.canRemove;
     Widget quick(Duration d, {required bool add}) => ActionChip(
           label: Text('${add ? '+' : '−'}${formatSpan(d)}'),
@@ -266,6 +303,15 @@ class _TimerDetailViewState extends State<TimerDetailView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (view.atMaximum) ...[
+              Text(
+                'This timer is at its maximum length. No more time can be added.',
+                style: TextStyle(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.75)),
+              ),
+              const SizedBox(height: 12),
+            ],
             if (canAdd) ...[
               Text('ADD TIME', style: _label(theme)),
               const SizedBox(height: 8),
@@ -273,7 +319,9 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                 quick(const Duration(minutes: 15), add: true),
                 quick(const Duration(hours: 1), add: true),
                 quick(const Duration(days: 1), add: true),
-                ActionChip(label: const Text('Other…'), onPressed: _busy ? null : () => _change(view, add: true)),
+                ActionChip(
+                    label: const Text('Other…'),
+                    onPressed: _busy ? null : () => _change(view, add: true)),
               ]),
             ],
             if (canRemove) ...[
@@ -284,21 +332,30 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                 quick(const Duration(minutes: 15), add: false),
                 quick(const Duration(hours: 1), add: false),
                 quick(const Duration(days: 1), add: false),
-                ActionChip(label: const Text('Other…'), onPressed: _busy ? null : () => _change(view, add: false)),
+                ActionChip(
+                    label: const Text('Other…'),
+                    onPressed: _busy ? null : () => _change(view, add: false)),
               ]),
             ],
             if (isDirector && view.config.director.dailyCapSeconds != null) ...[
               const SizedBox(height: 10),
-              Text('Limit: ${formatSpan(Duration(seconds: view.config.director.dailyCapSeconds!))} of changes per 24 hours.',
-                  style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+              Text(
+                  'Limit: ${formatSpan(Duration(seconds: view.config.director.dailyCapSeconds!))} of changes per 24 hours.',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color:
+                          theme.colorScheme.onSurface.withValues(alpha: 0.6))),
             ],
             const SizedBox(height: 16),
             OutlinedButton.icon(
               onPressed: _busy ? null : () => _release(view),
-              icon: const Icon(Icons.lock_open_rounded, color: Colors.redAccent),
-              label: Text(isDirector ? 'End the timer now' : 'Emergency release',
+              icon:
+                  const Icon(Icons.lock_open_rounded, color: Colors.redAccent),
+              label: Text(
+                  isDirector ? 'End the timer now' : 'Emergency release',
                   style: const TextStyle(color: Colors.redAccent)),
-              style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent)),
+              style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.redAccent)),
             ),
           ],
         ),
@@ -328,7 +385,9 @@ class _TimerDetailViewState extends State<TimerDetailView> {
   }
 
   Widget _publicCard(ChastityTimerView view, ThemeData theme) {
-    final link = view.publicId == null ? null : ChastityTimerService.publicLinkFor(view.publicId!);
+    final link = view.publicId == null
+        ? null
+        : ChastityTimerService.publicLinkFor(view.publicId!);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -345,20 +404,23 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                   ),
               ],
             ),
-            if (!view.isManager)
+            if (!view.isManager && link == null)
               Text(view.config.publicLink.enabled
                   ? 'Anyone with the link can ${view.config.publicLink.allowRemove ? 'add or remove' : 'add'} time.'
                   : 'No public link.')
             else if (link == null)
               const Text('Off. Switch it on to let anyone with the link vote.')
             else ...[
-              SelectableText(link, style: const TextStyle(fontWeight: FontWeight.w600)),
+              SelectableText(link,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(height: 4),
               Text(
                 'Each vote: ${formatSpan(Duration(seconds: view.config.publicLink.stepSeconds))}'
                 '${view.config.publicLink.allowRemove ? ', either way' : ', adding only'}. '
                 'Per visitor: ${formatSpan(Duration(seconds: view.config.publicLink.perVisitorDailySeconds))} a day.',
-                style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
               ),
               const SizedBox(height: 8),
               Wrap(spacing: 8, children: [
@@ -373,17 +435,48 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                 TextButton.icon(
                   icon: const Icon(Icons.open_in_new_rounded, size: 18),
                   label: const Text('Open'),
-                  onPressed: () => launchUrl(Uri.parse(link), mode: LaunchMode.externalApplication),
+                  onPressed: () => launchUrl(Uri.parse(link),
+                      mode: LaunchMode.externalApplication),
                 ),
-                TextButton.icon(
-                  icon: const Icon(Icons.autorenew_rounded, size: 18),
-                  label: const Text('New link'),
-                  onPressed: _busy
-                      ? null
-                      : () => _run(() => _timers.replaceLink(widget.timerId),
-                          done: 'New link made. The old one no longer works.'),
-                ),
+                if (view.isManager)
+                  TextButton.icon(
+                    icon: const Icon(Icons.autorenew_rounded, size: 18),
+                    label: const Text('New link'),
+                    onPressed: _busy
+                        ? null
+                        : () => _run(() => _timers.replaceLink(widget.timerId),
+                            done:
+                                'New link made. The old one no longer works.'),
+                  ),
               ]),
+              // Only a director manages a player's timer; the player-managed
+              // timer is the player's own, with the link already theirs.
+              if (view.isManager &&
+                  view.role == TimerRole.director &&
+                  !view.isOver)
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: view.config.publicLink.shareWithPlayer,
+                  onChanged: _busy
+                      ? null
+                      : (on) => _run(
+                            () => _timers.configure(widget.timerId, {
+                              'public': {
+                                ...view.config.publicLink.toJson(),
+                                'shareWithPlayer': on
+                              },
+                            }),
+                            done: on
+                                ? 'Your player can now see and share the link.'
+                                : 'The link is no longer shown to your player.',
+                            partnerSummary: on
+                                ? 'Your director gave you the link to your timer.'
+                                : null,
+                          ),
+                  title: const Text('Give your player the link too'),
+                  subtitle: const Text(
+                      'So they can hand it out. Only you can replace it or switch it off.'),
+                ),
             ],
           ],
         ),
@@ -391,7 +484,8 @@ class _TimerDetailViewState extends State<TimerDetailView> {
     );
   }
 
-  Widget _historyCard(ChastityTimerView view, TimerRecord record, ThemeData theme) {
+  Widget _historyCard(
+      ChastityTimerView view, TimerRecord record, ThemeData theme) {
     final entries = view.history.reversed.toList();
     return Card(
       child: Padding(
@@ -402,20 +496,28 @@ class _TimerDetailViewState extends State<TimerDetailView> {
             Text('HISTORY', style: _label(theme)),
             const SizedBox(height: 8),
             // A hidden timer does not tell the player how long it started at.
-            Text(view.config.baseSeconds > 0
-                ? 'Started ${_when(view.startAt)}, at ${formatSpan(Duration(seconds: view.config.baseSeconds))}.'
-                : 'Started ${_when(view.startAt)}.',
-                style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface.withValues(alpha: 0.7))),
+            Text(
+                view.config.baseSeconds > 0
+                    ? 'Started ${_when(view.startAt)}, at ${formatSpan(Duration(seconds: view.config.baseSeconds))}.'
+                    : 'Started ${_when(view.startAt)}.',
+                style: TextStyle(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.7))),
             if (entries.isEmpty)
-              const Padding(padding: EdgeInsets.only(top: 8), child: Text('No changes yet.')),
+              const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text('No changes yet.')),
             ...entries.take(100).map((e) => ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(_actorIcon(e.actor), size: 20),
-                  title: Text(actorLabel(e.actor, partnerName: record.partnerName, viewer: view.role)),
+                  title: Text(actorLabel(e.actor,
+                      partnerName: record.partnerName, viewer: view.role)),
                   subtitle: Text(_when(e.at)),
                   trailing: Text(
-                    e.deltaSeconds == null ? 'changed' : formatChange(e.deltaSeconds!),
+                    e.deltaSeconds == null
+                        ? 'changed'
+                        : formatChange(e.deltaSeconds!),
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       color: e.deltaSeconds == null
@@ -444,11 +546,18 @@ class _TimerDetailViewState extends State<TimerDetailView> {
     final diff = DateTime.now().difference(local);
     String two(int n) => n.toString().padLeft(2, '0');
     final clock = '${two(local.hour)}:${two(local.minute)}';
-    if (diff.inDays == 0 && local.day == DateTime.now().day) return 'today at $clock';
-    if (diff.inDays < 7) return '${diff.inDays == 0 ? 1 : diff.inDays}d ago at $clock';
+    if (diff.inDays == 0 && local.day == DateTime.now().day) {
+      return 'today at $clock';
+    }
+    if (diff.inDays < 7) {
+      return '${diff.inDays == 0 ? 1 : diff.inDays}d ago at $clock';
+    }
     return '${local.day}/${local.month} at $clock';
   }
 
-  TextStyle _label(ThemeData theme) =>
-      TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.2, color: theme.colorScheme.primary);
+  TextStyle _label(ThemeData theme) => TextStyle(
+      fontSize: 12,
+      fontWeight: FontWeight.bold,
+      letterSpacing: 1.2,
+      color: theme.colorScheme.primary);
 }

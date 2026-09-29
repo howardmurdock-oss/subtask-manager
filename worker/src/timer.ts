@@ -186,10 +186,15 @@ export class ChastityTimer {
     const role = await this.roleOf(meta, request.headers.get('X-Timer-Key'));
     if (!role) return reply({ error: 'not your timer' }, 403);
     const manager = role === meta.config.managedBy;
+    // The link, for whoever may see it: the manager, and the player when it
+    // is shared with them. In every reply - a change's reply used to leave it
+    // out, and the app showed the link as switched off until the next fetch.
+    const linkFor = () =>
+      manager || (role === 'player' && meta.config.public.shareWithPlayer) ? meta.publicId : null;
 
     switch (op) {
       case 'view':
-        return reply({ role, manager, publicId: manager ? meta.publicId : null, ...viewFor(this.state(meta), role as Viewer, now) });
+        return reply({ role, manager, publicId: linkFor(), ...viewFor(this.state(meta), role as Viewer, now) });
 
       case 'adjust': {
         const delta = Number(body.delta);
@@ -197,14 +202,14 @@ export class ChastityTimer {
         const state = this.state(meta);
         // A retried request is not applied twice.
         if (state.events.some((e) => e.id === eventId)) {
-          return reply({ role, manager, ...viewFor(state, role, now) });
+          return reply({ role, manager, publicId: linkFor(), ...viewFor(state, role, now) });
         }
         if (state.events.length >= MAX_EVENTS) return reply({ error: 'too-many-changes' }, 409);
         const why = refuse(state, role, delta, now);
-        if (why) return reply({ error: why, role, manager, ...viewFor(state, role, now) }, 409);
+        if (why) return reply({ error: why, role, manager, publicId: linkFor(), ...viewFor(state, role, now) }, 409);
         this.sql.exec(`INSERT INTO events (id, at, actor, delta) VALUES (?, ?, ?, ?)`, eventId, now, role, delta);
         await this.scheduleCleanup(meta);
-        return reply({ role, manager, ...viewFor(this.state(meta), role, now) });
+        return reply({ role, manager, publicId: linkFor(), ...viewFor(this.state(meta), role, now) });
       }
 
       case 'configure': {
@@ -224,7 +229,7 @@ export class ChastityTimer {
         if (!meta.config.public.enabled) meta.publicId = null;
         this.saveMeta(meta);
         await this.scheduleCleanup(meta);
-        return reply({ role, manager, publicId: meta.publicId, ...viewFor(this.state(meta), role, now) });
+        return reply({ role, manager, publicId: linkFor(), ...viewFor(this.state(meta), role, now) });
       }
 
       case 'replace-link': {
@@ -241,13 +246,13 @@ export class ChastityTimer {
         // taken away. The director may end it early too.
         const state = this.state(meta);
         if (resolve(state, now).status !== 'running') {
-          return reply({ role, manager, ...viewFor(state, role, now) });
+          return reply({ role, manager, publicId: linkFor(), ...viewFor(state, role, now) });
         }
         meta.releasedAt = now;
         meta.releasedBy = role;
         this.saveMeta(meta);
         await this.scheduleCleanup(meta);
-        return reply({ role, manager, ...viewFor(this.state(meta), role, now) });
+        return reply({ role, manager, publicId: linkFor(), ...viewFor(this.state(meta), role, now) });
       }
     }
     return reply({ error: 'not found' }, 404);

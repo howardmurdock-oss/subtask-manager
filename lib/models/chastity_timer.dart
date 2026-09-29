@@ -81,6 +81,7 @@ class PublicLinkSettings {
     this.perVisitorDailySeconds = 3600,
     this.dailyCapSeconds,
     this.showTimeLeft = true,
+    this.shareWithPlayer = false,
   });
 
   final bool enabled;
@@ -96,6 +97,10 @@ class PublicLinkSettings {
   final int? dailyCapSeconds;
   final bool showTimeLeft;
 
+  /// The player gets the link too, to hand out themselves. Replacing it or
+  /// switching it off stays with whoever manages the timer.
+  final bool shareWithPlayer;
+
   Map<String, dynamic> toJson() => {
         'enabled': enabled,
         'allowRemove': allowRemove,
@@ -103,6 +108,7 @@ class PublicLinkSettings {
         'perVisitorDailySeconds': perVisitorDailySeconds,
         'dailyCapSeconds': dailyCapSeconds,
         'showTimeLeft': showTimeLeft,
+        'shareWithPlayer': shareWithPlayer,
       };
 
   factory PublicLinkSettings.fromJson(Map<String, dynamic>? json) => PublicLinkSettings(
@@ -112,6 +118,7 @@ class PublicLinkSettings {
         perVisitorDailySeconds: (json?['perVisitorDailySeconds'] as num?)?.toInt() ?? 3600,
         dailyCapSeconds: (json?['dailyCapSeconds'] as num?)?.toInt(),
         showTimeLeft: json?['showTimeLeft'] != false,
+        shareWithPlayer: json?['shareWithPlayer'] == true,
       );
 }
 
@@ -207,6 +214,7 @@ class ChastityTimerView {
     required this.history,
     required this.publicId,
     required this.clockOffset,
+    this.atMaximum = false,
   });
 
   final String id;
@@ -224,8 +232,13 @@ class ChastityTimerView {
   final ChastityTimerConfig config;
   final List<TimerHistoryEntry> history;
 
-  /// The public link's id, for whoever manages the timer. Null otherwise.
+  /// The public link's id, for whoever manages the timer - and the player,
+  /// when it is shared with them. Null otherwise.
   final String? publicId;
+
+  /// No more time can be added: it is at its maximum length. Never set for a
+  /// hidden timer's player, for whom it would hint at the end.
+  final bool atMaximum;
 
   /// The Worker's clock minus this device's, so a countdown is right even
   /// when the device's clock is not.
@@ -270,6 +283,7 @@ class ChastityTimerView {
           .map((e) => TimerHistoryEntry.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
       publicId: json['publicId'] as String?,
+      atMaximum: json['atMaximum'] == true,
       clockOffset: serverNow == null
           ? Duration.zero
           : Duration(milliseconds: serverNow - local.millisecondsSinceEpoch),

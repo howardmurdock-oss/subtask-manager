@@ -146,6 +146,30 @@ await check('replacing the link retires the old one', async () => {
   assert.equal((await call(`/t/${fresh}/state`)).status, 404, 'switching the link off retires it');
 });
 
+await check('a change keeps the link in its reply, for whoever may see it', async () => {
+  const t = (await call('/timer', { body: { managedBy: 'director', config: { baseSeconds: 5 * H, public: { enabled: true } } } })).body;
+  const add = await call(`/timer/${t.id}/adjust`, { key: t.directorKey, body: { delta: 60, eventId: 'x1' } });
+  assert.equal(add.body.publicId, t.publicId);
+  const player = await call(`/timer/${t.id}/view`, { key: t.playerKey });
+  assert.equal(player.body.publicId, null, 'not shared with the player by default');
+
+  const shared = await call(`/timer/${t.id}/configure`, { key: t.directorKey, body: { config: { public: { enabled: true, shareWithPlayer: true } } } });
+  assert.equal(shared.status, 200);
+  const nowPlayer = await call(`/timer/${t.id}/view`, { key: t.playerKey });
+  assert.equal(nowPlayer.body.publicId, t.publicId, 'shared: the player gets it');
+  const replace = await call(`/timer/${t.id}/replace-link`, { key: t.playerKey, body: {} });
+  assert.equal(replace.status, 403, 'but replacing it stays with the director');
+});
+
+await check('at the maximum, a public vote is refused with a reason', async () => {
+  const t = (await call('/timer', { body: { managedBy: 'director', config: { baseSeconds: 2 * H, maxTotalSeconds: 2 * H, public: { enabled: true, stepSeconds: 600 } } } })).body;
+  const state = await call(`/t/${t.publicId}/state`);
+  assert.equal(state.body.atMaximum, true);
+  const vote = await call(`/t/${t.publicId}/vote`, { body: { direction: 1 } });
+  assert.equal(vote.status, 409);
+  assert.equal(vote.body.error, 'at-maximum');
+});
+
 await check("the player's emergency release ends it and reveals the combination", async () => {
   const released = await call(`/timer/${id}/release`, { key: playerKey, body: {} });
   assert.equal(released.status, 200);

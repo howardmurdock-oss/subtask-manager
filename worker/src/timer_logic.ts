@@ -50,6 +50,9 @@ export interface TimerConfig {
     /** Across all visitors, per rolling 24h. Null: unlimited. */
     dailyCapSeconds: number | null;
     showTimeLeft: boolean;
+    /** The player gets the link too, to hand out. Replacing it or switching
+     * it off stays with whoever manages the timer. */
+    shareWithPlayer: boolean;
   };
   combination: {
     enabled: boolean;
@@ -179,7 +182,14 @@ export type Refusal =
   | 'daily-cap'
   | 'visitor-cap'
   | 'public-disabled'
+  | 'at-maximum'
   | 'bad-amount';
+
+/** Whether no more time can be added: the end is at the maximum length. */
+function isAtMaximum(state: TimerState, endAt: number): boolean {
+  const max = state.config.maxTotalSeconds;
+  return max != null && endAt >= state.startAt + max * 1000;
+}
 
 /** Why a change by [actor] cannot be made, or null when it can. */
 export function refuse(
@@ -190,19 +200,24 @@ export function refuse(
   visitor?: string,
 ): Refusal | null {
   if (!Number.isFinite(delta) || delta === 0 || !Number.isInteger(delta)) return 'bad-amount';
-  const { status, history } = resolve(state, now);
+  const { status, history, endAt } = resolve(state, now);
   if (status !== 'running') return 'not-running';
   const { config } = state;
+  // At the maximum, added time would do nothing - and a vote would still be
+  // spent. Refused, so whoever tried is told why rather than left guessing.
+  const full = delta > 0 && isAtMaximum(state, endAt);
 
   switch (actor) {
     case 'player':
       // The player can make it longer, never shorter. The way out is the
       // emergency release, which is logged and tells the director.
-      return delta > 0 ? null : 'not-allowed';
+      if (delta < 0) return 'not-allowed';
+      return full ? 'at-maximum' : null;
 
     case 'director': {
       if (delta > 0 && !config.director.canAdd) return 'not-allowed';
       if (delta < 0 && !config.director.canRemove) return 'not-allowed';
+      if (full) return 'at-maximum';
       const cap = config.director.dailyCapSeconds;
       if (cap != null && usedInDay(history, now, (e) => e.actor === 'director') + Math.abs(delta) > cap) {
         return 'daily-cap';
@@ -214,6 +229,7 @@ export function refuse(
       if (!config.public.enabled) return 'public-disabled';
       if (Math.abs(delta) !== config.public.stepSeconds) return 'bad-amount';
       if (delta < 0 && !config.public.allowRemove) return 'not-allowed';
+      if (full) return 'at-maximum';
       const perVisitor = usedInDay(history, now, (e) => e.actor === 'public' && e.visitor === visitor);
       if (perVisitor + Math.abs(delta) > config.public.perVisitorDailySeconds) return 'visitor-cap';
       const cap = config.public.dailyCapSeconds;
@@ -251,6 +267,9 @@ export function viewFor(state: TimerState, viewer: Viewer, now: number): Record<
       stepSeconds: config.public.stepSeconds,
       allowRemove: config.public.allowRemove,
       acceptingVotes: config.public.enabled && !over,
+      // Adding is refused at the maximum; the page says so instead of
+      // leaving a button that seems to do nothing.
+      atMaximum: !over && isAtMaximum(state, endAt),
       now,
     };
   }
@@ -263,6 +282,8 @@ export function viewFor(state: TimerState, viewer: Viewer, now: number): Record<
     endAt: hideTime ? null : endAt,
     releasedAt: state.releasedAt,
     releasedBy: state.releasedBy,
+    // Not for a hidden timer's player: it would hint at the end.
+    atMaximum: hideAmounts ? null : !over && isAtMaximum(state, endAt),
     config: {
       ...config,
       // The starting length and the ceiling, with the start time, would give
@@ -324,6 +345,7 @@ export function sanitizeConfig(raw: any, managedBy: 'player' | 'director'): Time
       perVisitorDailySeconds: clampInt(r.public?.perVisitorDailySeconds, 60, 7 * 24 * 3600, 3600),
       dailyCapSeconds: nullableCap(r.public?.dailyCapSeconds),
       showTimeLeft: r.public?.showTimeLeft !== false,
+      shareWithPlayer: r.public?.shareWithPlayer === true,
     },
     combination: {
       enabled: r.combination?.enabled === true && digits.length > 0,

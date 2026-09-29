@@ -123,6 +123,38 @@ test('public votes are one step each, and capped per visitor and per day', () =>
   assert.equal(refuse(t, 'public', 600, at(2), 'v3'), 'daily-cap');
 });
 
+test('at the maximum, adding is refused with a reason, removing still works', () => {
+  const t = timer({
+    maxTotalSeconds: 12 * H,
+    director: { canAdd: true, canRemove: true },
+    public: { enabled: true, allowRemove: true, stepSeconds: 600, perVisitorDailySeconds: 7200 },
+  });
+  t.events.push({ id: 'a', at: at(1), actor: 'director', delta: 5 * H });
+  assert.equal(resolve(t, at(2)).endAt, at(12), 'held at the maximum');
+  assert.equal(refuse(t, 'public', 600, at(2), 'v1'), 'at-maximum');
+  assert.equal(refuse(t, 'director', H, at(2)), 'at-maximum');
+  assert.equal(refuse(t, 'player', H, at(2)), 'at-maximum');
+  assert.equal(refuse(t, 'public', -600, at(2), 'v1'), null);
+  assert.equal(refuse(t, 'director', -H, at(2)), null);
+  assert.equal((viewFor(t, 'public', at(2)) as any).atMaximum, true);
+  assert.equal((viewFor(t, 'director', at(2)) as any).atMaximum, true);
+});
+
+test('below the maximum, the public page is told it is not full', () => {
+  const t = timer({ maxTotalSeconds: 12 * H, public: { enabled: true } });
+  assert.equal((viewFor(t, 'public', at(1)) as any).atMaximum, false);
+});
+
+test("a hidden timer's player is not told it is at the maximum", () => {
+  const t = timer({ hidden: true, maxTotalSeconds: 10 * H });
+  assert.equal((viewFor(t, 'player', at(1)) as any).atMaximum, null);
+});
+
+test('sharing the link with the player is off unless asked for', () => {
+  assert.equal(sanitizeConfig({}, 'director').public.shareWithPlayer, false);
+  assert.equal(sanitizeConfig({ public: { shareWithPlayer: true } }, 'director').public.shareWithPlayer, true);
+});
+
 test('a public link that is off takes no votes', () => {
   assert.equal(refuse(timer(), 'public', 600, at(1), 'v1'), 'public-disabled');
 });

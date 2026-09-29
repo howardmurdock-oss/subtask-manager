@@ -30,6 +30,8 @@ String describeTimerError(String? code) {
       return "That isn't allowed on this timer.";
     case 'not-running':
       return 'This timer has already finished.';
+    case 'at-maximum':
+      return 'This timer is already at its maximum length. No more time can be added.';
     case 'too-many-changes':
       return 'This timer has had as many changes as it can take.';
     case 'bad-amount':

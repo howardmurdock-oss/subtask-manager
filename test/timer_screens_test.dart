@@ -255,6 +255,50 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets('at the maximum, adding is not offered, and it says why', (tester) async {
+    ChastityTimerService.request = (m, u, {key, body}) async =>
+        TimerApiResponse(200, {...view(role: 'director', digits: '4821'), 'atMaximum': true});
+    await timers.addShared(id: 't1', role: TimerRole.director, key: 'D', partnerName: 'PC 1');
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+
+    expect(find.textContaining('at its maximum length'), findsOneWidget);
+    expect(find.text('ADD TIME'), findsNothing);
+    expect(find.text('REMOVE TIME'), findsOneWidget, reason: 'removing still works');
+    await finish(tester);
+  });
+
+  testWidgets('a player given the link can copy and open it, but not replace it', (tester) async {
+    final shared = view(role: 'player');
+    (shared['config'] as Map)['public'] = {'enabled': true, 'shareWithPlayer': true, 'stepSeconds': 600};
+    shared['publicId'] = 'abc123XYZ';
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, shared);
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P', partnerName: 'Tessa');
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+
+    expect(find.text('https://subtaskmanager.com/t/abc123XYZ'), findsOneWidget);
+    expect(find.text('Copy'), findsOneWidget);
+    expect(find.text('Open'), findsOneWidget);
+    expect(find.text('New link'), findsNothing);
+    expect(find.text('Give your player the link too'), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('the director can give the player the link from the timer screen', (tester) async {
+    final director = view(role: 'director');
+    (director['config'] as Map)['public'] = {'enabled': true, 'stepSeconds': 600};
+    director['publicId'] = 'abc123XYZ';
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, director);
+    await timers.addShared(id: 't1', role: TimerRole.director, key: 'D', partnerName: 'PC 1');
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+
+    expect(find.text('Give your player the link too'), findsOneWidget);
+    expect(find.text('New link'), findsOneWidget);
+    await finish(tester);
+  });
+
   testWidgets('with no timer, the dashboard card offers to start one', (tester) async {
     await pump(tester, const Scaffold(body: TimerDashboardCard(role: TimerRole.player)));
     expect(find.text('CHASTITY TIMER'), findsOneWidget);

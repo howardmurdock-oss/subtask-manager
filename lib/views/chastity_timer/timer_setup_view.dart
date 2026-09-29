@@ -50,6 +50,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
   bool _publicUnlimited = false;
   Duration _publicCap = const Duration(hours: 12);
   bool _publicShowTime = true;
+  bool _publicShareWithPlayer = false;
 
   bool _comboOn = false;
   int _comboLength = 4;
@@ -137,6 +138,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
         perVisitorDailySeconds: _publicPerVisitor.inSeconds,
         dailyCapSeconds: _publicUnlimited ? null : _publicCap.inSeconds,
         showTimeLeft: _publicShowTime,
+        shareWithPlayer: _isDirector && _publicShareWithPlayer,
       ),
       combinationEnabled: _comboOn,
       combinationDigits: _comboOn ? _combination : null,
@@ -378,6 +380,17 @@ class _TimerSetupViewState extends State<TimerSetupView> {
                     onChanged: (v) => setState(() => _publicShowTime = v),
                     title: const Text('Show visitors the time left'),
                   ),
+                  if (_isDirector && partnerChosen)
+                    SwitchListTile(
+                      value: _publicShareWithPlayer,
+                      onChanged: (v) => setState(() => _publicShareWithPlayer = v),
+                      title: const Text('Give them the link too'),
+                      subtitle: Text(
+                        _hidden && _publicShowTime
+                            ? 'So they can hand it out. The page shows the time left, so with the link they could see it.'
+                            : 'So they can hand it out. Only you can replace the link or switch it off.',
+                      ),
+                    ),
                 ],
               ],
             ),
