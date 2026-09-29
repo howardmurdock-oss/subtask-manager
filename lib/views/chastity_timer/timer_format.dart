@@ -2,15 +2,14 @@ import '../../models/chastity_timer.dart';
 import '../../models/partner_contact.dart';
 
 /// The day the Chastity Timer reaches everyone, as shown to Patreon users
-/// whose partner does not have it yet. Set when 1.1p is published. Null:
-/// "in about two weeks".
-const DateTime? chastityTimerPublicDate = null;
+/// whose partner does not have it yet: 1.1p goes to Patreon on October 1,
+/// 2026, the public 1.1.0 on October 14.
+final DateTime chastityTimerPublicDate = DateTime(2026, 10, 14);
 
 const String chastityTimerFeature = 'chastityTimer';
 
 String _when() {
-  const date = chastityTimerPublicDate;
-  if (date == null) return 'in about two weeks';
+  final date = chastityTimerPublicDate;
   const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
       'September', 'October', 'November', 'December'];
   return 'on ${months[date.month - 1]} ${date.day}';
