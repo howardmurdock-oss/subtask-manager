@@ -83,7 +83,9 @@ class _TimerHubViewState extends State<TimerHubView> {
       body: RefreshIndicator(
         onRefresh: timers.refreshAll,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+          // Room for the button, and for the system navigation bar: Android
+          // draws the app behind it.
+          padding: EdgeInsets.fromLTRB(16, 12, 16, 96 + MediaQuery.paddingOf(context).bottom),
           children: [
             if (records.isEmpty)
               Padding(

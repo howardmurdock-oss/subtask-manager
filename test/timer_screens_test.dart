@@ -175,6 +175,21 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets("the end of the setup page is not hidden behind Android's navigation bar", (tester) async {
+    // Android draws apps behind the system navigation bar; the last lines of
+    // the page sat underneath it.
+    tester.view.padding = const FakeViewPadding(bottom: 48);
+    addTearDown(tester.view.resetPadding);
+    await pump(tester, const TimerSetupView(role: TimerRole.director));
+
+    await tester.drag(find.byType(ListView), const Offset(0, -5000));
+    await tester.pumpAndSettle();
+
+    final last = find.textContaining('You will be told if they do');
+    expect(tester.getRect(last).bottom, lessThanOrEqualTo(1400 - 48));
+    await finish(tester);
+  });
+
   testWidgets('with nobody paired at all, it says so', (tester) async {
     await pump(tester, const TimerSetupView(role: TimerRole.director));
     expect(find.textContaining('Nobody is paired yet'), findsOneWidget);

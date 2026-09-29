@@ -185,7 +185,9 @@ class _TimerSetupViewState extends State<TimerSetupView> {
     return Scaffold(
       appBar: AppBar(title: Text(_isDirector ? 'New timer' : 'My timer')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        // Room for the system navigation bar: Android draws the app behind
+        // it, and the last lines of this page sat underneath.
+        padding: EdgeInsets.fromLTRB(16, 8, 16, 32 + MediaQuery.paddingOf(context).bottom),
         children: [
           _section(theme, _isDirector ? 'WHO IT\'S FOR' : 'DIRECTOR'),
           Card(

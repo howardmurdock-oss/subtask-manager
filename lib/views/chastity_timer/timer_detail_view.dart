@@ -182,7 +182,8 @@ class _TimerDetailViewState extends State<TimerDetailView> {
           : RefreshIndicator(
               onRefresh: () => timers.refresh(widget.timerId),
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                // Room for the system navigation bar: Android draws the app behind it.
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 32 + MediaQuery.paddingOf(context).bottom),
                 children: [
                   _countdownCard(view, theme),
                   const SizedBox(height: 12),
