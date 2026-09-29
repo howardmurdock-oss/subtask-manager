@@ -142,8 +142,11 @@ test('a hidden timer shows the player neither the time left nor the amounts', ()
   assert.equal(player.endAt, null);
   assert.equal(player.history[0].delta, null);
   assert.equal(player.history[0].actor, 'director', 'who changed it is still shown');
+  assert.equal(player.config.baseSeconds, null, 'the starting length would give the end away');
+  assert.equal(player.config.maxTotalSeconds, null);
   const director = viewFor(t, 'director', at(2)) as any;
   assert.equal(director.endAt, at(11));
+  assert.equal(director.config.baseSeconds, 10 * H);
 });
 
 test('the combination reaches the player only when it is over; the director always sees it', () => {

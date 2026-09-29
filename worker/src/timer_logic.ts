@@ -265,6 +265,10 @@ export function viewFor(state: TimerState, viewer: Viewer, now: number): Record<
     releasedBy: state.releasedBy,
     config: {
       ...config,
+      // The starting length and the ceiling, with the start time, would give
+      // away the end of a hidden timer.
+      baseSeconds: hideAmounts ? null : config.baseSeconds,
+      maxTotalSeconds: hideAmounts ? null : config.maxTotalSeconds,
       combination: {
         enabled: config.combination.enabled,
         length: config.combination.digits?.length ?? null,
