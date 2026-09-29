@@ -531,52 +531,108 @@ class _DurationTile extends StatelessWidget {
 
 /// Asks for a length in days, hours and minutes.
 Future<Duration?> showDurationDialog(BuildContext context,
-    {required String title, Duration initial = Duration.zero}) {
-  final days = TextEditingController(text: '${initial.inDays}');
-  final hours = TextEditingController(text: '${initial.inHours % 24}');
-  final minutes = TextEditingController(text: '${initial.inMinutes % 60}');
-  Widget field(TextEditingController c, String label) => Expanded(
-        child: TextField(
-          controller: c,
-          keyboardType: TextInputType.number,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(4)
+        {required String title, Duration initial = Duration.zero}) =>
+    showDialog<Duration>(
+      context: context,
+      builder: (_) => _DurationDialog(title: title, initial: initial),
+    );
+
+/// Each box has its unit written underneath, and the total is spelled out
+/// below them. The fields' own floating labels were not shown by the app's
+/// theme, which left three unlabelled boxes.
+///
+/// A widget of its own so it owns its controllers: disposing them when the
+/// dialog returned broke the fields while its closing animation still drew
+/// them.
+class _DurationDialog extends StatefulWidget {
+  const _DurationDialog({required this.title, required this.initial});
+
+  final String title;
+  final Duration initial;
+
+  @override
+  State<_DurationDialog> createState() => _DurationDialogState();
+}
+
+class _DurationDialogState extends State<_DurationDialog> {
+  late final _days = TextEditingController(text: '${widget.initial.inDays}');
+  late final _hours = TextEditingController(text: '${widget.initial.inHours % 24}');
+  late final _minutes = TextEditingController(text: '${widget.initial.inMinutes % 60}');
+
+  @override
+  void dispose() {
+    _days.dispose();
+    _hours.dispose();
+    _minutes.dispose();
+    super.dispose();
+  }
+
+  int _n(TextEditingController c) => int.tryParse(c.text) ?? 0;
+  Duration get _total => Duration(days: _n(_days), hours: _n(_hours), minutes: _n(_minutes));
+
+  Widget _field(TextEditingController c, String unit, ThemeData theme) => Expanded(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: c,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(4)
+              ],
+              textAlign: TextAlign.center,
+              onChanged: (_) => setState(() {}),
+              // Typing replaces the 0 rather than landing beside it.
+              onTap: () => c.selection = TextSelection(baseOffset: 0, extentOffset: c.text.length),
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              unit,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
+              ),
+            ),
           ],
-          textAlign: TextAlign.center,
-          decoration: InputDecoration(
-              labelText: label, border: const OutlineInputBorder()),
         ),
       );
-  return showDialog<Duration>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(title),
-      content: Row(
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final span = _total;
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          field(days, 'Days'),
-          const SizedBox(width: 8),
-          field(hours, 'Hours'),
-          const SizedBox(width: 8),
-          field(minutes, 'Min'),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _field(_days, 'days', theme),
+              const SizedBox(width: 8),
+              _field(_hours, 'hours', theme),
+              const SizedBox(width: 8),
+              _field(_minutes, 'minutes', theme),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            span == Duration.zero ? 'None' : '= ${formatSpan(span)}',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
         ],
       ),
       actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(
-          onPressed: () {
-            int n(TextEditingController c) => int.tryParse(c.text) ?? 0;
-            Navigator.pop(ctx,
-                Duration(days: n(days), hours: n(hours), minutes: n(minutes)));
-          },
+          onPressed: () => Navigator.pop(context, _total),
           child: const Text('Set'),
         ),
       ],
-    ),
-  ).whenComplete(() {
-    days.dispose();
-    hours.dispose();
-    minutes.dispose();
-  });
+    );
+  }
 }

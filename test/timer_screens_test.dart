@@ -190,6 +190,36 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets('the length dialog says which box is which, and spells out the total', (tester) async {
+    Duration? picked;
+    await pump(tester, Builder(
+      builder: (context) => Scaffold(
+        body: TextButton(
+          onPressed: () async => picked = await showDurationDialog(context, title: 'Starts at'),
+          child: const Text('open'),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('days'), findsOneWidget);
+    expect(find.text('hours'), findsOneWidget);
+    expect(find.text('minutes'), findsOneWidget);
+
+    final boxes = find.byType(TextField);
+    await tester.enterText(boxes.at(0), '1');
+    await tester.enterText(boxes.at(1), '4');
+    await tester.enterText(boxes.at(2), '30');
+    await tester.pump();
+    expect(find.text('= 1 day 4 hours 30 minutes'), findsOneWidget);
+
+    await tester.tap(find.text('Set'));
+    await tester.pumpAndSettle();
+    expect(picked, const Duration(days: 1, hours: 4, minutes: 30));
+    await finish(tester);
+  });
+
   testWidgets('with nobody paired at all, it says so', (tester) async {
     await pump(tester, const TimerSetupView(role: TimerRole.director));
     expect(find.textContaining('Nobody is paired yet'), findsOneWidget);

@@ -43,7 +43,7 @@ String formatSpan(Duration d) {
   final parts = <String>[
     if (days > 0) '$days ${days == 1 ? 'day' : 'days'}',
     if (hours > 0) '$hours ${hours == 1 ? 'hour' : 'hours'}',
-    if (minutes > 0 && days == 0) '$minutes ${minutes == 1 ? 'minute' : 'minutes'}',
+    if (minutes > 0) '$minutes ${minutes == 1 ? 'minute' : 'minutes'}',
   ];
   return parts.join(' ');
 }
