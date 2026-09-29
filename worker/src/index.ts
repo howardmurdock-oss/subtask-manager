@@ -21,6 +21,7 @@
 
 import { ChastityTimer, randomToken, sha256Hex } from './timer.ts';
 import { publicPage } from './public_page.ts';
+import { DOWNLOADS, hasStatsPassword, isBot, releaseUrl, statsPage, summarize, type CountRow } from './download_stats.ts';
 
 export { ChastityTimer };
 
@@ -39,6 +40,9 @@ export interface Env {
   // challenged (the per-visitor and daily caps still apply).
   TURNSTILE_SITE_KEY?: string;
   TURNSTILE_SECRET?: string;
+  // The website download stats page, subtaskmanager.com/download/stats.
+  // Set with: npx wrangler secret put STATS_PASSWORD
+  STATS_PASSWORD?: string;
 }
 
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -1045,14 +1049,71 @@ async function handlePublicTimer(request: Request, env: Env, publicId: string, o
   return withCors(json({ error: 'not found' }, 404));
 }
 
+// ---------------------------------------------------------------------------
+// Website downloads (see download_stats.ts)
+// ---------------------------------------------------------------------------
+
+async function ensureDownloadCountsTable(env: Env): Promise<void> {
+  await env.DB.exec(
+    'CREATE TABLE IF NOT EXISTS download_counts (day TEXT NOT NULL, platform TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, platform))',
+  );
+}
+
+async function countDownload(env: Env, platform: string): Promise<void> {
+  await ensureDownloadCountsTable(env);
+  await env.DB.prepare(
+    'INSERT INTO download_counts (day, platform, count) VALUES (?, ?, 1) ON CONFLICT (day, platform) DO UPDATE SET count = count + 1',
+  ).bind(new Date().toISOString().slice(0, 10), platform).run();
+}
+
+async function handleDownload(request: Request, env: Env, ctx: ExecutionContext, platform: string): Promise<Response> {
+  if (platform === 'stats') {
+    if (!(await hasStatsPassword(request.headers.get('Authorization'), env.STATS_PASSWORD))) {
+      return new Response('Password required.', {
+        status: 401,
+        headers: { 'www-authenticate': 'Basic realm="SubTask Manager downloads", charset="UTF-8"', 'cache-control': 'no-store' },
+      });
+    }
+    await ensureDownloadCountsTable(env);
+    const rows = (await env.DB.prepare('SELECT day, platform, count FROM download_counts').all<CountRow>()).results;
+    const today = new Date().toISOString().slice(0, 10);
+    const summary = summarize(rows, today);
+    if (new URL(request.url).searchParams.get('format') === 'json') {
+      return new Response(JSON.stringify(summary), {
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+      });
+    }
+    return new Response(statsPage(summary, today), {
+      headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' },
+    });
+  }
+
+  if (!DOWNLOADS[platform]) return json({ error: 'not found' }, 404);
+  // Counted in the background, so the download is not held up by it - and a
+  // failure to count never stops anyone downloading.
+  if (request.method === 'GET' && !isBot(request.headers.get('User-Agent'))) {
+    ctx.waitUntil(countDownload(env, platform).catch(() => {}));
+  }
+  return new Response(null, {
+    status: 302,
+    // Not cached anywhere, so every click reaches here and is counted.
+    headers: { location: releaseUrl(platform), 'cache-control': 'no-store' },
+  });
+}
+
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(runDueSchedules(env));
     ctx.waitUntil(sweepExpiredBlobs(env));
   },
 
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    const download = url.pathname.match(/^\/download\/([a-z]+)\/?$/);
+    if (download && (request.method === 'GET' || request.method === 'HEAD')) {
+      return handleDownload(request, env, ctx, download[1]).catch((e) => json({ error: String(e) }, 500));
+    }
 
     if (request.method === 'GET' && url.pathname === '/health') {
       return json({ ok: true, project: env.FCM_PROJECT_ID });
