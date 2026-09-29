@@ -2,6 +2,18 @@ name = "subtask-push"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
+# Public chastity timer links, subtaskmanager.com/t/<id>. A route runs ahead of
+# the Pages site, so website deploys never touch these pages.
+routes = [
+  { pattern = "subtaskmanager.com/t/*", zone_name = "subtaskmanager.com" },
+  { pattern = "www.subtaskmanager.com/t/*", zone_name = "subtaskmanager.com" },
+]
+
+# Every installed app reaches the push relay at subtask-push.<account>.workers.dev
+# (PushService.workerBaseUrl). Declaring routes can switch that address off, so
+# it is kept on explicitly.
+workers_dev = true
+
 # Account id is read from CLOUDFLARE_ACCOUNT_ID, which cloudflare_env.ps1
 # already exports, so no account identifier lives in this file.
 
