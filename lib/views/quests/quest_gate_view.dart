@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../services/sync_service.dart';
 import '../../core/community_links.dart';
 import '../../services/quest_service.dart';
 
@@ -38,6 +39,11 @@ class _QuestGateViewState extends State<QuestGateView> {
     });
 
     if (success) {
+      // Partners are told straight away: a director may use the Patreon
+      // features with a supporter.
+      try {
+        Provider.of<SyncService>(context, listen: false).announceFeatures();
+      } catch (_) {}
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Row(

@@ -213,6 +213,10 @@ class _SettingsViewState extends State<SettingsView> {
     Provider.of<QuestService>(context, listen: false).unlockWithPasscode(entered);
     Provider.of<ScheduleService>(context, listen: false).unlockWithPasscode(entered);
     await PatreonChannel.remember(entered);
+    if (!mounted) return;
+    // Partners are told straight away: a director may use the Patreon
+    // features with a supporter.
+    Provider.of<SyncService>(context, listen: false).announceFeatures();
     await _loadPatreonCode();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

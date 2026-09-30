@@ -7,6 +7,7 @@ import '../../models/partner_contact.dart';
 import '../../services/schedule_service.dart';
 import '../../services/order_engine.dart';
 import '../../services/partner_service.dart';
+import '../../services/sync_service.dart';
 import '../../widgets/draggable_dialog.dart';
 
 class ScheduleOrderDialog {
@@ -16,12 +17,32 @@ class ScheduleOrderDialog {
   }) {
     final scheduleSvc = Provider.of<ScheduleService>(context, listen: false);
 
-    if (!scheduleSvc.isUnlocked) {
+    // A director without the code may still schedule for a partner whose own
+    // Patreon support covers it - and only for them.
+    final sponsored = isDirectorMode && _supporters(context).isNotEmpty;
+    if (!scheduleSvc.isUnlocked && !sponsored) {
       _showPatreonGate(context, isDirectorMode: isDirectorMode);
       return;
     }
 
     _showScheduleModal(context, isDirectorMode: isDirectorMode);
+  }
+
+  static List<PartnerContact> _supporters(BuildContext context) {
+    try {
+      return Provider.of<SyncService>(context, listen: false).supporterContacts();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// A director's rule for a partner, set up through that partner's Patreon
+  /// support, which is not currently announced: it sends nothing until it is.
+  static bool _isPausedForSupport(ScheduledOrderRule rule, BuildContext context, bool ownUnlock) {
+    if (ownUnlock || rule.targetType != ScheduleTargetType.directorDispatch) return false;
+    final code = rule.targetPartnerCode;
+    if (code == null || code.isEmpty || rule.targetPartnerId == PartnerContact.selfId) return false;
+    return !_supporters(context).any((c) => PartnerService.normalizeCode(c.pairingCode) == PartnerService.normalizeCode(code));
   }
 
   static void _showPatreonGate(
@@ -181,6 +202,11 @@ class ScheduleOrderDialog {
     setLoading(false);
 
     if (success) {
+      // Partners are told straight away: a director may use the Patreon
+      // features with a supporter.
+      try {
+        Provider.of<SyncService>(rootCtx, listen: false).announceFeatures();
+      } catch (_) {}
       Navigator.pop(dialogCtx);
       ScaffoldMessenger.of(rootCtx).showSnackBar(
         SnackBar(
@@ -222,11 +248,16 @@ class ScheduleOrderDialog {
     OrderItem? selectedSpecificOrder;
     String? selectedPackId = allPacks.isNotEmpty ? allPacks.first.id : null;
     final pairedScheduleContacts = partnerSvc.unblockedContacts;
-    final allScheduleRecipients = [
-      PartnerContact.self(),
-      ...pairedScheduleContacts,
-    ];
-    PartnerContact? selectedPartner = partnerSvc.activePartner ?? PartnerContact.self();
+    final ownUnlock = Provider.of<ScheduleService>(context, listen: false).isUnlocked;
+    // Without this device's own code, only partners whose Patreon support
+    // covers it: never anyone else, never this device itself.
+    final allScheduleRecipients = ownUnlock
+        ? [PartnerContact.self(), ...pairedScheduleContacts]
+        : _supporters(context);
+    PartnerContact? selectedPartner = allScheduleRecipients.firstWhere(
+      (p) => p.id == (partnerSvc.activePartner?.id ?? PartnerContact.selfId),
+      orElse: () => allScheduleRecipients.first,
+    );
 
     // Common Filter State
     String? selectedCategory;
@@ -355,6 +386,7 @@ class ScheduleOrderDialog {
                     itemBuilder: (ctx, idx) {
                       final rule = currentRules[idx];
                       final isDueSoon = rule.nextTriggerTime.difference(DateTime.now()).inHours < 2;
+                      final pausedForSupport = _isPausedForSupport(rule, dialogCtx, ownUnlock);
 
                       return Card(
                         margin: EdgeInsets.zero,
@@ -411,6 +443,8 @@ class ScheduleOrderDialog {
                                     label: Text(
                                       !rule.isEnabled
                                           ? 'Paused'
+                                          : pausedForSupport
+                                              ? "Paused: ${rule.targetPartnerName ?? 'their'} Patreon access isn't active"
                                           : (rule.timingMode == ScheduleTimingMode.randomWindow
                                               ? 'Surprise Window Active'
                                               : 'Next: ${_formatTimestampHuman(rule.nextTriggerTime)}'),
@@ -538,7 +572,32 @@ class ScheduleOrderDialog {
                   const SizedBox(height: 12),
                 ],
 
-                // Recipient Submissive Selector (Always available with Self + Paired Contacts)
+                if (!ownUnlock) ...[
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.workspace_premium_rounded, color: Colors.amber, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            "Unlocked by ${allScheduleRecipients.map((p) => p.displayName).join(', ')}'s Patreon support. "
+                            'Schedules can only be for them.',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+
+                // Recipient Submissive Selector (Self + paired contacts, or
+                // only supporters without this device's own code)
                 DropdownButtonFormField<PartnerContact>(
                   value: allScheduleRecipients.firstWhere(
                     (p) => p.id == selectedPartner?.id,
