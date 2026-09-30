@@ -21,6 +21,7 @@ import 'package:orders_app/views/quests/director_quest_view.dart';
 import 'package:orders_app/views/quests/quest_gate_view.dart';
 import 'package:orders_app/views/quests/quests_hub_view.dart';
 import 'package:orders_app/views/scheduling/schedule_order_dialog.dart';
+import 'package:orders_app/widgets/patreon_sponsor_banner.dart';
 
 /// A Patreon supporter's features extend to the directors who play with
 /// them - for that player only - and a director's scheduled orders for them
@@ -57,6 +58,12 @@ void main() {
         specificOrder: OrderItem(id: 'o1', title: 'Check in', description: 'Now', durationType: DurationType.instant),
         isSpecificOrder: true,
       );
+
+  test('supporters are named naturally', () {
+    expect(PatreonSponsorBanner.joinNames(['Tessa']), 'Tessa');
+    expect(PatreonSponsorBanner.joinNames(['Tessa', 'PC 1']), 'Tessa and PC 1');
+    expect(PatreonSponsorBanner.joinNames(['A', 'B', 'C']), 'A, B and C');
+  });
 
   group('which rules pause', () {
     test("a director's rule for a supporter fires; for anyone else, it pauses", () async {
@@ -190,6 +197,8 @@ void main() {
 
       expect(find.byType(DirectorQuestView), findsOneWidget);
       expect(find.textContaining("Unlocked by PC 1's Patreon support"), findsOneWidget);
+      expect(find.textContaining('You can build quests and send them to PC 1.'), findsOneWidget);
+      expect(find.text('Patreon here'), findsOneWidget, reason: 'a way to unlock it for everyone');
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 10));
     });
@@ -232,6 +241,8 @@ void main() {
 
       expect(find.text('Patreon Exclusive: Scheduled Orders'), findsNothing);
       expect(find.textContaining("Unlocked by PC 1's Patreon support"), findsOneWidget);
+      expect(find.textContaining('You can schedule orders for PC 1.'), findsOneWidget);
+      expect(find.text('Patreon here'), findsOneWidget);
       expect(find.textContaining('Someone Else'), findsNothing);
       expect(find.textContaining('Myself'), findsNothing);
       await tester.pumpWidget(const SizedBox());

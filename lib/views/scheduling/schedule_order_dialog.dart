@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../widgets/patreon_sponsor_banner.dart';
 import '../../core/community_links.dart';
 import '../../models/scheduled_order_rule.dart';
 import '../../models/order_item.dart';
@@ -573,25 +574,9 @@ class ScheduleOrderDialog {
                 ],
 
                 if (!ownUnlock) ...[
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.workspace_premium_rounded, color: Colors.amber, size: 20),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            "Unlocked by ${allScheduleRecipients.map((p) => p.displayName).join(', ')}'s Patreon support. "
-                            'Schedules can only be for them.',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      ],
-                    ),
+                  PatreonSponsorBanner(
+                    supporterNames: allScheduleRecipients.map((p) => p.displayName).toList(),
+                    whatYouCanDo: (who) => 'You can schedule orders for $who.',
                   ),
                   const SizedBox(height: 12),
                 ],

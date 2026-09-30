@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
+import '../../widgets/patreon_sponsor_banner.dart';
 import '../../models/quest_item.dart';
 import '../../models/quest_pack.dart';
 import '../../models/order_item.dart';
@@ -1362,13 +1363,11 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
   /// Whose Patreon support is letting this director in.
   Widget _sponsorBanner(ThemeData theme) {
     final names = Provider.of<SyncService>(context).supporterContacts().map((c) => c.displayName).toList();
-    return Card(
-      color: Colors.amber.withValues(alpha: 0.12),
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: const Icon(Icons.workspace_premium_rounded, color: Colors.amber),
-        title: Text(names.isEmpty ? 'Patreon access' : 'Unlocked by ${names.join(', ')}\'s Patreon support'),
-        subtitle: const Text('You can build quests and send them to them. Sending to anyone else needs your own code.'),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: PatreonSponsorBanner(
+        supporterNames: names,
+        whatYouCanDo: (who) => 'You can build quests and send them to $who.',
       ),
     );
   }
