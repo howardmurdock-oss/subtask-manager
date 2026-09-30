@@ -18,6 +18,7 @@ import '../models/scheduled_order_rule.dart';
 import 'storage_service.dart';
 import 'schedule_coordinator.dart';
 import 'push_service.dart';
+import 'patreon_sponsorship.dart';
 
 // ---------------------------------------------------------------------------
 // Background isolate entry point — must be top-level & annotated
@@ -712,6 +713,9 @@ class DirectiveSyncTaskHandler extends TaskHandler {
   }
 
   Future<void> _executeBackgroundScheduledRule(ScheduledOrderRule rule, SharedPreferences prefs) async {
+    // Set up through a player's Patreon support that is no longer announced:
+    // skipped here too. The app says so when it next runs the rule.
+    if (PatreonSponsorship.isPaused(rule, prefs)) return;
     final finalOrder = rule.stagedOrder ?? rule.specificOrder ?? _drawBackgroundCandidateOrder(rule, prefs);
     if (finalOrder == null) return;
 

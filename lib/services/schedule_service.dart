@@ -16,6 +16,7 @@ import '../models/sync_message.dart';
 import '../core/security/encryption_helper.dart';
 import 'sync_service.dart';
 import 'partner_service.dart';
+import 'patreon_sponsorship.dart';
 
 class ScheduleService extends ChangeNotifier {
   static const String appCurrentBuildVersion = '1.0.1';
@@ -436,9 +437,25 @@ class ScheduleService extends ChangeNotifier {
   /// Re-arming is idempotent for the imminent occurrence, which keeps its
   /// stored trigger time.
   Future<void> rearmAllAlarms() async {
+    final prefs = await SharedPreferences.getInstance();
     for (final rule in _rules) {
       if (!rule.isEnabled) continue;
+      // A paused rule sends nothing, so nothing is announced for it either.
+      if (PatreonSponsorship.isPaused(rule, prefs)) {
+        await NotificationService.cancelOrderNotification(rule.id);
+        continue;
+      }
       await NotificationService.scheduleOrderNotification(rule);
+    }
+  }
+
+  /// Whether [rule] is paused because the player's Patreon support, which it
+  /// was set up through, is not currently announced.
+  static Future<bool> isRulePaused(ScheduledOrderRule rule) async {
+    try {
+      return PatreonSponsorship.isPaused(rule, await SharedPreferences.getInstance());
+    } catch (_) {
+      return false;
     }
   }
 
@@ -655,8 +672,30 @@ class ScheduleService extends ChangeNotifier {
     }
   }
 
+  /// Rules whose pause has already been announced, until they fire again.
+  static const String pausedNotifiedKey = 'schedule_paused_notified_v1';
+
   Future<void> _executeDirectorDispatch(ScheduledOrderRule rule) async {
     if (_syncService == null) return;
+
+    // Set up through a player's Patreon support, which is no longer
+    // announced: skipped, not queued, until it is back.
+    final prefs = await SharedPreferences.getInstance();
+    final notified = prefs.getStringList(pausedNotifiedKey) ?? <String>[];
+    if (PatreonSponsorship.isPaused(rule, prefs)) {
+      if (!notified.contains(rule.id)) {
+        await prefs.setStringList(pausedNotifiedKey, [...notified, rule.id]);
+        NotificationService.showGenericNotification(
+          title: 'Scheduled order paused',
+          body: '"${rule.title}" for ${rule.targetPartnerName ?? 'your player'} is paused: '
+              "their Patreon access isn't active. It resumes when it is.",
+        );
+      }
+      return;
+    }
+    if (notified.contains(rule.id)) {
+      await prefs.setStringList(pausedNotifiedKey, notified.where((id) => id != rule.id).toList());
+    }
 
     OrderItem? orderToDispatch = rule.stagedOrder ?? rule.specificOrder;
 

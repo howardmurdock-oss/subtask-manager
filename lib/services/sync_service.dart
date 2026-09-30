@@ -24,6 +24,7 @@ import 'push_service.dart';
 import 'worker_socket_service.dart';
 import 'chat_service.dart';
 import 'quest_service.dart';
+import 'patreon_sponsorship.dart';
 
 enum ConnectionRole { none, player, director }
 enum ConnectionStatus { disconnected, listening, connecting, connected }
@@ -1854,7 +1855,19 @@ class SyncService extends ChangeNotifier {
     }
   }
 
-  Future<void> _sendFeatureHello(PartnerContact contact, {required bool askBack}) =>
+  /// [myFeatures], plus supporter status when this copy is unlocked: a
+  /// supporter's directors may then use the Patreon features with them.
+  Future<Set<String>> currentFeatures() async {
+    try {
+      // No reload: the unlock is written by this isolate, and a reload racing
+      // a save drops that save from the cache.
+      final prefs = await SharedPreferences.getInstance();
+      if (PatreonSponsorship.ownUnlock(prefs)) return {...myFeatures, PatreonSponsorship.supporterFeature};
+    } catch (_) {}
+    return myFeatures;
+  }
+
+  Future<void> _sendFeatureHello(PartnerContact contact, {required bool askBack}) async =>
       _sendToContact(
         contact,
         SyncMessage(
@@ -1862,11 +1875,21 @@ class SyncService extends ChangeNotifier {
           senderId: _deviceId,
           payload: {
             'senderCode': _pairingCode,
-            'features': myFeatures.toList(),
+            'features': (await currentFeatures()).toList(),
             'askBack': askBack,
           },
         ),
       );
+
+  /// Whether [contact] has announced Patreon support - and so whether this
+  /// device may use the Patreon features with them without its own code.
+  bool isSupporter(PartnerContact contact) =>
+      !contact.isSelf && partnerHas(contact, PatreonSponsorship.supporterFeature);
+
+  /// Paired contacts whose Patreon support covers this device's use of the
+  /// Patreon features with them.
+  List<PartnerContact> supporterContacts() =>
+      _partnerService?.unblockedContacts.where(isSupporter).toList() ?? const [];
 
   Future<void> _onFeatureHello(SyncMessage msg) async {
     final code = PartnerService.normalizeCode(msg.payload['senderCode'] as String? ?? '');

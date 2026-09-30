@@ -22,6 +22,26 @@ class DirectorQuestView extends StatefulWidget {
 }
 
 class _DirectorQuestViewState extends State<DirectorQuestView> {
+  /// Who quests may be sent to. With this device's own Patreon code: anyone
+  /// paired, and "Myself" where offered. Without it, only partners whose own
+  /// Patreon support covers it - never anyone else, never this device.
+  List<PartnerContact> _recipients({bool includeSelf = false}) {
+    final questSvc = Provider.of<QuestService>(context, listen: false);
+    final partnerSvc = Provider.of<PartnerService>(context, listen: false);
+    final sync = Provider.of<SyncService>(context, listen: false);
+    if (questSvc.isUnlocked) {
+      return [if (includeSelf) PartnerContact.self(), ...partnerSvc.unblockedContacts];
+    }
+    return sync.supporterContacts();
+  }
+
+  void _noRecipients() => ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No one to send to. Sending quests needs your own Patreon code, '
+              'or a partner whose Patreon support covers it.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   void _openQuestEditor([Quest? existing]) {
     final titleCtrl = TextEditingController(text: existing?.title ?? '');
     final descCtrl = TextEditingController(text: existing?.description ?? '');
@@ -698,11 +718,12 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
   void _dispatchQuest(Quest quest) {
     final partnerSvc = Provider.of<PartnerService>(context, listen: false);
     final sync = Provider.of<SyncService>(context, listen: false);
-    final selfContact = PartnerContact.self();
-    final contacts = <PartnerContact>[
-      selfContact,
-      ...partnerSvc.unblockedContacts,
-    ];
+    final contacts = _recipients(includeSelf: true);
+    if (contacts.isEmpty) {
+      _noRecipients();
+      return;
+    }
+    final selfContact = contacts.first;
 
     showDialog(
       context: context,
@@ -804,12 +825,10 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
   void _sendQuestViaChat(Quest quest) {
     final partnerSvc = Provider.of<PartnerService>(context, listen: false);
     final sync = Provider.of<SyncService>(context, listen: false);
-    final contacts = partnerSvc.unblockedContacts;
+    final contacts = _recipients();
 
     if (contacts.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No paired partners found to send quest.')),
-      );
+      _noRecipients();
       return;
     }
 
@@ -875,12 +894,10 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
   void _sendQuestPackViaChat(QuestPack pack) {
     final partnerSvc = Provider.of<PartnerService>(context, listen: false);
     final sync = Provider.of<SyncService>(context, listen: false);
-    final contacts = partnerSvc.unblockedContacts;
+    final contacts = _recipients();
 
     if (contacts.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No paired partners found to send quest pack.')),
-      );
+      _noRecipients();
       return;
     }
 
@@ -1342,6 +1359,20 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
     }
   }
 
+  /// Whose Patreon support is letting this director in.
+  Widget _sponsorBanner(ThemeData theme) {
+    final names = Provider.of<SyncService>(context).supporterContacts().map((c) => c.displayName).toList();
+    return Card(
+      color: Colors.amber.withValues(alpha: 0.12),
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: const Icon(Icons.workspace_premium_rounded, color: Colors.amber),
+        title: Text(names.isEmpty ? 'Patreon access' : 'Unlocked by ${names.join(', ')}\'s Patreon support'),
+        subtitle: const Text('You can build quests and send them to them. Sending to anyone else needs your own code.'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final questSvc = Provider.of<QuestService>(context);
@@ -1373,6 +1404,8 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (!questSvc.isUnlocked) _sponsorBanner(theme),
+
           // Header Card
           Card(
             elevation: 2,
