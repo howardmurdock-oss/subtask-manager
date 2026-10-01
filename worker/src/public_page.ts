@@ -40,6 +40,9 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   #cf { margin-top:16px; display:flex; justify-content:center; min-height:0; }
   .msg { margin-top:16px; font-size:14px; min-height:21px; }
   .foot { margin-top:22px; font-size:12px; color:var(--muted); }
+  .made { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); font-size:13px; color:var(--muted); }
+  .made a { color:var(--accent); font-weight:700; text-decoration:none; }
+  .made a:hover { text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -55,6 +58,9 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   <div id="cf"></div>
   <div class="msg" id="msg" role="status"></div>
   <div class="foot">Each vote counts once toward a daily limit set by the person who's locked.</div>
+  <!-- Back to the website: a link that goes wide brings people to the app.
+       Tagged so those visits can be told apart from others. -->
+  <div class="made">Made with <a href="https://subtaskmanager.com/?from=timer">(sub)Task Manager</a> · <a href="https://subtaskmanager.com/?from=timer">Get the app</a></div>
 </main>
 <script>
 (() => {

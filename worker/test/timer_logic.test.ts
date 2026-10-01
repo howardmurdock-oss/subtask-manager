@@ -207,3 +207,10 @@ test('a configuration from a client is bounded', () => {
   assert.equal(c.public.stepSeconds, 24 * 3600);
   assert.equal(c.combination.digits, '1234');
 });
+
+test('the public page links back to the website, tagged as coming from a timer', async () => {
+  const { publicPage } = await import('../src/public_page.ts');
+  const page = publicPage('abcdef123', null);
+  assert.match(page, /href="https:\/\/subtaskmanager\.com\/\?from=timer"/);
+  assert.match(page, /Get the app/);
+});
