@@ -1813,7 +1813,13 @@ class SyncService extends ChangeNotifier {
 
   void attachTimerService(ChastityTimerService timerService) {
     _timerService = timerService;
-    _loadPartnerFeatures().then((_) => announceFeatures());
+  }
+
+  /// Loads what partners have announced, then tells them what this copy can
+  /// do. Called once at startup, after [init].
+  Future<void> startFeatureExchange() async {
+    await _loadPartnerFeatures();
+    await announceFeatures();
   }
 
   ChastityTimerService? get timerService => _timerService;

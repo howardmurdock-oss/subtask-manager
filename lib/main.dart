@@ -48,9 +48,11 @@ void main() async {
   final isPinLocked = securityService.isPinRequired && !securityService.isUnlocked;
   await DebugSettings.instance.load();
   await syncService.init(deferNetwork: isPinLocked);
-
   // After init, so partners are told this copy's features under the right
   // pairing code.
+  syncService.startFeatureExchange();
+
+  // The chastity timers this device can reach, kept up to date while it runs.
   final timerService = ChastityTimerService();
   await timerService.load();
   syncService.attachTimerService(timerService);
