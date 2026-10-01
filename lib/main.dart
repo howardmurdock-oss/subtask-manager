@@ -47,6 +47,9 @@ void main() async {
   final isPinLocked = securityService.isPinRequired && !securityService.isUnlocked;
   await DebugSettings.instance.load();
   await syncService.init(deferNetwork: isPinLocked);
+  // After init, so partners are told this copy's features under the right
+  // pairing code.
+  syncService.startFeatureExchange();
 
   // Register for push once the pairing code is loaded, so the Worker learns
   // which topic this device answers to. The topic is the same hashed code the

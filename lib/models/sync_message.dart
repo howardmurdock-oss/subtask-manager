@@ -29,6 +29,10 @@ enum SyncMessageType {
   identityMigrated,
   identityMigratedAck,
   pairingConfirm,
+
+  /// Which features this copy of the app has. A copy that never sends one -
+  /// anything before 1.0.2 - is taken to have none of them.
+  featureHello,
 }
 
 class SyncMessage {

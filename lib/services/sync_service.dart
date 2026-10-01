@@ -1789,6 +1789,96 @@ class SyncService extends ChangeNotifier {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Features
+  //
+  // Paired copies of the app tell each other which features they have - so a
+  // director can use the Patreon features with a player who supports (see
+  // PatreonSponsorship). Anything older never says, and is taken to have
+  // none: an older copy reads an unknown message type as a ping, which is
+  // harmless, so these can be sent to anyone.
+  // -------------------------------------------------------------------------
+
+  /// What this copy of the app can do, as announced to partners.
+  static const Set<String> myFeatures = {};
+  static const String partnerFeaturesKey = 'partner_features_v1';
+
+  /// Partner pairing code -> the features their copy announced. A code with
+  /// no entry has never said, and is treated as having none.
+  final Map<String, Set<String>> _partnerFeatures = {};
+
+  /// Loads what partners have announced, then tells them what this copy can
+  /// do. Called once at startup, after [init].
+  Future<void> startFeatureExchange() async {
+    await _loadPartnerFeatures();
+    await announceFeatures();
+  }
+
+  /// The features [contact]'s copy announced, or null if it never has.
+  Set<String>? featuresOf(PartnerContact contact) =>
+      _partnerFeatures[PartnerService.normalizeCode(contact.pairingCode)];
+
+  bool partnerHas(PartnerContact contact, String feature) =>
+      featuresOf(contact)?.contains(feature) ?? false;
+
+  Future<void> _loadPartnerFeatures() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(partnerFeaturesKey);
+      if (raw == null) return;
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      _partnerFeatures
+        ..clear()
+        ..addAll(decoded.map((code, list) => MapEntry(code, Set<String>.from(list as List))));
+    } catch (_) {}
+  }
+
+  Future<void> _savePartnerFeatures() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        partnerFeaturesKey,
+        jsonEncode(_partnerFeatures.map((code, set) => MapEntry(code, set.toList()))),
+      );
+    } catch (_) {}
+  }
+
+  /// Tells every partner what this copy can do, asking them to say back.
+  Future<void> announceFeatures() async {
+    final contacts = _partnerService?.unblockedContacts
+            .where((c) => !c.isSelf && c.pairingCode.isNotEmpty)
+            .toList() ??
+        const <PartnerContact>[];
+    for (final c in contacts) {
+      await _sendFeatureHello(c, askBack: true);
+    }
+  }
+
+  Future<void> _sendFeatureHello(PartnerContact contact, {required bool askBack}) =>
+      _sendToContact(
+        contact,
+        SyncMessage(
+          type: SyncMessageType.featureHello,
+          senderId: _deviceId,
+          payload: {
+            'senderCode': _pairingCode,
+            'features': myFeatures.toList(),
+            'askBack': askBack,
+          },
+        ),
+      );
+
+  Future<void> _onFeatureHello(SyncMessage msg) async {
+    final code = PartnerService.normalizeCode(msg.payload['senderCode'] as String? ?? '');
+    final contact = _contactFor(code: code, id: msg.senderId);
+    if (contact == null || code.isEmpty) return;
+    final features = (msg.payload['features'] as List? ?? const []).whereType<String>().toSet();
+    _partnerFeatures[code] = features;
+    await _savePartnerFeatures();
+    notifyListeners();
+    if (msg.payload['askBack'] == true) await _sendFeatureHello(contact, askBack: false);
+  }
+
   void attachChatService(ChatService chatService) {
     _chatService = chatService;
   }
@@ -3558,6 +3648,11 @@ class SyncService extends ChangeNotifier {
 
       case SyncMessageType.pong:
         break;
+
+      case SyncMessageType.featureHello:
+        await _onFeatureHello(msg);
+        break;
+
       default:
         break;
     }
