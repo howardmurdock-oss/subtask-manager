@@ -214,3 +214,13 @@ test('the public page links back to the website, tagged as coming from a timer',
   assert.match(page, /href="https:\/\/subtaskmanager\.com\/\?from=timer"/);
   assert.match(page, /Get the app/);
 });
+
+test('an ended or unknown link explains what was there and points to the app', async () => {
+  const { expiredPage } = await import('../src/public_page.ts');
+  const page = expiredPage();
+  assert.match(page, /This timer has ended/);
+  assert.match(page, /There was a chastity timer here/);
+  assert.match(page, /href="https:\/\/www\.subtaskmanager\.com\/\?from=timer-ended"/);
+  assert.match(page, /noindex/);
+  assert.doesNotMatch(page, /switched off\.'/);
+});

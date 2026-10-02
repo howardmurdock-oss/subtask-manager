@@ -146,6 +146,27 @@ await check('replacing the link retires the old one', async () => {
   assert.equal((await call(`/t/${fresh}/state`)).status, 404, 'switching the link off retires it');
 });
 
+await check('an unknown or mistyped link gets the "this timer has ended" page, not an error', async () => {
+  for (const path of ['/t/doesNotExist123', '/t/x', '/t/', '/t/some/deeper/path']) {
+    const page = await call(path);
+    assert.equal(page.status, 404, path);
+    assert.match(page.headers.get('content-type') ?? '', /text\/html/, path);
+    assert.match(String(page.body), /This timer has ended/, path);
+    assert.match(page.headers.get('x-robots-tag') ?? '', /noindex/, path);
+  }
+});
+
+await check('a live link still gets the timer, and a retired one gets the ended page', async () => {
+  const t = (await call('/timer', { body: { managedBy: 'director', config: { baseSeconds: 5 * H, public: { enabled: true } } } })).body;
+  const live = await call(`/t/${t.publicId}`);
+  assert.equal(live.status, 200);
+  assert.doesNotMatch(String(live.body), /This timer has ended/);
+  const replaced = await call(`/timer/${t.id}/replace-link`, { key: t.directorKey, body: {} });
+  const old = await call(`/t/${t.publicId}`);
+  assert.match(String(old.body), /This timer has ended/);
+  assert.equal((await call(`/t/${replaced.body.publicId}`)).status, 200);
+});
+
 await check('a change keeps the link in its reply, for whoever may see it', async () => {
   const t = (await call('/timer', { body: { managedBy: 'director', config: { baseSeconds: 5 * H, public: { enabled: true } } } })).body;
   const add = await call(`/timer/${t.id}/adjust`, { key: t.directorKey, body: { delta: 60, eventId: 'x1' } });

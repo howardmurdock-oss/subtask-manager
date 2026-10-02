@@ -64,7 +64,7 @@ function reply(body: unknown, status = 200): Response {
 export class ChastityTimer {
   private readonly sql: SqlStorage;
 
-  constructor(private readonly ctx: DurableObjectState, _env: unknown) {
+  constructor(private readonly ctx: DurableObjectState, private readonly env: { DB: D1Database }) {
     this.sql = ctx.storage.sql;
     this.sql.exec(`CREATE TABLE IF NOT EXISTS meta (k INTEGER PRIMARY KEY CHECK (k = 1), json TEXT NOT NULL)`);
     this.sql.exec(
@@ -133,6 +133,13 @@ export class ChastityTimer {
     if (status === 'running' || Date.now() < closedAt + RETAIN_AFTER_CLOSE_MS) {
       await this.scheduleCleanup(meta);
       return;
+    }
+    // The public link goes with it: its row in timer_links would otherwise
+    // be left behind for every timer ever made.
+    try {
+      await this.env.DB.prepare('DELETE FROM timer_links WHERE timer_id = ?').bind(meta.id).run();
+    } catch {
+      // The table may not exist yet; nothing to remove then.
     }
     await this.ctx.storage.deleteAll();
   }

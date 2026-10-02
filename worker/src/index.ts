@@ -20,7 +20,7 @@
  */
 
 import { ChastityTimer, randomToken, sha256Hex } from './timer.ts';
-import { publicPage } from './public_page.ts';
+import { expiredPage, publicPage } from './public_page.ts';
 import { DOWNLOADS, hasStatsPassword, isBot, releaseUrl, statsPage, summarize, type CountRow } from './download_stats.ts';
 
 export { ChastityTimer };
@@ -1012,21 +1012,36 @@ async function verifyTurnstile(env: Env, token: unknown, ip: string | null): Pro
   return result.success === true;
 }
 
-async function handlePublicTimer(request: Request, env: Env, publicId: string, op: string): Promise<Response> {
-  if (!op) {
-    return new Response(publicPage(publicId, env.TURNSTILE_SITE_KEY ?? null), {
-      headers: {
-        'content-type': 'text/html; charset=utf-8',
-        'cache-control': 'no-store',
-        'x-robots-tag': 'noindex, nofollow',
-        'referrer-policy': 'no-referrer',
-      },
-    });
-  }
+const PAGE_HEADERS = {
+  'content-type': 'text/html; charset=utf-8',
+  'cache-control': 'no-store',
+  'x-robots-tag': 'noindex, nofollow',
+  'referrer-policy': 'no-referrer',
+};
 
+/** Any /t/ address with no live timer behind it: what was there, and the app. */
+function timerEndedPage(): Response {
+  return new Response(expiredPage(), { status: 404, headers: PAGE_HEADERS });
+}
+
+async function handlePublicTimer(request: Request, env: Env, publicId: string, op: string): Promise<Response> {
   await ensureTimerLinksTable(env);
   const row = await env.DB.prepare('SELECT timer_id FROM timer_links WHERE public_id = ?')
     .bind(publicId).first<{ timer_id: string }>();
+
+  if (!op) {
+    if (!row) return timerEndedPage();
+    // A link whose timer has been deleted (30 days after it ended) leaves its
+    // row behind if it was deleted before rows were cleaned up with it:
+    // tidied on the first visit.
+    const alive = await callTimer(env, row.timer_id, 'public-view', { publicId });
+    if (alive.status === 404) {
+      await env.DB.prepare('DELETE FROM timer_links WHERE public_id = ?').bind(publicId).run();
+      return timerEndedPage();
+    }
+    return new Response(publicPage(publicId, env.TURNSTILE_SITE_KEY ?? null), { headers: PAGE_HEADERS });
+  }
+
   if (!row) return withCors(json({ error: 'no such timer' }, 404));
 
   if (op === 'state' && request.method === 'GET') {
@@ -1196,6 +1211,11 @@ export default {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
       return handlePublicTimer(request, env, publicRoute[1], publicRoute[2] ?? '')
         .catch((e) => withCors(json({ error: String(e) }, 500)));
+    }
+    // Anything else under /t/ - mistyped, truncated, made up - gets the same
+    // page as an ended timer rather than an error.
+    if (url.pathname.startsWith('/t/') && (request.method === 'GET' || request.method === 'HEAD')) {
+      return timerEndedPage();
     }
 
     if (request.method === 'GET' && url.pathname.startsWith('/patreon/')) {
