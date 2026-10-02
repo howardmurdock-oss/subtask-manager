@@ -21,7 +21,8 @@
 
 import { ChastityTimer, randomToken, sha256Hex } from './timer.ts';
 import { expiredPage, publicPage } from './public_page.ts';
-import { badgeSvg, embedPage, endedEmbedPage, type PublicView } from './embed.ts';
+import { badgeSvg, embedPage, endedEmbedPage, previewText, type PublicView } from './embed.ts';
+import { pngResponse } from './preview_images.ts';
 import { DOWNLOADS, hasStatsPassword, isBot, releaseUrl, statsPage, summarize, type CountRow } from './download_stats.ts';
 
 export { ChastityTimer };
@@ -1058,15 +1059,19 @@ async function handlePublicTimer(request: Request, env: Env, publicId: string, o
 
   // The widget and the image are asked for by other sites, often long after
   // the timer has gone: they show it ended rather than an error.
-  if (op === 'embed' || op === 'badge.svg') {
+  if (op === 'embed' || op === 'badge.svg' || op === 'badge.png' || op === 'preview.png') {
     const live = row ? await callTimer(env, row.timer_id, 'public-view', { publicId }) : null;
     if (!live || live.status === 404) {
       if (row) await env.DB.prepare('DELETE FROM timer_links WHERE public_id = ?').bind(publicId).run();
-      return op === 'embed'
-        ? new Response(endedEmbedPage(), { headers: EMBED_HEADERS })
-        : badgeResponse(null);
+      if (op === 'embed') return new Response(endedEmbedPage(), { headers: EMBED_HEADERS });
+      if (op === 'badge.svg') return badgeResponse(null);
+      return pngResponse(op === 'preview.png' ? 'preview' : 'badge', 'ended');
     }
     if (op === 'badge.svg') return badgeResponse((await live.json()) as PublicView);
+    if (op === 'badge.png' || op === 'preview.png') {
+      const view = (await live.json()) as PublicView;
+      return pngResponse(op === 'preview.png' ? 'preview' : 'badge', view.status === 'running' ? 'locked' : 'unlocked');
+    }
     const timerUrl = `https://subtaskmanager.com/t/${publicId}`;
     return new Response(embedPage(timerUrl), { headers: EMBED_HEADERS });
   }
@@ -1081,7 +1086,8 @@ async function handlePublicTimer(request: Request, env: Env, publicId: string, o
       await env.DB.prepare('DELETE FROM timer_links WHERE public_id = ?').bind(publicId).run();
       return timerEndedPage();
     }
-    return new Response(publicPage(publicId, env.TURNSTILE_SITE_KEY ?? null), { headers: PAGE_HEADERS });
+    const view = (await alive.json()) as PublicView;
+    return new Response(publicPage(publicId, env.TURNSTILE_SITE_KEY ?? null, previewText(view)), { headers: PAGE_HEADERS });
   }
 
   if (!row) return withCors(json({ error: 'no such timer' }, 404));
@@ -1248,7 +1254,7 @@ export default {
     if (timerRoute) {
       return handleTimerOp(request, env, timerRoute[1], timerRoute[2]).catch((e) => json({ error: String(e) }, 500));
     }
-    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote|embed|badge\.svg))?\/?$/);
+    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote|embed|badge\.svg|badge\.png|preview\.png))?\/?$/);
     if (publicRoute) {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
       return handlePublicTimer(request, env, publicRoute[1], publicRoute[2] ?? '')

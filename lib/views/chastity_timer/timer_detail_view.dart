@@ -505,6 +505,11 @@ class _TimerDetailViewState extends State<TimerDetailView> {
         '[url=$link][img]$link/badge.svg[/img][/url]',
       ),
       (
+        "Forum, if the image above doesn't show",
+        "Some forums don't accept that kind of image. This one always works, but shows the status, not the time.",
+        '[url=$link][img]$link/badge.png[/img][/url]',
+      ),
+      (
         'Markdown',
         'For sites that use Markdown, like many forums and READMEs.',
         '[![Chastity Timer]($link/badge.svg)]($link)',
@@ -532,6 +537,27 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                 'Copy one of these into a post or page. If you make a new link, '
                 'embeds of this one will show "Timer ended".',
                 style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.forum_rounded, size: 18),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Discord, Slack, iMessage and most chat apps: just paste the link. '
+                        'It shows a preview card with the time left.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 8),
               for (final (title, about, code) in snippets)

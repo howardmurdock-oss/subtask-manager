@@ -35,3 +35,23 @@ test('the ended widget points to the app', () => {
   assert.match(page, /Timer ended/);
   assert.match(page, /www\.subtaskmanager\.com\/\?from=timer-embed/);
 });
+
+test('a link preview puts the time left in its title', async () => {
+  const { previewText } = await import('../src/embed.ts');
+  const running = previewText({ status: 'running', endAt: now + 26 * 3600e3, acceptingVotes: true, allowRemove: true, now });
+  assert.equal(running.title, 'Chastity Timer · 1d 2h left');
+  assert.equal(running.description, 'Someone is locked up. Vote to add or remove time.');
+  assert.equal(previewText({ status: 'running', endAt: null, acceptingVotes: true, now }).title, 'Chastity Timer · time hidden');
+  assert.equal(previewText({ status: 'released', endAt: now, acceptingVotes: false, now }).title, 'Chastity Timer · Unlocked');
+});
+
+test('the timer page and the ended page carry link-preview tags', async () => {
+  const { publicPage, expiredPage } = await import('../src/public_page.ts');
+  const page = publicPage('abc123XYZ', null, { title: 'Chastity Timer · 2d 4h left', description: 'Vote.', state: 'locked' });
+  assert.match(page, /<meta property="og:title" content="Chastity Timer · 2d 4h left">/);
+  assert.match(page, /<meta property="og:image" content="https:\/\/subtaskmanager\.com\/t\/abc123XYZ\/preview\.png">/);
+  assert.match(page, /twitter:card" content="summary_large_image"/);
+  const ended = expiredPage();
+  assert.match(ended, /og:title" content="Chastity Timer · Timer ended"/);
+  assert.match(ended, /t\/timer-ended\/preview\.png/);
+});

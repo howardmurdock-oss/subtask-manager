@@ -324,6 +324,8 @@ void main() {
     expect(find.text('<iframe src="$link/embed" width="340" height="150" style="border:0;max-width:100%" title="Chastity Timer"></iframe>'), findsOneWidget);
     expect(find.text('[url=$link][img]$link/badge.svg[/img][/url]'), findsOneWidget);
     expect(find.text('[![Chastity Timer]($link/badge.svg)]($link)'), findsOneWidget);
+    expect(find.text('[url=$link][img]$link/badge.png[/img][/url]'), findsOneWidget);
+    expect(find.textContaining('just paste the link'), findsOneWidget);
 
     await tester.tap(find.descendant(
       of: find.widgetWithText(Card, 'Forum (BBCode)'),

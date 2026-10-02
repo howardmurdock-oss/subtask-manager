@@ -186,6 +186,26 @@ await check('the widget and the image work for a live timer, and fall back once 
   assert.match(String((await call('/t/neverExisted99/badge.svg')).body), /Timer ended/);
 });
 
+await check('link previews: tags on the page, and the right picture for the state', async () => {
+  const t = (await call('/timer', { body: { managedBy: 'player', config: { baseSeconds: 3 * H, public: { enabled: true } } } })).body;
+  const page = String((await call(`/t/${t.publicId}`)).body);
+  assert.match(page, /og:title" content="Chastity Timer · (3h 0m|2h 59m) left"/);
+  const png = async (path: string) => {
+    const r = await fetch(BASE + path);
+    return { type: r.headers.get('content-type'), size: (await r.arrayBuffer()).byteLength };
+  };
+  const locked = await png(`/t/${t.publicId}/preview.png`);
+  assert.equal(locked.type, 'image/png');
+  assert.ok(locked.size > 10000);
+  await call(`/timer/${t.id}/release`, { key: t.playerKey, body: {} });
+  const unlocked = await png(`/t/${t.publicId}/preview.png`);
+  assert.notEqual(unlocked.size, locked.size, 'a different picture once it is over');
+  const ended = await png('/t/timer-ended/preview.png');
+  assert.equal(ended.type, 'image/png');
+  assert.notEqual(ended.size, locked.size);
+  assert.equal((await png(`/t/${t.publicId}/badge.png`)).type, 'image/png');
+});
+
 await check('a change keeps the link in its reply, for whoever may see it', async () => {
   const t = (await call('/timer', { body: { managedBy: 'director', config: { baseSeconds: 5 * H, public: { enabled: true } } } })).body;
   const add = await call(`/timer/${t.id}/adjust`, { key: t.directorKey, body: { delta: 60, eventId: 'x1' } });

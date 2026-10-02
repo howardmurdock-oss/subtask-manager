@@ -20,6 +20,7 @@ export interface PublicView {
   status: 'running' | 'ended' | 'released';
   endAt: number | null;
   acceptingVotes: boolean;
+  allowRemove?: boolean;
   atMaximum?: boolean;
   now: number;
 }
@@ -140,7 +141,7 @@ export function endedEmbedPage(): string {
 }
 
 /** Time left in words that suit a picture which does not count down. */
-function roughly(ms: number): string {
+export function roughly(ms: number): string {
   const m = Math.max(0, Math.floor(ms / 60000));
   const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), min = m % 60;
   if (d > 0) return `${d}d ${h}h left`;
@@ -151,6 +152,24 @@ function roughly(ms: number): string {
 /**
  * The forum image. [view] null: the timer is gone.
  */
+/**
+ * What a link preview (Discord, Slack, iMessage...) says about a timer. The
+ * picture is one of three ready-made ones; the time left goes in the title,
+ * which those apps show in bold above it.
+ */
+export function previewText(view: PublicView): { title: string; description: string; state: 'locked' | 'unlocked' } {
+  if (view.status !== 'running') {
+    return { title: 'Chastity Timer · Unlocked', description: 'This timer is over.', state: 'unlocked' };
+  }
+  const left = view.endAt == null ? 'time hidden' : roughly(view.endAt - view.now);
+  const description = !view.acceptingVotes
+    ? 'Someone is locked up.'
+    : view.atMaximum
+      ? "Someone is locked up, and it's at its maximum length."
+      : `Someone is locked up. Vote to add${view.allowRemove ? ' or remove' : ''} time.`;
+  return { title: `Chastity Timer · ${left}`, description, state: 'locked' };
+}
+
 export function badgeSvg(view: PublicView | null): string {
   let headline: string;
   let detail: string;

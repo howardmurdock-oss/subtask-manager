@@ -83,3 +83,9 @@ class_name = "ChastityTimer"
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["ChastityTimer"]
+
+# The link-preview and forum images (src/images) are bundled as raw bytes.
+[[rules]]
+type = "Data"
+globs = ["**/*.png"]
+fallthrough = false

@@ -10,9 +10,43 @@
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-export function publicPage(publicId: string, turnstileSiteKey: string | null): string {
+/**
+ * Tags that Discord, Slack, iMessage, X and the rest read to draw a preview
+ * card when the link is pasted. Without them a pasted link was a bare URL.
+ */
+export function previewTags(p: { url: string; title: string; description: string; image: string; tone: string }): string {
+  const e = (s: string) => escapeHtml(s);
+  return `<meta name="description" content="${e(p.description)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="(sub)Task Manager">
+<meta property="og:url" content="${e(p.url)}">
+<meta property="og:title" content="${e(p.title)}">
+<meta property="og:description" content="${e(p.description)}">
+<meta property="og:image" content="${e(p.image)}">
+<meta property="og:image:width" content="800">
+<meta property="og:image:height" content="418">
+<meta property="og:image:alt" content="${e(p.title)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="${e(p.tone)}">`;
+}
+
+export function publicPage(
+  publicId: string,
+  turnstileSiteKey: string | null,
+  preview?: { title: string; description: string; state: 'locked' | 'unlocked' },
+): string {
   const id = escapeHtml(publicId);
   const siteKey = turnstileSiteKey ? escapeHtml(turnstileSiteKey) : '';
+  const url = `https://subtaskmanager.com/t/${publicId}`;
+  const tags = preview
+    ? previewTags({
+        url,
+        title: preview.title,
+        description: preview.description,
+        image: `${url}/preview.png`,
+        tone: preview.state === 'locked' ? '#f472b6' : '#34d399',
+      })
+    : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -20,6 +54,7 @@ export function publicPage(publicId: string, turnstileSiteKey: string | null): s
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
+${tags}
 <title>Chastity Timer</title>
 ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : ''}
 <style>
@@ -190,6 +225,15 @@ export function expiredPage(): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
+${previewTags({
+  url: 'https://www.subtaskmanager.com/',
+  title: 'Chastity Timer · Timer ended',
+  description: 'There was a chastity timer here. Get (sub)Task Manager to run your own.',
+  // A path no real link can have (they are 12 characters), so it always
+  // answers with the "ended" picture.
+  image: 'https://subtaskmanager.com/t/timer-ended/preview.png',
+  tone: '#22d3ee',
+})}
 <title>Chastity Timer</title>
 <style>
   :root { --bg:#0e0f14; --card:#171922; --line:#262a36; --text:#eef0f6; --muted:#9aa0b4; --accent:#22d3ee; }
