@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -296,6 +297,40 @@ void main() {
 
     expect(find.text('Give your player the link too'), findsOneWidget);
     expect(find.text('New link'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('a public timer can be embedded: a widget for websites, an image for forums', (tester) async {
+    final director = view(role: 'director');
+    (director['config'] as Map)['public'] = {'enabled': true, 'stepSeconds': 600};
+    director['publicId'] = 'abc123XYZ';
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, director);
+    await timers.addShared(id: 't1', role: TimerRole.director, key: 'D', partnerName: 'PC 1');
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String;
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+    await tester.ensureVisible(find.text('Embed'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Embed'));
+    await tester.pumpAndSettle();
+
+    const link = 'https://subtaskmanager.com/t/abc123XYZ';
+    expect(find.text('Embed this timer'), findsOneWidget);
+    expect(find.text('<iframe src="$link/embed" width="340" height="150" style="border:0;max-width:100%" title="Chastity Timer"></iframe>'), findsOneWidget);
+    expect(find.text('[url=$link][img]$link/badge.svg[/img][/url]'), findsOneWidget);
+    expect(find.text('[![Chastity Timer]($link/badge.svg)]($link)'), findsOneWidget);
+
+    await tester.tap(find.descendant(
+      of: find.widgetWithText(Card, 'Forum (BBCode)'),
+      matching: find.text('Copy'),
+    ));
+    await tester.pumpAndSettle();
+    expect(copied, '[url=$link][img]$link/badge.svg[/img][/url]');
     await finish(tester);
   });
 

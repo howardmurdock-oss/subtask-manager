@@ -21,6 +21,7 @@
 
 import { ChastityTimer, randomToken, sha256Hex } from './timer.ts';
 import { expiredPage, publicPage } from './public_page.ts';
+import { badgeSvg, embedPage, endedEmbedPage, type PublicView } from './embed.ts';
 import { DOWNLOADS, hasStatsPassword, isBot, releaseUrl, statsPage, summarize, type CountRow } from './download_stats.ts';
 
 export { ChastityTimer };
@@ -1017,6 +1018,20 @@ const PAGE_HEADERS = {
   'cache-control': 'no-store',
   'x-robots-tag': 'noindex, nofollow',
   'referrer-policy': 'no-referrer',
+  // The voting page is never framed by another site: one could otherwise lay
+  // it out of sight under a disguised button and harvest votes. Embedding is
+  // what /embed is for.
+  'content-security-policy': "frame-ancestors 'none'",
+  'x-frame-options': 'DENY',
+};
+
+/** The embeddable widget may be framed by anyone. */
+const EMBED_HEADERS = {
+  'content-type': 'text/html; charset=utf-8',
+  'cache-control': 'no-store',
+  'x-robots-tag': 'noindex, nofollow',
+  'referrer-policy': 'no-referrer',
+  'content-security-policy': 'frame-ancestors *',
 };
 
 /** Any /t/ address with no live timer behind it: what was there, and the app. */
@@ -1024,10 +1039,37 @@ function timerEndedPage(): Response {
   return new Response(expiredPage(), { status: 404, headers: PAGE_HEADERS });
 }
 
+/** The forum image. A minute's caching keeps a post that goes wide cheap. */
+function badgeResponse(view: PublicView | null): Response {
+  return new Response(badgeSvg(view), {
+    headers: {
+      'content-type': 'image/svg+xml; charset=utf-8',
+      'cache-control': 'public, max-age=60',
+      'x-robots-tag': 'noindex, nofollow',
+      'access-control-allow-origin': '*',
+    },
+  });
+}
+
 async function handlePublicTimer(request: Request, env: Env, publicId: string, op: string): Promise<Response> {
   await ensureTimerLinksTable(env);
   const row = await env.DB.prepare('SELECT timer_id FROM timer_links WHERE public_id = ?')
     .bind(publicId).first<{ timer_id: string }>();
+
+  // The widget and the image are asked for by other sites, often long after
+  // the timer has gone: they show it ended rather than an error.
+  if (op === 'embed' || op === 'badge.svg') {
+    const live = row ? await callTimer(env, row.timer_id, 'public-view', { publicId }) : null;
+    if (!live || live.status === 404) {
+      if (row) await env.DB.prepare('DELETE FROM timer_links WHERE public_id = ?').bind(publicId).run();
+      return op === 'embed'
+        ? new Response(endedEmbedPage(), { headers: EMBED_HEADERS })
+        : badgeResponse(null);
+    }
+    if (op === 'badge.svg') return badgeResponse((await live.json()) as PublicView);
+    const timerUrl = `https://subtaskmanager.com/t/${publicId}`;
+    return new Response(embedPage(timerUrl), { headers: EMBED_HEADERS });
+  }
 
   if (!op) {
     if (!row) return timerEndedPage();
@@ -1206,7 +1248,7 @@ export default {
     if (timerRoute) {
       return handleTimerOp(request, env, timerRoute[1], timerRoute[2]).catch((e) => json({ error: String(e) }, 500));
     }
-    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote))?\/?$/);
+    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote|embed|badge\.svg))?\/?$/);
     if (publicRoute) {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
       return handlePublicTimer(request, env, publicRoute[1], publicRoute[2] ?? '')

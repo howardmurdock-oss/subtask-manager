@@ -167,6 +167,25 @@ await check('a live link still gets the timer, and a retired one gets the ended 
   assert.equal((await call(`/t/${replaced.body.publicId}`)).status, 200);
 });
 
+await check('the widget and the image work for a live timer, and fall back once it is gone', async () => {
+  const t = (await call('/timer', { body: { managedBy: 'director', config: { baseSeconds: 5 * H, public: { enabled: true } } } })).body;
+  const widget = await call(`/t/${t.publicId}/embed`);
+  assert.equal(widget.status, 200);
+  assert.equal(widget.headers.get('content-security-policy'), 'frame-ancestors *', 'anyone may frame the widget');
+  assert.match(String(widget.body), /Vote on it/);
+  const image = await call(`/t/${t.publicId}/badge.svg`);
+  assert.match(image.headers.get('content-type') ?? '', /image\/svg\+xml/);
+  assert.match(String(image.body), /Locked · 5h 0m left|Locked · 4h 59m left/);
+
+  const page = await call(`/t/${t.publicId}`);
+  assert.equal(page.headers.get('content-security-policy'), "frame-ancestors 'none'", 'the voting page is never framed');
+
+  await call(`/timer/${t.id}/replace-link`, { key: t.directorKey, body: {} });
+  assert.match(String((await call(`/t/${t.publicId}/embed`)).body), /Timer ended/);
+  assert.match(String((await call(`/t/${t.publicId}/badge.svg`)).body), /Timer ended/);
+  assert.match(String((await call('/t/neverExisted99/badge.svg')).body), /Timer ended/);
+});
+
 await check('a change keeps the link in its reply, for whoever may see it', async () => {
   const t = (await call('/timer', { body: { managedBy: 'director', config: { baseSeconds: 5 * H, public: { enabled: true } } } })).body;
   const add = await call(`/timer/${t.id}/adjust`, { key: t.directorKey, body: { delta: 60, eventId: 'x1' } });
