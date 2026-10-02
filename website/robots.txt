@@ -1,0 +1,14 @@
+# subtaskmanager.com
+#
+# Everything may be crawled, except the download buttons - they only redirect
+# to GitHub, and counting a crawler as a download helps nobody.
+#
+# Public chastity timer pages (/t/) are deliberately NOT disallowed. They are
+# kept out of search results by "noindex", which a crawler can only see if it
+# is allowed to fetch the page; blocking them here would let search engines
+# list the bare addresses instead. Link-preview fetchers (Slack, X) also obey
+# robots.txt, so blocking /t/ would turn their preview cards into bare links.
+
+User-agent: *
+Allow: /
+Disallow: /download/
