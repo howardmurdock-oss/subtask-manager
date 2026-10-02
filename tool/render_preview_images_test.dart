@@ -144,6 +144,65 @@ Widget _badge(_State s) => Container(
       ),
     );
 
+/// The website's own link preview, 1200x630 - the standard size for the
+/// large cards Discord, X, Slack and Facebook show. Written to
+/// build/og-image.png, to be copied into website/assets on main. Kept free of
+/// dates, so it never goes stale.
+Widget _site() {
+  Widget chip(String text, Color tone) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+        decoration: BoxDecoration(
+          color: tone.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(40),
+          border: Border.all(color: tone.withValues(alpha: 0.55), width: 2),
+        ),
+        child: Text(text, style: _style(26, _text, weight: FontWeight.w600)),
+      );
+  return Container(
+    width: 1200,
+    height: 630,
+    color: _bg,
+    padding: const EdgeInsets.all(40),
+    child: Container(
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(36),
+        border: Border.all(color: _line, width: 2),
+      ),
+      padding: const EdgeInsets.fromLTRB(72, 64, 72, 56),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text.rich(TextSpan(children: [
+            TextSpan(text: '(sub)', style: _style(84, _accent, weight: FontWeight.w800)),
+            TextSpan(text: 'Task Manager', style: _style(84, _text, weight: FontWeight.w800)),
+          ])),
+          const SizedBox(height: 10),
+          Text('The task app for dominants and submissives', style: _style(40, _muted, weight: FontWeight.w600)),
+          const Spacer(),
+          Wrap(spacing: 14, runSpacing: 14, children: [
+            chip('Orders', _accent),
+            chip('Rewards & punishments', _pink),
+            chip('Quests', _accent),
+            chip('Scheduled tasks', _accent),
+            chip('Chastity timer', _pink),
+          ]),
+          const Spacer(),
+          Row(
+            children: [
+              Expanded(
+                child: Text('Free on Windows, Mac, Linux & Android · End-to-end encrypted',
+                    style: _style(24, _muted, weight: FontWeight.w400)),
+              ),
+              Text('subtaskmanager.com', style: _style(26, _accent, weight: FontWeight.w700)),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 const _states = [
   // One picture for every timer, so nothing that only some allow: "add or
   // take away" would be wrong where removing is off.
@@ -189,6 +248,9 @@ void main() {
       });
       File('${out.path}/$name.png').writeAsBytesSync(bytes!);
     }
+
+    // The website's own preview image: copied into website/assets on main.
+    await render(_site(), const Size(1200, 630), '../../../build/og-image');
 
     for (final s in _states) {
       await render(_preview(s), const Size(800, 418), 'preview-${s.file}');
