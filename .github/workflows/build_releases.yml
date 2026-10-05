@@ -44,7 +44,9 @@ jobs:
       - name: Install base tools
         run: |
           apt-get update -y
-          apt-get install -y git curl ca-certificates unzip xz-utils zip file desktop-file-utils
+          # jq: subosito/flutter-action looks Flutter versions up with it;
+          # GitHub's runner images include it, a bare container does not.
+          apt-get install -y git curl ca-certificates unzip xz-utils zip file desktop-file-utils jq
           # The workspace is owned by another user than the container's root.
           git config --global --add safe.directory '*'
 
