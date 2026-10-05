@@ -42,11 +42,20 @@ class _TimerHubViewState extends State<TimerHubView> {
       if (view == null) {
         subtitle = 'Not reachable right now';
       } else if (view.status == TimerStatus.released) {
-        subtitle = view.releasedBy == TimerRole.player ? 'Emergency release' : 'Ended early';
+        final how = view.endedByPlayerChoice
+            ? 'Ended'
+            : view.releasedBy == TimerRole.player
+                ? 'Emergency release'
+                : view.config.openEnded
+                    ? 'Ended'
+                    : 'Ended early';
+        subtitle = '$how · ran for ${formatSpan(view.elapsed)}';
       } else if (view.isOver) {
-        subtitle = 'Finished';
+        subtitle = 'Finished · ran for ${formatSpan(view.elapsed)}';
+      } else if (view.config.openEnded) {
+        subtitle = 'Locked for ${formatSpan(view.elapsed)} · no end time';
       } else if (view.remaining == null) {
-        subtitle = 'Time hidden';
+        subtitle = 'Time hidden · locked for ${formatSpan(view.elapsed)}';
       } else {
         subtitle = '${formatCountdown(view.remaining!)} left';
       }

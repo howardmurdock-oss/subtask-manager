@@ -127,6 +127,7 @@ class PublicLinkSettings {
 class ChastityTimerConfig {
   const ChastityTimerConfig({
     required this.baseSeconds,
+    this.openEnded = false,
     this.hidden = false,
     this.maxTotalSeconds,
     this.director = const DirectorLimits(),
@@ -138,6 +139,10 @@ class ChastityTimerConfig {
   });
 
   final int baseSeconds;
+
+  /// No end time: it runs until someone ends it, or its maximum if it has
+  /// one. Nothing adds or removes time - there is no end to move.
+  final bool openEnded;
   final bool hidden;
 
   /// No change pushes the end past start + this. Null: no ceiling.
@@ -155,6 +160,7 @@ class ChastityTimerConfig {
 
   Map<String, dynamic> toJson() => {
         'baseSeconds': baseSeconds,
+        'openEnded': openEnded,
         'hidden': hidden,
         'maxTotalSeconds': maxTotalSeconds,
         'director': director.toJson(),
@@ -169,6 +175,7 @@ class ChastityTimerConfig {
         json[key] is Map ? Map<String, dynamic>.from(json[key] as Map) : null;
     return ChastityTimerConfig(
       baseSeconds: (json['baseSeconds'] as num?)?.toInt() ?? 0,
+      openEnded: json['openEnded'] == true,
       hidden: json['hidden'] == true,
       maxTotalSeconds: (json['maxTotalSeconds'] as num?)?.toInt(),
       director: DirectorLimits.fromJson(sub('director')),
@@ -208,6 +215,7 @@ class ChastityTimerView {
     required this.status,
     required this.startAt,
     required this.endAt,
+    this.closedAt,
     required this.releasedAt,
     required this.releasedBy,
     required this.config,
@@ -228,6 +236,9 @@ class ChastityTimerView {
 
   /// Null when this device may not see it: a hidden timer, for the player.
   final DateTime? endAt;
+
+  /// When it stopped - released, or reached its end. Null while running.
+  final DateTime? closedAt;
   final DateTime? releasedAt;
   final TimerRole? releasedBy;
   final ChastityTimerConfig config;
@@ -254,6 +265,25 @@ class ChastityTimerView {
 
   bool get isOver => status != TimerStatus.running || (endAt != null && !serverNow.isBefore(endAt!));
 
+  /// Who set the timer up, and so manages it.
+  TimerRole get managedBy =>
+      isManager ? role : (role == TimerRole.player ? TimerRole.director : TimerRole.player);
+
+  /// The player may simply end it: an open-ended timer of their own. Not an
+  /// emergency release, and nothing to tell a director about as one.
+  bool get playerMayEnd => config.openEnded && managedBy == TimerRole.player;
+
+  /// Ended by the player's own choice, on a timer that was theirs to end.
+  bool get endedByPlayerChoice =>
+      status == TimerStatus.released && releasedBy == TimerRole.player && playerMayEnd;
+
+  /// How long it has run: so far, or in all once over.
+  Duration get elapsed {
+    final until = closedAt ?? (isOver && endAt != null ? endAt! : serverNow);
+    final d = until.difference(startAt);
+    return d.isNegative ? Duration.zero : d;
+  }
+
   /// Time left, or null when hidden from this device.
   Duration? get remaining {
     if (endAt == null) return null;
@@ -276,6 +306,7 @@ class ChastityTimerView {
       ),
       startAt: time('startAt') ?? local,
       endAt: time('endAt'),
+      closedAt: time('closedAt'),
       releasedAt: time('releasedAt'),
       releasedBy: json['releasedBy'] == 'director'
           ? TimerRole.director

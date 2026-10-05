@@ -30,6 +30,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
 
   Duration _base = const Duration(days: 1);
   bool _hidden = false;
+  bool _openEnded = false;
   bool _ceilingOn = false;
   Duration _ceiling = const Duration(days: 7);
 
@@ -118,7 +119,8 @@ class _TimerSetupViewState extends State<TimerSetupView> {
 
     final config = ChastityTimerConfig(
       baseSeconds: _base.inSeconds,
-      hidden: _hidden,
+      openEnded: _openEnded,
+      hidden: !_openEnded && _hidden,
       maxTotalSeconds: _ceilingOn ? _ceiling.inSeconds : null,
       director: DirectorLimits(
         canAdd: _directorCanAdd,
@@ -126,7 +128,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
         dailyCapSeconds: _directorUnlimited ? null : _directorCap.inSeconds,
       ),
       random: RandomChanges(
-        enabled: _randomOn,
+        enabled: !_openEnded && _randomOn,
         everyMinutes: _randomEvery.inMinutes,
         minSeconds: -_randomRemoveUpTo.inSeconds,
         maxSeconds: _randomAddUpTo.inSeconds,
@@ -240,6 +242,15 @@ class _TimerSetupViewState extends State<TimerSetupView> {
           Card(
             child: Column(
               children: [
+                SwitchListTile(
+                  value: _openEnded,
+                  onChanged: (v) => setState(() => _openEnded = v),
+                  title: const Text('No end time'),
+                  subtitle: Text(_isDirector
+                      ? 'It runs until you end it. They can still use the emergency release.'
+                      : 'It runs until you end it, whenever you like.'),
+                ),
+                if (!_openEnded) ...[
                 _DurationTile(
                   label: 'Starts at',
                   value: _base,
@@ -254,12 +265,14 @@ class _TimerSetupViewState extends State<TimerSetupView> {
                   subtitle: const Text(
                       'The player sees that it is running, and who changed it, but not how long is left or by how much.'),
                 ),
+                ],
                 SwitchListTile(
                   value: _ceilingOn,
                   onChanged: (v) => setState(() => _ceilingOn = v),
-                  title: const Text('Maximum length'),
-                  subtitle: const Text(
-                      'No change can push it past this, counted from the start.'),
+                  title: Text(_openEnded ? 'End by itself eventually' : 'Maximum length'),
+                  subtitle: Text(_openEnded
+                      ? 'A safety limit: it ends on its own after this long, counted from the start.'
+                      : 'No change can push it past this, counted from the start.'),
                 ),
                 if (_ceilingOn)
                   _DurationTile(
@@ -269,7 +282,8 @@ class _TimerSetupViewState extends State<TimerSetupView> {
               ],
             ),
           ),
-          if (partnerChosen) ...[
+          // With no end time there is nothing to add, remove or roll.
+          if (partnerChosen && !_openEnded) ...[
             _section(theme, _isDirector ? 'YOUR CHANGES' : 'THEIR CHANGES'),
             Card(
               child: Column(
@@ -304,8 +318,8 @@ class _TimerSetupViewState extends State<TimerSetupView> {
               ),
             ),
           ],
-          _section(theme, 'RANDOM CHANGES'),
-          Card(
+          if (!_openEnded) _section(theme, 'RANDOM CHANGES'),
+          if (!_openEnded) Card(
             child: Column(
               children: [
                 SwitchListTile(
@@ -345,11 +359,12 @@ class _TimerSetupViewState extends State<TimerSetupView> {
                 SwitchListTile(
                   value: _publicOn,
                   onChanged: (v) => setState(() => _publicOn = v),
-                  title: const Text('Let anyone with the link vote'),
-                  subtitle: const Text(
-                      'A web page anyone can open. It never shows who you are.'),
+                  title: Text(_openEnded ? 'Share a public link' : 'Let anyone with the link vote'),
+                  subtitle: Text(_openEnded
+                      ? "A web page showing how long it's been running. It never shows who you are."
+                      : 'A web page anyone can open. It never shows who you are.'),
                 ),
-                if (_publicOn) ...[
+                if (_publicOn && !_openEnded) ...[
                   _DurationTile(
                       label: 'Each vote',
                       value: _publicStep,
@@ -482,7 +497,9 @@ class _TimerSetupViewState extends State<TimerSetupView> {
           Text(
             _isDirector
                 ? 'The player can always end it with an emergency release. You will be told if they do.'
-                : 'You can always end it with an emergency release. Your director is told if you do.',
+                : _openEnded
+                    ? 'End it whenever you like, from the timer screen.'
+                    : 'You can always end it with an emergency release. Your director is told if you do.',
             textAlign: TextAlign.center,
             style: TextStyle(
                 fontSize: 12,

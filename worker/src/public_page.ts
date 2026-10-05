@@ -68,6 +68,8 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   h1 { font-size:20px; margin:6px 0 18px; }
   .time { font-variant-numeric: tabular-nums; font-size:clamp(34px, 11vw, 52px); font-weight:800; letter-spacing:.02em; margin:4px 0; }
   .sub { color:var(--muted); font-size:14px; min-height:21px; }
+  [hidden] { display:none !important; }
+  .ran { color:var(--muted); font-size:13px; margin-top:6px; min-height:20px; font-variant-numeric:tabular-nums; }
   .buttons { display:flex; gap:12px; margin-top:22px; }
   button { flex:1; border:0; border-radius:14px; padding:16px 10px; font:inherit; font-weight:700; cursor:pointer; color:#0e0f14; }
   button:disabled { opacity:.45; cursor:not-allowed; }
@@ -86,13 +88,14 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   <h1 id="headline">Someone is locked up</h1>
   <div class="time" id="time">&nbsp;</div>
   <div class="sub" id="sub">Loading…</div>
-  <div class="buttons">
+  <div class="ran" id="ran"></div>
+  <div class="buttons" id="buttons">
     <button class="add" id="add" disabled>Add time</button>
     <button class="remove" id="remove" disabled hidden>Remove time</button>
   </div>
   <div id="cf"></div>
   <div class="msg" id="msg" role="status"></div>
-  <div class="foot">Each vote counts once toward a daily limit set by the person who's locked.</div>
+  <div class="foot" id="votefoot">Each vote counts once toward a daily limit set by the person who's locked.</div>
   <!-- Back to the website: a link that goes wide brings people to the app.
        Tagged so those visits can be told apart from others. -->
   <div class="made">Made with <a href="https://subtaskmanager.com/?from=timer">(sub)Task Manager</a> · <a href="https://subtaskmanager.com/?from=timer">Get the app</a></div>
@@ -127,17 +130,38 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     'at-maximum': 'This timer is already at its maximum length.',
   };
 
+  // "2d 4h", "35m": how long it has run.
+  const span = (ms) => {
+    const m = Math.max(0, Math.floor(ms / 60000));
+    const d = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60), min = m % 60;
+    return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + min + 'm' : min + 'm';
+  };
+
   function render() {
     if (!view) return;
     const running = view.status === 'running';
+    const nowMs = Date.now() + offset;
     $('headline').textContent = running ? 'Someone is locked up' : 'This timer is over';
-    if (running && view.endAt != null) {
-      $('time').textContent = clock(view.endAt - (Date.now() + offset));
+    $('ran').textContent = '';
+    if (running && view.openEnded) {
+      // No end time: it counts up, from the start.
+      $('time').textContent = clock(nowMs - view.startAt);
+      $('sub').textContent = "locked so far · it runs until it's ended";
+    } else if (running && view.endAt != null) {
+      $('time').textContent = clock(view.endAt - nowMs);
       $('sub').textContent = 'left on the timer';
+      $('ran').textContent = 'Locked for ' + span(nowMs - view.startAt) + ' so far';
+    } else if (running) {
+      $('time').textContent = '??:??:??';
+      $('sub').textContent = 'The time left is hidden';
+      $('ran').textContent = 'Locked for ' + span(nowMs - view.startAt) + ' so far';
     } else {
-      $('time').textContent = running ? '??:??:??' : 'Unlocked';
-      $('sub').textContent = running ? 'The time left is hidden' : '';
+      $('time').textContent = 'Unlocked';
+      $('sub').textContent = view.closedAt ? 'Ran for ' + span(view.closedAt - view.startAt) : '';
     }
+    // Nothing to vote on without an end to move.
+    $('buttons').hidden = !!view.openEnded;
+    $('votefoot').hidden = !!view.openEnded;
     const step = human(view.stepSeconds);
     $('add').textContent = 'Add ' + step;
     $('remove').textContent = 'Remove ' + step;

@@ -49,6 +49,30 @@ void main() {
         'now': now,
       };
 
+  /// A timer with no end time, started two hours ago.
+  Map<String, dynamic> openView({required String role, required String managedBy, String? releasedBy}) => {
+        'id': 't1',
+        'role': role,
+        'manager': role == managedBy,
+        'status': releasedBy == null ? 'running' : 'released',
+        'startAt': now - 2 * 3600 * 1000,
+        'endAt': null,
+        'closedAt': releasedBy == null ? null : now - 600 * 1000,
+        'releasedAt': releasedBy == null ? null : now - 600 * 1000,
+        'releasedBy': releasedBy,
+        'config': {
+          'baseSeconds': 3600,
+          'openEnded': true,
+          'hidden': false,
+          'director': {'canAdd': true, 'canRemove': true, 'dailyCapSeconds': 3600},
+          'public': {'enabled': false},
+          'combination': {'enabled': false},
+        },
+        'history': const [],
+        'publicId': null,
+        'now': now,
+      };
+
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     engine = OrderEngine(storage: StorageService());
@@ -377,6 +401,92 @@ void main() {
     await pump(tester, const Scaffold(body: TimerDashboardCard(role: TimerRole.player)));
     expect(find.text('CHASTITY TIMER'), findsOneWidget);
     expect(find.text('No timer running'), findsOneWidget);
+    await finish(tester);
+  });
+  testWidgets('a running timer also shows how long it has been locked', (tester) async {
+    final v = view(role: 'player')..['startAt'] = now - 90 * 60 * 1000;
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, v);
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+
+    expect(find.text('left'), findsOneWidget);
+    expect(find.text('Locked for 1 hour 30 minutes so far'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('a finished timer says how long it ran', (tester) async {
+    final v = view(role: 'player', over: true)..['startAt'] = now - 3 * 3600 * 1000 - 1000;
+    v['closedAt'] = now - 1000;
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, v);
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+
+    expect(find.text('Ran for 3 hours'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets("a player's own timer with no end time counts up, and they simply end it", (tester) async {
+    ChastityTimerService.request =
+        (m, u, {key, body}) async => TimerApiResponse(200, openView(role: 'player', managedBy: 'player'));
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+
+    expect(find.textContaining('02:00:0'), findsOneWidget);
+    expect(find.text('locked so far · no end time'), findsOneWidget);
+    expect(find.text('End timer'), findsOneWidget);
+    expect(find.text('Emergency release'), findsNothing, reason: 'ending it costs them nothing');
+    expect(find.text('ADD TIME'), findsNothing, reason: 'there is no end to move');
+    await finish(tester);
+  });
+
+  testWidgets("a director's timer with no end time: they end it, the player keeps the emergency release",
+      (tester) async {
+    ChastityTimerService.request =
+        (m, u, {key, body}) async => TimerApiResponse(200, openView(role: 'director', managedBy: 'director'));
+    await timers.addShared(id: 't1', role: TimerRole.director, key: 'D', partnerName: 'PC 1');
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+    expect(find.text('End the timer now'), findsOneWidget);
+    expect(find.text('ADD TIME'), findsNothing);
+    expect(find.text('REMOVE TIME'), findsNothing);
+    await finish(tester);
+
+    ChastityTimerService.request =
+        (m, u, {key, body}) async => TimerApiResponse(200, openView(role: 'player', managedBy: 'director')..['id'] = 't2');
+    await timers.addShared(id: 't2', role: TimerRole.player, key: 'P');
+    await pump(tester, const TimerDetailView(timerId: 't2'));
+    expect(find.text('Emergency release'), findsOneWidget);
+    expect(find.text('End timer'), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('a timer the player ended themselves is not called an emergency release', (tester) async {
+    ChastityTimerService.request = (m, u, {key, body}) async =>
+        TimerApiResponse(200, openView(role: 'director', managedBy: 'player', releasedBy: 'player'));
+    await timers.addShared(id: 't1', role: TimerRole.director, key: 'D', partnerName: 'PC 1');
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+
+    expect(find.text('Ended by your player'), findsOneWidget);
+    expect(find.text('Ran for 1 hour 50 minutes'), findsOneWidget);
+    expect(find.textContaining('emergency'), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('choosing no end time hides everything that moves the end', (tester) async {
+    await pump(tester, const TimerSetupView(role: TimerRole.player));
+
+    expect(find.text('Starts at'), findsOneWidget);
+    expect(find.text('RANDOM CHANGES'), findsOneWidget);
+    await tester.tap(find.text('No end time'));
+    await tester.pump();
+
+    expect(find.text('Starts at'), findsNothing);
+    expect(find.text('RANDOM CHANGES'), findsNothing);
+    expect(find.text('End by itself eventually'), findsOneWidget);
+    expect(find.text('Share a public link'), findsOneWidget);
     await finish(tester);
   });
 }

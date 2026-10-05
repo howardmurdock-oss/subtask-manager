@@ -67,7 +67,7 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
             : "You're free. Tap to see how it went.";
       } else {
         headline = released ? 'Timer released' : 'Timer finished';
-        detail = '${record.partnerName ?? 'Your player'}${released && view.releasedBy == TimerRole.player ? ' used the emergency release' : "'s timer is over"}. Tap to see how it went.';
+        detail = '${record.partnerName ?? 'Your player'}${view.endedByPlayerChoice ? ' ended their timer' : released && view.releasedBy == TimerRole.player ? ' used the emergency release' : "'s timer is over"}. Tap to see how it went.';
       }
     } else if (record == null) {
       headline = widget.role == TimerRole.player ? 'No timer running' : 'No timers running';
@@ -75,9 +75,16 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
     } else if (view == null) {
       headline = 'Loading…';
       detail = record.partnerName ?? '';
+    } else if (view.config.openEnded) {
+      headline = formatCountdown(view.elapsed);
+      detail = widget.role == TimerRole.director
+          ? 'locked so far for ${record.partnerName ?? 'your player'} · no end time'
+          : 'locked so far · no end time';
     } else if (view.remaining == null) {
       headline = 'Time hidden';
-      detail = widget.role == TimerRole.player ? 'Your director has hidden the time left.' : '';
+      detail = widget.role == TimerRole.player
+          ? 'Your director has hidden the time left. Locked for ${formatSpan(view.elapsed)} so far.'
+          : '';
     } else {
       headline = formatCountdown(view.remaining!);
       detail = widget.role == TimerRole.director
@@ -125,7 +132,7 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
                     Text(
                       headline,
                       style: TextStyle(
-                        fontSize: record != null && !finished && view?.remaining != null ? 22 : 16,
+                        fontSize: record != null && !finished && (view?.remaining != null || (view?.config.openEnded ?? false)) ? 22 : 16,
                         fontWeight: FontWeight.bold,
                         fontFeatures: const [FontFeature.tabularFigures()],
                       ),

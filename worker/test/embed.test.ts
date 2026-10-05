@@ -55,3 +55,20 @@ test('the timer page and the ended page carry link-preview tags', async () => {
   assert.match(ended, /og:title" content="Chastity Timer · Timer ended"/);
   assert.match(ended, /t\/timer-ended\/preview\.png/);
 });
+
+test('an open-ended timer is shown as time so far, with nothing to vote on', async () => {
+  const { previewText } = await import('../src/embed.ts');
+  const start = now - (3 * 24 + 4) * 3600e3;
+  const v = { status: 'running' as const, endAt: null, startAt: start, openEnded: true, acceptingVotes: false, now };
+  assert.equal(previewText(v).title, 'Chastity Timer · locked 3d 4h so far');
+  const svg = badgeSvg(v);
+  assert.match(svg, /Locked · 3d 4h so far/);
+  assert.match(svg, /No end time/);
+});
+
+test('a finished timer says how long it ran', async () => {
+  const { previewText } = await import('../src/embed.ts');
+  const v = { status: 'released' as const, endAt: null, startAt: now - 50 * 3600e3, closedAt: now - 2 * 3600e3, acceptingVotes: false, now };
+  assert.match(badgeSvg(v), /Ran for 2d 0h/);
+  assert.equal(previewText(v).description, 'This timer is over. It ran for 2d 0h.');
+});

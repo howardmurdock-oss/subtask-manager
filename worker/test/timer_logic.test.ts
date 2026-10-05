@@ -224,3 +224,42 @@ test('an ended or unknown link explains what was there and points to the app', a
   assert.match(page, /noindex/);
   assert.doesNotMatch(page, /switched off\.'/);
 });
+
+test('an open-ended timer runs until it is ended, and nothing moves it', () => {
+  const t = timer({ openEnded: true, public: { enabled: true }, hidden: true, random: { enabled: true } });
+  assert.equal(t.config.hidden, false, 'nothing to hide without an end');
+  assert.equal(t.config.random.enabled, false, 'nothing to roll');
+  const later = resolve(t, at(24 * 400));
+  assert.equal(later.status, 'running', 'still running more than a year later');
+  assert.equal(refuse(t, 'director', H, at(1)), 'open-ended');
+  assert.equal(refuse(t, 'player', H, at(1)), 'open-ended');
+  assert.equal(refuse(t, 'public', 600, at(1), 'v1'), 'open-ended');
+  const pub = viewFor(t, 'public', at(5)) as any;
+  assert.equal(pub.openEnded, true);
+  assert.equal(pub.endAt, null);
+  assert.equal(pub.acceptingVotes, false, 'a public link only watches it');
+  assert.equal(pub.startAt, START);
+  const released = { ...t, releasedAt: at(30), releasedBy: 'player' as const };
+  const view = viewFor(released, 'player', at(31)) as any;
+  assert.equal(view.status, 'released');
+  assert.equal(view.closedAt, at(30), 'it ran from the start until it was ended');
+});
+
+test('an open-ended timer with a maximum ends there by itself', () => {
+  const t = timer({ openEnded: true, maxTotalSeconds: 48 * H });
+  assert.equal(resolve(t, at(47)).status, 'running');
+  assert.equal(resolve(t, at(48)).status, 'ended');
+  assert.equal((viewFor(t, 'player', at(49)) as any).closedAt, at(48));
+});
+
+test('the time so far: shown even when the time left is hidden', () => {
+  const t = timer({ hidden: true, public: { enabled: true, showTimeLeft: false } });
+  const player = viewFor(t, 'player', at(3)) as any;
+  assert.equal(player.endAt, null);
+  assert.equal(player.startAt, START);
+  assert.equal(player.closedAt, null, 'still running');
+  const pub = viewFor(t, 'public', at(3)) as any;
+  assert.equal(pub.endAt, null);
+  assert.equal(pub.startAt, START);
+  assert.equal((viewFor(t, 'player', at(11)) as any).closedAt, at(10), 'ran for its ten hours');
+});

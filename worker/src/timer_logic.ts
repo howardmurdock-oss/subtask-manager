@@ -21,6 +21,10 @@ export interface TimerConfig {
   baseSeconds: number;
   /** Who set it up. A director-managed timer's settings are the director's. */
   managedBy: 'player' | 'director';
+  /** No end time: it runs until someone ends it (or reaches its maximum,
+   * if it has one). Nothing can add or remove time - there is no end to
+   * move - so changes, random changes, hiding and public voting are off. */
+  openEnded: boolean;
   /** The player does not see the time left, or how much each change was. */
   hidden: boolean;
   /** No change may push the end past start + this. Null: no ceiling. */
@@ -130,7 +134,8 @@ export function resolve(state: TimerState, now: number): Resolved {
   const until = state.releasedAt ?? now;
 
   const stored = [...state.events].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
-  let endAt = Math.min(startAt + config.baseSeconds * 1000, ceiling);
+  // An open-ended timer ends only at its maximum, if it has one.
+  let endAt = config.openEnded ? ceiling : Math.min(startAt + config.baseSeconds * 1000, ceiling);
   const history: TimerEvent[] = [];
 
   const everyMs = config.random.enabled && config.random.everyMinutes > 0
@@ -183,6 +188,7 @@ export type Refusal =
   | 'visitor-cap'
   | 'public-disabled'
   | 'at-maximum'
+  | 'open-ended'
   | 'bad-amount';
 
 /** Whether no more time can be added: the end is at the maximum length. */
@@ -203,6 +209,8 @@ export function refuse(
   const { status, history, endAt } = resolve(state, now);
   if (status !== 'running') return 'not-running';
   const { config } = state;
+  // No end time to move.
+  if (config.openEnded) return 'open-ended';
   // At the maximum, added time would do nothing - and a vote would still be
   // spent. Refused, so whoever tried is told why rather than left guessing.
   const full = delta > 0 && isAtMaximum(state, endAt);
@@ -255,21 +263,30 @@ export type Viewer = 'player' | 'director' | 'public';
  * the history, the combination or the settings.
  */
 export function viewFor(state: TimerState, viewer: Viewer, now: number): Record<string, unknown> {
-  const { endAt, status, history } = resolve(state, now);
+  const { endAt: end, status, history } = resolve(state, now);
   const { config } = state;
   const over = status !== 'running';
   const hideTime = !over && ((viewer === 'player' && config.hidden) || (viewer === 'public' && !config.public.showTimeLeft));
+  // An open-ended timer with no maximum has no end at all.
+  const endAt = Number.isFinite(end) ? end : null;
+  // When it stopped, for "ran for": released early, or reached its end.
+  const closedAt = !over ? null : state.releasedAt ?? endAt;
 
   if (viewer === 'public') {
     return {
       status,
+      // The start, for "locked for ... so far": it says nothing about the
+      // end, so it is shown even where the time left is not.
+      startAt: state.startAt,
+      closedAt,
+      openEnded: config.openEnded,
       endAt: hideTime ? null : endAt,
       stepSeconds: config.public.stepSeconds,
       allowRemove: config.public.allowRemove,
-      acceptingVotes: config.public.enabled && !over,
+      acceptingVotes: config.public.enabled && !over && !config.openEnded,
       // Adding is refused at the maximum; the page says so instead of
       // leaving a button that seems to do nothing.
-      atMaximum: !over && isAtMaximum(state, endAt),
+      atMaximum: !over && isAtMaximum(state, end),
       now,
     };
   }
@@ -280,10 +297,11 @@ export function viewFor(state: TimerState, viewer: Viewer, now: number): Record<
     status,
     startAt: state.startAt,
     endAt: hideTime ? null : endAt,
+    closedAt,
     releasedAt: state.releasedAt,
     releasedBy: state.releasedBy,
     // Not for a hidden timer's player: it would hint at the end.
-    atMaximum: hideAmounts ? null : !over && isAtMaximum(state, endAt),
+    atMaximum: hideAmounts ? null : !over && isAtMaximum(state, end),
     config: {
       ...config,
       // The starting length and the ceiling, with the start time, would give
@@ -322,10 +340,13 @@ export function sanitizeConfig(raw: any, managedBy: 'player' | 'director'): Time
   const r = raw ?? {};
   const digits = typeof r.combination?.digits === 'string' ? r.combination.digits.replace(/\D/g, '').slice(0, 12) : '';
   const nullableCap = (v: unknown) => (v == null ? null : clampInt(v, 60, YEAR, 60));
+  const openEnded = r.openEnded === true;
   return {
     baseSeconds: clampInt(r.baseSeconds, 60, YEAR, 3600),
     managedBy,
-    hidden: r.hidden === true,
+    openEnded,
+    // Nothing to hide, change or roll without an end time.
+    hidden: !openEnded && r.hidden === true,
     maxTotalSeconds: r.maxTotalSeconds == null ? null : clampInt(r.maxTotalSeconds, 60, 5 * YEAR, YEAR),
     director: {
       canAdd: r.director?.canAdd !== false,
@@ -333,7 +354,7 @@ export function sanitizeConfig(raw: any, managedBy: 'player' | 'director'): Time
       dailyCapSeconds: nullableCap(r.director?.dailyCapSeconds),
     },
     random: {
-      enabled: r.random?.enabled === true,
+      enabled: !openEnded && r.random?.enabled === true,
       everyMinutes: clampInt(r.random?.everyMinutes, 15, 7 * 24 * 60, 240),
       minSeconds: clampInt(r.random?.minSeconds, -YEAR, YEAR, -3600),
       maxSeconds: clampInt(r.random?.maxSeconds, -YEAR, YEAR, 3600),

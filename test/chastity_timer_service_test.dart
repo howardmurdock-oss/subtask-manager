@@ -149,6 +149,25 @@ void main() {
     expect(v.remaining!.inMinutes, inInclusiveRange(9, 10));
   });
 
+  test('no end time is kept in the settings sent to the Worker, and read back', () {
+    final c = ChastityTimerConfig.fromJson(<String, dynamic>{'baseSeconds': 3600, 'openEnded': true});
+    expect(c.openEnded, isTrue);
+    expect(c.toJson()['openEnded'], isTrue);
+    expect(ChastityTimerConfig.fromJson(<String, dynamic>{'baseSeconds': 3600}).openEnded, isFalse,
+        reason: 'timers from before it existed have an end');
+  });
+
+  test("time locked counts on the Worker's clock, and stops when the timer does", () {
+    final serverNow = now + 3600 * 1000;
+    final running = ChastityTimerView.fromJson(view(endAt: serverNow + 600 * 1000, serverNow: serverNow),
+        receivedAt: DateTime.fromMillisecondsSinceEpoch(now));
+    expect(running.elapsed.inMinutes, inInclusiveRange(59, 60));
+
+    final over = ChastityTimerView.fromJson(
+        view(status: 'released', endAt: now + 3600 * 1000)..['closedAt'] = now + 1800 * 1000);
+    expect(over.elapsed, const Duration(minutes: 30));
+  });
+
   group('when a timer ends', () {
     test('it is announced once, and stays in front of its person until seen', () async {
       serve((_, __, ___, ____) => TimerApiResponse(200, view(status: 'ended', endAt: now - 1000)));

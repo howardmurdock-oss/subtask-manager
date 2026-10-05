@@ -19,6 +19,9 @@
 export interface PublicView {
   status: 'running' | 'ended' | 'released';
   endAt: number | null;
+  startAt?: number;
+  closedAt?: number | null;
+  openEnded?: boolean;
   acceptingVotes: boolean;
   allowRemove?: boolean;
   atMaximum?: boolean;
@@ -82,18 +85,32 @@ export function embedPage(timerUrl: string): string {
     const p = (n) => String(n).padStart(2, '0');
     return (d ? d + 'd ' : '') + p(h) + ':' + p(m) + ':' + p(sec);
   };
+  const span = (ms) => {
+    const m = Math.max(0, Math.floor(ms / 60000));
+    const d = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60), min = m % 60;
+    return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + min + 'm' : min + 'm';
+  };
   function render() {
     if (!view) return;
     const running = view.status === 'running';
+    const nowMs = Date.now() + offset;
     if (!running) {
       $('time').textContent = 'Unlocked';
-      $('sub').textContent = 'This timer is over';
+      $('sub').textContent = view.closedAt ? 'Ran for ' + span(view.closedAt - view.startAt) : 'This timer is over';
       $('vote').textContent = 'See it';
       return;
     }
-    $('time').textContent = view.endAt == null ? '??:??:??' : clock(view.endAt - (Date.now() + offset));
-    $('sub').textContent = view.endAt == null ? 'The time left is hidden'
-      : view.atMaximum ? 'left · at its maximum length' : 'left on the timer';
+    if (view.openEnded) {
+      // No end time: it counts up, from the start.
+      $('time').textContent = clock(nowMs - view.startAt);
+      $('sub').textContent = "locked so far · runs until it's ended";
+      $('vote').textContent = 'See it';
+      return;
+    }
+    $('time').textContent = view.endAt == null ? '??:??:??' : clock(view.endAt - nowMs);
+    const sofar = ' · locked for ' + span(nowMs - view.startAt);
+    $('sub').textContent = (view.endAt == null ? 'time left hidden'
+      : view.atMaximum ? 'left · at its maximum' : 'left') + sofar;
     $('vote').textContent = view.acceptingVotes ? 'Vote on it' : 'See it';
   }
   async function load() {
@@ -140,6 +157,11 @@ export function endedEmbedPage(): string {
 </html>`;
 }
 
+/** How long it has run, in the same words: "2d 4h". */
+function soFar(view: PublicView): string {
+  return roughly((view.closedAt ?? view.now) - (view.startAt ?? view.now)).replace(' left', '');
+}
+
 /** Time left in words that suit a picture which does not count down. */
 export function roughly(ms: number): string {
   const m = Math.max(0, Math.floor(ms / 60000));
@@ -159,7 +181,16 @@ export function roughly(ms: number): string {
  */
 export function previewText(view: PublicView): { title: string; description: string; state: 'locked' | 'unlocked' } {
   if (view.status !== 'running') {
-    return { title: 'Chastity Timer · Unlocked', description: 'This timer is over.', state: 'unlocked' };
+    const ran = view.closedAt && view.startAt ? ` It ran for ${soFar(view)}.` : '';
+    return { title: 'Chastity Timer · Unlocked', description: `This timer is over.${ran}`, state: 'unlocked' };
+  }
+  if (view.openEnded) {
+    const sofar = soFar(view);
+    return {
+      title: `Chastity Timer · locked ${sofar} so far`,
+      description: "Someone is locked up, with no end time: it runs until it's ended.",
+      state: 'locked',
+    };
   }
   const left = view.endAt == null ? 'time hidden' : roughly(view.endAt - view.now);
   const description = !view.acceptingVotes
@@ -180,8 +211,14 @@ export function badgeSvg(view: PublicView | null): string {
     tone = '#22d3ee';
   } else if (view.status !== 'running') {
     headline = 'Unlocked';
-    detail = 'This timer is over · subtaskmanager.com';
+    detail = view.closedAt && view.startAt
+      ? `Ran for ${soFar(view)} · subtaskmanager.com`
+      : 'This timer is over · subtaskmanager.com';
     tone = '#34d399';
+  } else if (view.openEnded) {
+    headline = `Locked · ${soFar(view)} so far`;
+    detail = 'No end time · subtaskmanager.com';
+    tone = '#f472b6';
   } else {
     headline = view.endAt == null ? 'Locked · time hidden' : `Locked · ${roughly(view.endAt - view.now)}`;
     detail = view.acceptingVotes ? 'Click to vote · subtaskmanager.com' : 'subtaskmanager.com';

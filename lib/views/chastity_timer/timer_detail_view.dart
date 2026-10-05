@@ -105,6 +105,28 @@ class _TimerDetailViewState extends State<TimerDetailView> {
   }
 
   Future<void> _release(ChastityTimerView view) async {
+    if (view.role == TimerRole.player && view.playerMayEnd) {
+      final hasPartner = _timers.recordOf(widget.timerId)?.partnerCode != null;
+      final end = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('End your timer?'),
+          content: Text('This ends it and shows the combination, if there is one.'
+              '${hasPartner ? ' Your director will be told.' : ''}'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('End timer')),
+          ],
+        ),
+      );
+      if (end != true) return;
+      await _run(
+        () => _timers.release(widget.timerId),
+        done: 'Timer ended.',
+        partnerSummary: 'Your player ended their timer.',
+      );
+      return;
+    }
     final isPlayer = view.role == TimerRole.player;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -307,20 +329,34 @@ class _TimerDetailViewState extends State<TimerDetailView> {
   Widget _countdownCard(ChastityTimerView view, ThemeData theme) {
     final String big;
     final String small;
+    String? extra;
     if (view.status == TimerStatus.released) {
       big = 'Unlocked';
-      small = view.releasedBy == TimerRole.player
-          ? 'Ended by emergency release'
-          : 'Ended early by the director';
+      small = view.endedByPlayerChoice
+          ? (view.role == TimerRole.player ? 'You ended it' : 'Ended by your player')
+          : view.releasedBy == TimerRole.player
+              ? 'Ended by emergency release'
+              : 'Ended by the director';
+      extra = 'Ran for ${formatSpan(view.elapsed)}';
     } else if (view.isOver) {
       big = 'Unlocked';
       small = 'The timer has finished';
+      extra = 'Ran for ${formatSpan(view.elapsed)}';
+    } else if (view.config.openEnded) {
+      // No end time: it counts up.
+      big = formatCountdown(view.elapsed);
+      small = 'locked so far · no end time';
+      if (view.config.maxTotalSeconds != null) {
+        extra = 'Ends by itself after ${formatSpan(Duration(seconds: view.config.maxTotalSeconds!))}';
+      }
     } else if (view.remaining == null) {
       big = '??:??:??';
       small = 'The time left is hidden';
+      extra = 'Locked for ${formatSpan(view.elapsed)} so far';
     } else {
       big = formatCountdown(view.remaining!);
       small = 'left';
+      extra = 'Locked for ${formatSpan(view.elapsed)} so far';
     }
     return Card(
       child: Padding(
@@ -345,8 +381,17 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                 style: TextStyle(
                     color:
                         theme.colorScheme.onSurface.withValues(alpha: 0.65))),
+            if (extra != null) ...[
+              const SizedBox(height: 4),
+              Text(extra,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+            ],
             if (view.config.maxTotalSeconds != null &&
                 !view.isOver &&
+                !view.config.openEnded &&
                 view.remaining != null) ...[
               const SizedBox(height: 6),
               Text(
@@ -364,9 +409,10 @@ class _TimerDetailViewState extends State<TimerDetailView> {
 
   Widget _actionsCard(ChastityTimerView view, ThemeData theme) {
     final isDirector = view.role == TimerRole.director;
-    final canAdd =
+    final open = view.config.openEnded;
+    final canAdd = !open &&
         (isDirector ? view.config.director.canAdd : true) && !view.atMaximum;
-    final canRemove = isDirector && view.config.director.canRemove;
+    final canRemove = !open && isDirector && view.config.director.canRemove;
     Widget quick(Duration d, {required bool add}) => ActionChip(
           label: Text('${add ? '+' : '−'}${formatSpan(d)}'),
           onPressed: _busy ? null : () => _change(view, add: add, amount: d),
@@ -411,7 +457,7 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                     onPressed: _busy ? null : () => _change(view, add: false)),
               ]),
             ],
-            if (isDirector && view.config.director.dailyCapSeconds != null) ...[
+            if (isDirector && !open && view.config.director.dailyCapSeconds != null) ...[
               const SizedBox(height: 10),
               Text(
                   'Limit: ${formatSpan(Duration(seconds: view.config.director.dailyCapSeconds!))} of changes per 24 hours.',
@@ -421,16 +467,20 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                           theme.colorScheme.onSurface.withValues(alpha: 0.6))),
             ],
             const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : () => _release(view),
-              icon:
-                  const Icon(Icons.lock_open_rounded, color: Colors.redAccent),
-              label: Text(
-                  isDirector ? 'End the timer now' : 'Emergency release',
-                  style: const TextStyle(color: Colors.redAccent)),
-              style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Colors.redAccent)),
-            ),
+            if (view.playerMayEnd && !isDirector)
+              FilledButton.tonalIcon(
+                onPressed: _busy ? null : () => _release(view),
+                icon: const Icon(Icons.lock_open_rounded),
+                label: const Text('End timer'),
+              )
+            else
+              OutlinedButton.icon(
+                onPressed: _busy ? null : () => _release(view),
+                icon: const Icon(Icons.lock_open_rounded, color: Colors.redAccent),
+                label: Text(isDirector ? 'End the timer now' : 'Emergency release',
+                    style: const TextStyle(color: Colors.redAccent)),
+                style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent)),
+              ),
           ],
         ),
       ),
@@ -479,11 +529,15 @@ class _TimerDetailViewState extends State<TimerDetailView> {
               ],
             ),
             if (!view.isManager && link == null)
-              Text(view.config.publicLink.enabled
-                  ? 'Anyone with the link can ${view.config.publicLink.allowRemove ? 'add or remove' : 'add'} time.'
-                  : 'No public link.')
+              Text(!view.config.publicLink.enabled
+                  ? 'No public link.'
+                  : view.config.openEnded
+                      ? "Anyone with the link can see how long it's been running."
+                      : 'Anyone with the link can ${view.config.publicLink.allowRemove ? 'add or remove' : 'add'} time.')
             else if (link == null)
-              const Text('Off. Switch it on to let anyone with the link vote.')
+              Text(view.config.openEnded
+                  ? "Off. Switch it on to show anyone with the link how long it's been running."
+                  : 'Off. Switch it on to let anyone with the link vote.')
             else ...[
               SelectableText(link,
                   style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -692,7 +746,9 @@ class _TimerDetailViewState extends State<TimerDetailView> {
             const SizedBox(height: 8),
             // A hidden timer does not tell the player how long it started at.
             Text(
-                view.config.baseSeconds > 0
+                view.config.openEnded
+                    ? 'Started ${_when(view.startAt)}, with no end time.'
+                    : view.config.baseSeconds > 0
                     ? 'Started ${_when(view.startAt)}, at ${formatSpan(Duration(seconds: view.config.baseSeconds))}.'
                     : 'Started ${_when(view.startAt)}.',
                 style: TextStyle(

@@ -20,6 +20,7 @@ import '../services/update_service.dart';
 import '../services/chastity_timer_service.dart';
 import '../models/chastity_timer.dart';
 import 'chastity_timer/timer_detail_view.dart';
+import 'chastity_timer/timer_format.dart';
 import '../services/windows_updater.dart';
 import 'pairing/pairing_view.dart';
 import 'settings/settings_view.dart';
@@ -116,16 +117,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       context: context,
       builder: (ctx) => AlertDialog(
         icon: Icon(Icons.lock_open_rounded, size: 40, color: Colors.greenAccent[400]),
-        title: Text(released ? 'Your timer was released' : 'Your timer is up'),
+        title: Text(view.endedByPlayerChoice
+            ? 'Your timer has ended'
+            : released
+                ? 'Your timer was released'
+                : 'Your timer is up'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              released && view.releasedBy == TimerRole.director
-                  ? 'Your director ended it early.'
-                  : released
-                      ? 'The emergency release was used.'
-                      : "You're free to unlock.",
+              '${view.endedByPlayerChoice ? 'You ended it.' : released && view.releasedBy == TimerRole.director ? (view.config.openEnded ? 'Your director ended it.' : 'Your director ended it early.') : released ? 'The emergency release was used.' : "You're free to unlock."}'
+              ' It ran for ${formatSpan(view.elapsed)}.',
               textAlign: TextAlign.center,
             ),
             if (digits != null) ...[

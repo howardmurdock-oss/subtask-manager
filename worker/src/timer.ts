@@ -260,6 +260,8 @@ export class ChastityTimer {
         meta.config = {
           ...next,
           baseSeconds: meta.config.baseSeconds,
+          // Switching it would wipe out, or invent, an end time.
+          openEnded: meta.config.openEnded ?? false,
           random: meta.config.random,
           combination: meta.config.combination,
         };
