@@ -816,6 +816,9 @@ class DirectiveSyncTaskHandler extends TaskHandler {
     return _pastPairingCodes.contains(clean);
   }
 
+  @visibleForTesting
+  void handleBackgroundMessageForTest(SyncMessage msg) => _handleBackgroundMessage(msg);
+
   void _handleBackgroundMessage(SyncMessage msg) {
     if (_isOwnMessage(msg)) return;
     if (!_isAddressedToMe(msg)) return;
@@ -1058,7 +1061,21 @@ class DirectiveSyncTaskHandler extends TaskHandler {
           );
           break;
 
+        // Liveness and state chatter: stale by the time the app opens, which
+        // asks for current state itself.
+        case SyncMessageType.ping:
+        case SyncMessageType.pong:
+        case SyncMessageType.requestState:
+        case SyncMessageType.sendState:
+          break;
+
         default:
+          // Anything this isolate has no handler for goes to the app, which
+          // does. It used to be dropped - after its id had been marked
+          // processed, so the push copy was skipped too - and a message type
+          // added later was lost whenever it arrived with the app asleep, as
+          // in battery saver: a partner's feature announcement, for one.
+          _queuePendingSyncMessage(msg);
           break;
       }
     } catch (e) {
