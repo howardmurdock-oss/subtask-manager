@@ -205,6 +205,30 @@ void main() {
     });
   });
 
+  test('a key sent again replaces the one that never worked', () async {
+    serve((_, __, ___, ____) => TimerApiResponse(200, view()));
+    final service = ChastityTimerService();
+    await service.addShared(id: 't1', role: TimerRole.director, key: 'OLD', partnerName: 'Tessa');
+    await service.addShared(id: 't1', role: TimerRole.director, key: 'NEW');
+
+    expect(service.records.single.key, 'NEW');
+    expect(service.records.single.partnerName, 'Tessa', reason: 'kept from the first time');
+  });
+
+  test("a fresh key for the partner is asked for with the manager's key", () async {
+    serve((method, url, key, body) => url.path.endsWith('/reissue-key')
+        ? const TimerApiResponse(200, {'key': 'FRESH'})
+        : TimerApiResponse(200, view()));
+    final service = ChastityTimerService();
+    await service.addShared(id: 't1', role: TimerRole.player, key: 'P');
+
+    final result = await service.reissuePartnerKey('t1');
+
+    expect(result.key, 'FRESH');
+    expect(calls.last.url.path, endsWith('/timer/t1/reissue-key'));
+    expect(calls.last.key, 'P');
+  });
+
   test('forgetting a timer removes it from this device only', () async {
     serve((_, __, ___, ____) => TimerApiResponse(200, view()));
     final service = ChastityTimerService();

@@ -30,6 +30,8 @@ String describeTimerError(String? code) {
       return "That isn't allowed on this timer.";
     case 'not-running':
       return 'This timer has already finished.';
+    case 'partner-connected':
+      return 'They already have this timer.';
     case 'at-maximum':
       return 'This timer is already at its maximum length. No more time can be added.';
     case 'too-many-changes':
@@ -236,14 +238,17 @@ class ChastityTimerService extends ChangeNotifier {
     String? partnerCode,
     String? partnerName,
   }) async {
-    if (recordOf(id) == null) {
+    final existing = recordOf(id);
+    if (existing == null || existing.key != key) {
+      // A key sent again replaces an earlier one, which no longer works.
+      _records.removeWhere((r) => r.id == id);
       _records.add(TimerRecord(
         id: id,
         role: role,
         key: key,
-        partnerCode: partnerCode,
-        partnerName: partnerName,
-        addedAt: DateTime.now(),
+        partnerCode: partnerCode ?? existing?.partnerCode,
+        partnerName: partnerName ?? existing?.partnerName,
+        addedAt: existing?.addedAt ?? DateTime.now(),
       ));
       await _save();
     }
@@ -298,6 +303,16 @@ class ChastityTimerService extends ChangeNotifier {
 
   /// Retires the public link and issues a new one. Manager only.
   Future<String?> replaceLink(String id) => _act(id, 'replace-link', const {}, thenRefresh: true);
+
+  /// A fresh key for the partner, whose first one never arrived - to send
+  /// again. Manager only, and only while the partner has never connected.
+  Future<({String? key, String? error})> reissuePartnerKey(String id) async {
+    final record = recordOf(id);
+    if (record == null) return (key: null, error: 'not your timer');
+    final response = await _call('POST', Uri.parse('$apiBase/$id/reissue-key'), key: record.key, body: const {});
+    if (!response.ok) return (key: null, error: response.error ?? 'offline');
+    return (key: response.body['key'] as String?, error: null);
+  }
 
   /// The player's emergency release, or the director ending it early.
   Future<String?> release(String id) => _act(id, 'release', const {});

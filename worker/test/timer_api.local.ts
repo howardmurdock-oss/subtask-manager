@@ -206,6 +206,42 @@ await check('link previews: tags on the page, and the right picture for the stat
   assert.equal((await png(`/t/${t.publicId}/badge.png`)).type, 'image/png');
 });
 
+await check("a partner's key that never arrived can be issued again, until they connect", async () => {
+  const t = (await call('/timer', { body: { managedBy: 'player', config: { baseSeconds: 3 * H } } })).body;
+  const mine = await call(`/timer/${t.id}/view`, { key: t.playerKey });
+  assert.equal(mine.body.partnerConnected, false, 'the director has not connected yet');
+
+  const fresh = await call(`/timer/${t.id}/reissue-key`, { key: t.playerKey, body: {} });
+  assert.equal(fresh.status, 200);
+  assert.ok(fresh.body.key && fresh.body.key !== t.directorKey);
+  assert.equal((await call(`/timer/${t.id}/view`, { key: t.directorKey })).status, 403, 'the lost key no longer works');
+
+  const theirs = await call(`/timer/${t.id}/view`, { key: fresh.body.key });
+  assert.equal(theirs.status, 200);
+  assert.equal(theirs.body.role, 'director');
+  assert.equal((await call(`/timer/${t.id}/view`, { key: t.playerKey })).body.partnerConnected, true);
+  const again = await call(`/timer/${t.id}/reissue-key`, { key: t.playerKey, body: {} });
+  assert.equal(again.status, 409);
+  assert.equal(again.body.error, 'partner-connected');
+});
+
+await check('only whoever manages the timer can have a key issued again', async () => {
+  const t = (await call('/timer', { body: { managedBy: 'player', config: { baseSeconds: 3 * H } } })).body;
+  const r = await call(`/timer/${t.id}/reissue-key`, { key: t.directorKey, body: {} });
+  assert.equal(r.status, 403);
+  assert.equal((await call(`/timer/${t.id}/view`, { key: t.playerKey })).body.partnerConnected, true,
+    'using a key at all is connecting');
+});
+
+await check("a director cannot replace a player's key once the player has it", async () => {
+  const t = (await call('/timer', { body: { managedBy: 'director', config: { baseSeconds: 3 * H } } })).body;
+  await call(`/timer/${t.id}/view`, { key: t.directorKey });
+  await call(`/timer/${t.id}/view`, { key: t.playerKey });
+  const r = await call(`/timer/${t.id}/reissue-key`, { key: t.directorKey, body: {} });
+  assert.equal(r.status, 409, "the player's emergency release can never be taken away");
+  assert.equal((await call(`/timer/${t.id}/view`, { key: t.playerKey })).status, 200);
+});
+
 await check('a change keeps the link in its reply, for whoever may see it', async () => {
   const t = (await call('/timer', { body: { managedBy: 'director', config: { baseSeconds: 5 * H, public: { enabled: true } } } })).body;
   const add = await call(`/timer/${t.id}/adjust`, { key: t.directorKey, body: { delta: 60, eventId: 'x1' } });

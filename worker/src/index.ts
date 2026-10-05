@@ -974,7 +974,7 @@ async function handleTimerOp(request: Request, env: Env, timerId: string, op: st
   const body: any = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
 
   if (op === 'view') return callTimer(env, timerId, 'view', {}, key);
-  if (op === 'adjust' || op === 'release') return callTimer(env, timerId, op, body, key);
+  if (op === 'adjust' || op === 'release' || op === 'reissue-key') return callTimer(env, timerId, op, body, key);
 
   if (op === 'configure' || op === 'replace-link') {
     const before = (await (await callTimer(env, timerId, 'view', {}, key)).json()) as { publicId?: string | null };

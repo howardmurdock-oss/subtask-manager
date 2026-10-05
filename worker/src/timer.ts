@@ -42,6 +42,14 @@ interface Meta {
   publicId: string | null;
   releasedAt: number | null;
   releasedBy: 'player' | 'director' | null;
+  /** When each side first used its key. A partner whose key was never used
+   * may have never received it: their key can then be issued again. */
+  playerSeenAt?: number | null;
+  directorSeenAt?: number | null;
+  /** Set on timers created since first use was recorded. On older ones a
+   * missing playerSeenAt proves nothing - the player may have connected
+   * before it was tracked. */
+  seenTracked?: boolean;
 }
 
 export async function sha256Hex(text: string): Promise<string> {
@@ -161,6 +169,7 @@ export class ChastityTimer {
         publicId: body.publicId ?? null,
         releasedAt: null,
         releasedBy: null,
+        seenTracked: true,
       };
       if (!meta.config.public.enabled) meta.publicId = null;
       this.saveMeta(meta);
@@ -199,9 +208,31 @@ export class ChastityTimer {
     const linkFor = () =>
       manager || (role === 'player' && meta.config.public.shareWithPlayer) ? meta.publicId : null;
 
+    // First use of a key: the side holding it has the timer.
+    const seenField = role === 'player' ? 'playerSeenAt' : 'directorSeenAt';
+    if (!meta[seenField]) {
+      meta[seenField] = now;
+      this.saveMeta(meta);
+    }
+    // Whether the partner has ever connected; null when it cannot be known
+    // (a player on a timer from before first use was recorded).
+    const partnerSeen = (): boolean | null => {
+      if (role === 'player') return Boolean(meta.directorSeenAt);
+      if (meta.playerSeenAt) return true;
+      return meta.seenTracked ? false : null;
+    };
+    // Shared by every reply: who is asking, the link if they may see it, and
+    // for the manager, whether the partner has ever connected.
+    const about = () => ({
+      role,
+      manager,
+      publicId: linkFor(),
+      ...(manager ? { partnerConnected: partnerSeen() } : {}),
+    });
+
     switch (op) {
       case 'view':
-        return reply({ role, manager, publicId: linkFor(), ...viewFor(this.state(meta), role as Viewer, now) });
+        return reply({ ...about(), ...viewFor(this.state(meta), role as Viewer, now) });
 
       case 'adjust': {
         const delta = Number(body.delta);
@@ -209,14 +240,14 @@ export class ChastityTimer {
         const state = this.state(meta);
         // A retried request is not applied twice.
         if (state.events.some((e) => e.id === eventId)) {
-          return reply({ role, manager, publicId: linkFor(), ...viewFor(state, role, now) });
+          return reply({ ...about(), ...viewFor(state, role, now) });
         }
         if (state.events.length >= MAX_EVENTS) return reply({ error: 'too-many-changes' }, 409);
         const why = refuse(state, role, delta, now);
-        if (why) return reply({ error: why, role, manager, publicId: linkFor(), ...viewFor(state, role, now) }, 409);
+        if (why) return reply({ error: why, ...about(), ...viewFor(state, role, now) }, 409);
         this.sql.exec(`INSERT INTO events (id, at, actor, delta) VALUES (?, ?, ?, ?)`, eventId, now, role, delta);
         await this.scheduleCleanup(meta);
-        return reply({ role, manager, publicId: linkFor(), ...viewFor(this.state(meta), role, now) });
+        return reply({ ...about(), ...viewFor(this.state(meta), role, now) });
       }
 
       case 'configure': {
@@ -236,7 +267,7 @@ export class ChastityTimer {
         if (!meta.config.public.enabled) meta.publicId = null;
         this.saveMeta(meta);
         await this.scheduleCleanup(meta);
-        return reply({ role, manager, publicId: linkFor(), ...viewFor(this.state(meta), role, now) });
+        return reply({ ...about(), ...viewFor(this.state(meta), role, now) });
       }
 
       case 'replace-link': {
@@ -248,18 +279,35 @@ export class ChastityTimer {
         return reply({ ok: true, previous, publicId: meta.publicId });
       }
 
+      case 'reissue-key': {
+        // The partner's key never arrived (their device was asleep, say): the
+        // manager may have a fresh one made, to send again. Only while the
+        // partner has never connected - once they have, nobody can replace
+        // their key, so a player's emergency release cannot be taken away.
+        if (!manager) return reply({ error: 'not-allowed' }, 403);
+        // Unknown counts as connected: a player's key is never replaced
+        // unless they certainly never had it.
+        if (partnerSeen() !== false) return reply({ error: 'partner-connected' }, 409);
+        const key = randomToken(24);
+        const hash = await sha256Hex(key);
+        if (role === 'player') meta.directorKeyHash = hash;
+        else meta.playerKeyHash = hash;
+        this.saveMeta(meta);
+        return reply({ key });
+      }
+
       case 'release': {
         // The player's emergency release is always available and cannot be
         // taken away. The director may end it early too.
         const state = this.state(meta);
         if (resolve(state, now).status !== 'running') {
-          return reply({ role, manager, publicId: linkFor(), ...viewFor(state, role, now) });
+          return reply({ ...about(), ...viewFor(state, role, now) });
         }
         meta.releasedAt = now;
         meta.releasedBy = role;
         this.saveMeta(meta);
         await this.scheduleCleanup(meta);
-        return reply({ role, manager, publicId: linkFor(), ...viewFor(this.state(meta), role, now) });
+        return reply({ ...about(), ...viewFor(this.state(meta), role, now) });
       }
     }
     return reply({ error: 'not found' }, 404);

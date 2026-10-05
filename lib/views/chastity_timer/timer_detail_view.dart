@@ -213,6 +213,10 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                 children: [
                   _countdownCard(view, theme),
                   const SizedBox(height: 12),
+                  if (view.isManager && view.partnerConnected == false && record.partnerCode != null && !view.isOver) ...[
+                    _notReceivedCard(record, theme),
+                    const SizedBox(height: 12),
+                  ],
                   if (!view.isOver) _actionsCard(view, theme),
                   if (view.config.combinationEnabled) ...[
                     const SizedBox(height: 12),
@@ -228,6 +232,76 @@ class _TimerDetailViewState extends State<TimerDetailView> {
               ),
             ),
     );
+  }
+
+  /// The partner has never opened this timer - most likely its key never
+  /// reached them (their phone asleep, in battery saver). A fresh one can be
+  /// sent; the server refuses once they have connected.
+  Widget _notReceivedCard(TimerRecord record, ThemeData theme) {
+    final name = record.partnerName ?? 'Your partner';
+    return Card(
+      color: Colors.amber.withValues(alpha: 0.12),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.sync_problem_rounded, color: Colors.amber),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text("$name hasn't received this timer yet",
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Their phone may have been asleep or in battery saver when you started it. '
+              'Send it again, then have them open the app.',
+              style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface.withValues(alpha: 0.75)),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                icon: const Icon(Icons.send_rounded, size: 18),
+                label: const Text('Send again'),
+                onPressed: _busy ? null : () => _sendAgain(record),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendAgain(TimerRecord record) async {
+    final partner = _partnerOf(record);
+    if (partner == null) {
+      _snack("${record.partnerName ?? 'That partner'} isn't in your contacts any more.");
+      return;
+    }
+    setState(() => _busy = true);
+    final result = await _timers.reissuePartnerKey(widget.timerId);
+    if (!mounted) return;
+    if (result.key == null) {
+      setState(() => _busy = false);
+      _snack(describeTimerError(result.error));
+      await _timers.refresh(widget.timerId);
+      return;
+    }
+    final sent = await Provider.of<SyncService>(context, listen: false).shareTimer(
+      partner,
+      timerId: widget.timerId,
+      key: result.key!,
+      theirRole: record.role == TimerRole.player ? TimerRole.director : TimerRole.player,
+    );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    _snack(sent
+        ? 'Sent again to ${partner.displayName}. It appears when they next open the app.'
+        : "Couldn't send it. Check your connection and try again.");
   }
 
   Widget _countdownCard(ChastityTimerView view, ThemeData theme) {

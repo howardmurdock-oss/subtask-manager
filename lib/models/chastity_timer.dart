@@ -215,6 +215,7 @@ class ChastityTimerView {
     required this.publicId,
     required this.clockOffset,
     this.atMaximum = false,
+    this.partnerConnected,
   });
 
   final String id;
@@ -239,6 +240,11 @@ class ChastityTimerView {
   /// No more time can be added: it is at its maximum length. Never set for a
   /// hidden timer's player, for whom it would hint at the end.
   final bool atMaximum;
+
+  /// For the manager: whether the partner has ever opened this timer with
+  /// their key. False means they may never have received it. Null: not known,
+  /// or not this device's to know.
+  final bool? partnerConnected;
 
   /// The Worker's clock minus this device's, so a countdown is right even
   /// when the device's clock is not.
@@ -284,6 +290,7 @@ class ChastityTimerView {
           .toList(),
       publicId: json['publicId'] as String?,
       atMaximum: json['atMaximum'] == true,
+      partnerConnected: json['partnerConnected'] as bool?,
       clockOffset: serverNow == null
           ? Duration.zero
           : Duration(milliseconds: serverNow - local.millisecondsSinceEpoch),

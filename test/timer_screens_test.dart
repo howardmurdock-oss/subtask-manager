@@ -336,6 +336,43 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets("a partner who never received the timer is pointed out, with a way to send it again", (tester) async {
+    final mine = view(role: 'player');
+    mine['manager'] = true;
+    mine['partnerConnected'] = false;
+    final asked = <String>[];
+    ChastityTimerService.request = (m, u, {key, body}) async {
+      asked.add(u.path);
+      return u.path.endsWith('/reissue-key')
+          ? const TimerApiResponse(200, {'key': 'FRESH-KEY'})
+          : TimerApiResponse(200, mine);
+    };
+    await partners.addContact(PartnerContact(
+        id: 'sir', displayName: 'Sir', pairingCode: 'SIR123', pairingSecret: 's', role: PartnerRole.dominant));
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P', partnerCode: 'SIR123', partnerName: 'Sir');
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+    expect(find.text("Sir hasn't received this timer yet"), findsOneWidget);
+
+    await tester.tap(find.text('Send again'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(asked.where((p) => p.endsWith('/reissue-key')), hasLength(1));
+    await finish(tester);
+  });
+
+  testWidgets('once the partner has connected, there is nothing to send again', (tester) async {
+    final mine = view(role: 'player');
+    mine['manager'] = true;
+    mine['partnerConnected'] = true;
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, mine);
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P', partnerCode: 'SIR123', partnerName: 'Sir');
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+    expect(find.textContaining("hasn't received this timer"), findsNothing);
+    await finish(tester);
+  });
+
   testWidgets('with no timer, the dashboard card offers to start one', (tester) async {
     await pump(tester, const Scaffold(body: TimerDashboardCard(role: TimerRole.player)));
     expect(find.text('CHASTITY TIMER'), findsOneWidget);
