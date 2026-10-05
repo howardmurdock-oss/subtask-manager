@@ -23,23 +23,37 @@ env:
 jobs:
   build-linux:
     name: Build Linux Desktop Release
-    # The oldest supported runner, not the newest: a binary needs at least
-    # the glibc it was built against, so building on 24.04 shut out every
-    # distribution older than that. SteamOS is newer than either.
-    runs-on: ubuntu-22.04
+    # Built inside Ubuntu 22.04, not on the newest system: a binary needs at
+    # least the glibc it was built against, so building on 24.04 shut out
+    # every distribution older than that. SteamOS is newer than either.
+    #
+    # In a 22.04 container on a current runner, because GitHub is retiring
+    # its ubuntu-22.04 runners (deprecated from September 17, 2026, gone
+    # April 17, 2027) and fails jobs on them during "brownouts" until then -
+    # which is how 1.0.3 shipped without Linux. The container gives the same
+    # glibc on a runner that is not going away.
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
 
     steps:
+      # A bare image: git (which Flutter needs) and the basics come first,
+      # before checkout, so the repository is cloned as a git checkout.
+      - name: Install base tools
+        run: |
+          apt-get update -y
+          apt-get install -y git curl ca-certificates unzip xz-utils zip file desktop-file-utils
+          # The workspace is owned by another user than the container's root.
+          git config --global --add safe.directory '*'
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Linux Build Toolchain
         run: |
-          # The 22.04 runner image ships libunwind-14-dev with its LLVM, which
-          # conflicts with the libunwind-dev that libgstreamer1.0-dev needs,
-          # and apt refuses the whole install.
-          sudo apt-get remove -y libunwind-14-dev || true
-          sudo apt-get update -y
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libsecret-1-dev libasound2-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+          apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libsecret-1-dev libasound2-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -100,6 +114,10 @@ jobs:
 
           ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool --runtime-file runtime-x86_64 \
             "$APPDIR" dist/SubTaskManager-Linux-x86_64.AppImage
+
+      # Proof that the container did its job: the glibc this was built against.
+      - name: Report the glibc it was built for
+        run: ldd --version | head -1
 
       - name: Upload Linux Distributable
         uses: actions/upload-artifact@v4
