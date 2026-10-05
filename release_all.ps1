@@ -212,8 +212,17 @@ if ($Patreon) {
         $previous = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         Push-Location worker
-        cmd.exe /c "npx wrangler r2 object put `"$bucket/$key`" --file `"$file`" --content-type $type --remote 2>&1" | Out-Null
-        $ok = ($LASTEXITCODE -eq 0)
+        # A few tries: a transient Cloudflare error stopped the 1.1p3 release
+        # at its first upload, though the next attempt went straight through.
+        $ok = $false
+        for ($attempt = 1; $attempt -le 3 -and -not $ok; $attempt++) {
+            if ($attempt -gt 1) {
+                Write-Host "  ... retrying $key (attempt $attempt)" -ForegroundColor Yellow
+                Start-Sleep -Seconds 5
+            }
+            cmd.exe /c "npx wrangler r2 object put `"$bucket/$key`" --file `"$file`" --content-type $type --remote 2>&1" | Out-Null
+            $ok = ($LASTEXITCODE -eq 0)
+        }
         Pop-Location
         $ErrorActionPreference = $previous
         if (-not $ok) { Write-Error "Upload of $key failed. Nothing more is published."; exit 1 }
