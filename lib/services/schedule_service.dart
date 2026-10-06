@@ -19,7 +19,7 @@ import 'partner_service.dart';
 import 'patreon_sponsorship.dart';
 
 class ScheduleService extends ChangeNotifier {
-  static const String appCurrentBuildVersion = '1.1.0-p3';
+  static const String appCurrentBuildVersion = '1.1.0-p4';
 
   /// Occurrences staged with the Worker per rule.
   ///
