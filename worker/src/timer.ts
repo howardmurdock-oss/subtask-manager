@@ -15,6 +15,7 @@
  * has to see them to enforce caps and to hold the combination until the end.
  */
 
+import { deliverToTopic, type Env } from './index.ts';
 import {
   refuse,
   resolve,
@@ -28,6 +29,9 @@ import {
 
 /** How long a finished timer's record is kept before it is deleted. */
 const RETAIN_AFTER_CLOSE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** At most one announcement of public additions a minute, per timer. */
+const NOTICE_GAP_MS = 60 * 1000;
 
 /** Past this many stored changes a timer takes no more. Public votes are
  * capped per day, so only a director with no cap could get near it. */
@@ -65,6 +69,13 @@ interface Meta {
   /** New public links made today: switching the link on, or replacing it.
    * Capped so it can't be done endlessly; removing a link never counts. */
   linkChanges?: { day: number; count: number };
+  /** Where the player's device listens: told by the player's app, so public
+   * additions can be announced. A wake-up only - the app fetches what
+   * happened with its own key, so a forged one announces nothing. */
+  playerTopic?: string | null;
+  /** Public additions not yet announced, and when the last announcement
+   * went out: at most one a minute, however busy the link. */
+  publicNotice?: { pending: number; lastAt: number };
 }
 
 export async function sha256Hex(text: string): Promise<string> {
@@ -87,7 +98,7 @@ function reply(body: unknown, status = 200): Response {
 export class ChastityTimer {
   private readonly sql: SqlStorage;
 
-  constructor(private readonly ctx: DurableObjectState, private readonly env: { DB: D1Database }) {
+  constructor(private readonly ctx: DurableObjectState, private readonly env: Env) {
     this.sql = ctx.storage.sql;
     this.sql.exec(`CREATE TABLE IF NOT EXISTS meta (k INTEGER PRIMARY KEY CHECK (k = 1), json TEXT NOT NULL)`);
     this.sql.exec(
@@ -147,12 +158,53 @@ export class ChastityTimer {
     // sits past its current end. With no end time there is nothing to sit
     // past: it is checked again later, and re-armed while still running.
     const from = Number.isFinite(closedAt) ? Math.max(closedAt, Date.now()) : Date.now();
-    await this.ctx.storage.setAlarm(from + RETAIN_AFTER_CLOSE_MS);
+    // An announcement held back is sent when its minute is up.
+    const notice = meta.publicNotice?.pending ? meta.publicNotice.lastAt + NOTICE_GAP_MS : Infinity;
+    await this.ctx.storage.setAlarm(Math.min(from + RETAIN_AFTER_CLOSE_MS, Math.max(notice, Date.now())));
+  }
+
+  /** Public time added: announced to the player now, or held for the rest
+   * of the minute and sent with whatever else comes in. */
+  private async notePublicAdd(meta: Meta, seconds: number, now: number): Promise<void> {
+    if (!meta.config.notify?.onAdd || !meta.playerTopic) return;
+    const last = meta.publicNotice?.lastAt ?? 0;
+    const pending = (meta.publicNotice?.pending ?? 0) + seconds;
+    if (now - last >= NOTICE_GAP_MS) {
+      meta.publicNotice = { pending: 0, lastAt: now };
+      this.saveMeta(meta);
+      await this.announce(meta);
+    } else {
+      meta.publicNotice = { pending, lastAt: last };
+      this.saveMeta(meta);
+    }
+  }
+
+  /** Wakes the player's app to look at the timer. It carries nothing but the
+   * timer's id: what was added, and by whom, the app fetches itself. */
+  private async announce(meta: Meta): Promise<void> {
+    if (!meta.playerTopic) return;
+    const message = {
+      id: `timer-${crypto.randomUUID()}`,
+      type: 'timerChanged',
+      senderId: 'timer-service',
+      timestamp: new Date().toISOString(),
+      payload: { timerId: meta.id, check: 'public' },
+    };
+    try {
+      await deliverToTopic(this.env, meta.playerTopic, JSON.stringify(message));
+    } catch {
+      // Best effort: the change itself has happened either way.
+    }
   }
 
   async alarm(): Promise<void> {
     const meta = this.meta();
     if (!meta) return;
+    if (meta.publicNotice?.pending && Date.now() >= meta.publicNotice.lastAt + NOTICE_GAP_MS) {
+      meta.publicNotice = { pending: 0, lastAt: Date.now() };
+      this.saveMeta(meta);
+      if (meta.config.notify?.onAdd) await this.announce(meta);
+    }
     const { status, endAt } = resolve(this.state(meta), Date.now());
     const closedAt = status === 'released' ? meta.releasedAt! : endAt;
     if (status === 'running' || Date.now() < closedAt + RETAIN_AFTER_CLOSE_MS) {
@@ -212,6 +264,7 @@ export class ChastityTimer {
         `INSERT INTO events (id, at, actor, delta, visitor) VALUES (?, ?, 'public', ?, ?)`,
         `public-${crypto.randomUUID()}`, now, delta, body.visitor ?? null,
       );
+      if (delta > 0) await this.notePublicAdd(meta, delta, now);
       await this.scheduleCleanup(meta);
       return reply(viewFor(this.state(meta), 'public', now));
     }
@@ -300,6 +353,17 @@ export class ChastityTimer {
         meta.publicId = body.newPublicId;
         this.saveMeta(meta);
         return reply({ ok: true, previous, publicId: meta.publicId });
+      }
+
+      case 'notify-topic': {
+        // The player's own device saying where it listens. Nobody else's.
+        if (role !== 'player') return reply({ error: 'not-allowed' }, 403);
+        const topic =
+          typeof body.topic === 'string' && /^orders_relay_[0-9a-f]{24}$/.test(body.topic) ? body.topic : null;
+        if (!topic) return reply({ error: 'bad-topic' }, 400);
+        meta.playerTopic = topic;
+        this.saveMeta(meta);
+        return reply({ ok: true });
       }
 
       case 'reissue-key': {

@@ -25,6 +25,9 @@ export interface TimerConfig {
    * if it has one). Nothing can add or remove time - there is no end to
    * move - so changes, random changes, hiding and public voting are off. */
   openEnded: boolean;
+  /** Telling the player when time is added. The message is the manager's
+   * own wording; the app always adds who added it. */
+  notify: { onAdd: boolean; message: string | null };
   /** The player does not see the time left, or how much each change was. */
   hidden: boolean;
   /** No change may push the end past start + this. Null: no ceiling. */
@@ -328,6 +331,21 @@ export function viewFor(state: TimerState, viewer: Viewer, now: number): Record<
 // Checking a configuration
 // ---------------------------------------------------------------------------
 
+/** Longest custom notification message. */
+export const NOTIFY_MESSAGE_MAX = 120;
+
+/** A custom notification message: one line of plain text, or none. */
+function cleanMessage(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, NOTIFY_MESSAGE_MAX)
+    .trim();
+  return text.length > 0 ? text : null;
+}
+
 const clampInt = (value: unknown, min: number, max: number, fallback: number): number => {
   const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback;
   return Math.min(Math.max(n, min), max);
@@ -347,6 +365,12 @@ export function sanitizeConfig(raw: any, managedBy: 'player' | 'director'): Time
     openEnded,
     // Nothing to hide, change or roll without an end time.
     hidden: !openEnded && r.hidden === true,
+    notify: {
+      // On unless switched off: before this setting, a director's additions
+      // were always announced.
+      onAdd: !openEnded && r.notify?.onAdd !== false,
+      message: cleanMessage(r.notify?.message),
+    },
     // A player's own timer with no end time has no limit either: they end
     // it when they like, and a limit would only make it a timed lock.
     maxTotalSeconds:

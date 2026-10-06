@@ -25,6 +25,7 @@ import 'worker_socket_service.dart';
 import 'chat_service.dart';
 import 'quest_service.dart';
 import 'chastity_timer_service.dart';
+import 'timer_notice.dart';
 import 'patreon_sponsorship.dart';
 import '../models/chastity_timer.dart';
 
@@ -1813,6 +1814,7 @@ class SyncService extends ChangeNotifier {
 
   void attachTimerService(ChastityTimerService timerService) {
     _timerService = timerService;
+    ChastityTimerService.ownTopic = () => _pairingCode.isEmpty ? null : _getHashedTopic(_pairingCode);
   }
 
   /// Loads what partners have announced, then tells them what this copy can
@@ -1918,7 +1920,9 @@ class SyncService extends ChangeNotifier {
       );
 
   /// Tells [contact] a timer they share changed, so they fetch it again.
-  Future<bool> notifyTimerChanged(PartnerContact contact, String timerId, {String? summary}) =>
+  /// A [notice] is a whole sentence for the player, saying who - shown as is.
+  Future<bool> notifyTimerChanged(PartnerContact contact, String timerId,
+          {String? summary, bool notice = false}) =>
       _sendToContact(
         contact,
         SyncMessage(
@@ -1929,6 +1933,7 @@ class SyncService extends ChangeNotifier {
             'senderName': _nickname,
             'timerId': timerId,
             if (summary != null) 'summary': summary,
+            if (notice) 'notice': true,
           },
         ),
       );
@@ -1971,11 +1976,17 @@ class SyncService extends ChangeNotifier {
     final timerId = msg.payload['timerId'] as String?;
     if (timers == null || timerId == null || timers.recordOf(timerId) == null) return;
     await timers.refresh(timerId);
+    // The Worker's own wake-up for public additions comes from no contact;
+    // anything else must be from the partner on the timer.
+    final fromWorker = msg.senderId == 'timer-service' && msg.payload['check'] == 'public';
     final contact = _contactFor(code: msg.payload['senderCode'] as String?, id: msg.senderId);
-    final summary = msg.payload['summary'] as String?;
-    if (contact != null && summary != null) {
-      NotificationService.showGenericNotification(title: 'Timer updated by ${contact.displayName}', body: summary);
-    }
+    if (!fromWorker && contact == null) return;
+    await TimerNotice.announce(SyncMessage(
+      id: msg.id,
+      type: msg.type,
+      senderId: msg.senderId,
+      payload: {...msg.payload, if (contact != null) 'senderName': contact.displayName},
+    ));
   }
 
   void attachChatService(ChatService chatService) {

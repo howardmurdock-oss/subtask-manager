@@ -566,6 +566,21 @@ async function handleSchedule(request: Request, env: Env): Promise<Response> {
   return json({ ok: true, staged: valid.length, rejected: body.entries.length - valid.length });
 }
 
+/** Delivers [payload] to everything listening on [topic], phones and
+ * desktops. False when nothing is. For the Worker's own messages - a timer
+ * announcing public additions. */
+export async function deliverToTopic(env: Env, topic: string, payload: string, kind = 'sync'): Promise<boolean> {
+  const { android, desktop } = await devicesOn(env, topic);
+  let sent = 0;
+  if (android) {
+    const outcome = await pushToTopic(env, await getAccessToken(env), topic, payload, kind);
+    sent = outcome.sent;
+    await pruneTokens(env, outcome.stale);
+  }
+  const hub = desktop ? await publishToHub(env, topic, payload, kind) : false;
+  return sent > 0 || hub;
+}
+
 async function handleSend(request: Request, env: Env): Promise<Response> {
   const body = (await request.json().catch(() => null)) as {
     topic?: string;
@@ -997,7 +1012,7 @@ async function handleTimerOp(request: Request, env: Env, timerId: string, op: st
   const body: any = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
 
   if (op === 'view') return callTimer(env, timerId, 'view', {}, key);
-  if (op === 'adjust' || op === 'release' || op === 'reissue-key') return callTimer(env, timerId, op, body, key);
+  if (op === 'adjust' || op === 'release' || op === 'reissue-key' || op === 'notify-topic') return callTimer(env, timerId, op, body, key);
 
   if (op === 'configure' || op === 'replace-link') {
     const before = (await (await callTimer(env, timerId, 'view', {}, key)).json()) as { publicId?: string | null };

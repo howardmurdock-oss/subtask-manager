@@ -11,7 +11,7 @@ import '../../services/chastity_timer_service.dart';
 import '../../services/partner_service.dart';
 import '../../services/sync_service.dart';
 import 'timer_format.dart';
-import 'timer_setup_view.dart' show showDurationDialog;
+import 'timer_setup_view.dart' show showDurationDialog, showNoticeMessageDialog;
 
 /// One timer: the countdown, the changes this side may make, the
 /// combination, the public link and the history.
@@ -66,7 +66,7 @@ class _TimerDetailViewState extends State<TimerDetailView> {
   /// Runs [action]; on success tells the partner, with [summary] unless the
   /// timer hides amounts from the player.
   Future<void> _run(Future<String?> Function() action,
-      {required String done, String? partnerSummary}) async {
+      {required String done, String? partnerSummary, bool partnerNotice = false}) async {
     setState(() => _busy = true);
     final error = await action();
     if (!mounted) return;
@@ -80,7 +80,7 @@ class _TimerDetailViewState extends State<TimerDetailView> {
     final partner = record == null ? null : _partnerOf(record);
     if (partner != null) {
       Provider.of<SyncService>(context, listen: false)
-          .notifyTimerChanged(partner, widget.timerId, summary: partnerSummary);
+          .notifyTimerChanged(partner, widget.timerId, summary: partnerSummary, notice: partnerNotice);
     }
   }
 
@@ -95,12 +95,23 @@ class _TimerDetailViewState extends State<TimerDetailView> {
         view.config.hidden && view.role == TimerRole.director;
     final who =
         view.role == TimerRole.director ? 'Your director' : 'Your player';
+    // A director's addition is told in the words chosen for it - or not at
+    // all, when that is switched off.
+    final notice = add && view.role == TimerRole.director;
     await _run(
       () => _timers.adjust(widget.timerId, signed),
       done: '${add ? 'Added' : 'Removed'} ${formatSpan(picked)}.',
-      partnerSummary: hiddenFromPlayer
-          ? '$who changed your timer.'
-          : '$who ${add ? 'added' : 'removed'} ${formatSpan(picked)}.',
+      partnerNotice: notice,
+      partnerSummary: notice
+          ? (view.config.notifyOnAdd
+              ? addedNotice(
+                  message: view.config.notifyMessage,
+                  amount: hiddenFromPlayer ? null : picked,
+                  by: TimerActor.director)
+              : null)
+          : hiddenFromPlayer
+              ? '$who changed your timer.'
+              : '$who ${add ? 'added' : 'removed'} ${formatSpan(picked)}.',
     );
   }
 
@@ -243,6 +254,10 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                   if (view.config.combinationEnabled) ...[
                     const SizedBox(height: 12),
                     _combinationCard(view, theme),
+                  ],
+                  if (view.isManager && !view.isOver && !view.config.openEnded) ...[
+                    const SizedBox(height: 12),
+                    _noticeCard(view, theme),
                   ],
                   if (view.isManager || view.config.publicLink.enabled) ...[
                     const SizedBox(height: 12),
@@ -504,6 +519,52 @@ class _TimerDetailViewState extends State<TimerDetailView> {
             : view.role == TimerRole.director && !view.isOver
                 ? 'The player sees this only when the timer ends.'
                 : 'Your combination.'),
+      ),
+    );
+  }
+
+  /// Whether, and how, the player is told when time is added. The manager's.
+  Widget _noticeCard(ChastityTimerView view, ThemeData theme) {
+    final forMe = view.role == TimerRole.player;
+    Future<void> save({required bool on, String? message}) => _run(
+          () => _timers.configure(widget.timerId, {
+            'notify': {'onAdd': on, 'message': message},
+          }),
+          done: on ? 'Saved.' : 'No more notifications when time is added.',
+        );
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('NOTIFICATIONS', style: _label(theme)),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: view.config.notifyOnAdd,
+              onChanged: _busy ? null : (on) => save(on: on, message: view.config.notifyMessage),
+              title: Text(forMe ? 'Tell me when time is added' : 'Tell your player when time is added'),
+              subtitle: Text(view.config.notifyOnAdd
+                  ? addedNotice(
+                      message: view.config.notifyMessage,
+                      amount: const Duration(minutes: 10),
+                      by: forMe ? TimerActor.public : TimerActor.director)
+                  : 'Off'),
+            ),
+            if (view.config.notifyOnAdd)
+              TextButton.icon(
+                icon: const Icon(Icons.edit_rounded, size: 18),
+                label: const Text('Change the message'),
+                onPressed: _busy
+                    ? null
+                    : () async {
+                        final message = await showNoticeMessageDialog(context, view.config.notifyMessage);
+                        if (message == null || !mounted) return;
+                        await save(on: true, message: message.isEmpty ? null : message);
+                      },
+              ),
+          ],
+        ),
       ),
     );
   }

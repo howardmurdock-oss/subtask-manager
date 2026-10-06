@@ -491,4 +491,42 @@ void main() {
     expect(find.text('Share a public link'), findsOneWidget);
     await finish(tester);
   });
+
+  testWidgets('setting up: tell them when time is added, in your own words, always saying who', (tester) async {
+    await pump(tester, const TimerSetupView(role: TimerRole.player));
+
+    expect(find.text('NOTIFICATIONS'), findsOneWidget);
+    expect(find.text('Tell me when time is added'), findsOneWidget);
+    expect(find.text('"10 minutes was added by the public."'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, '{time} more of suffering, Toy');
+    await tester.pump();
+    expect(find.text('"10 minutes more of suffering, Toy, added by the public."'), findsOneWidget);
+
+    await tester.tap(find.text('No end time'));
+    await tester.pump();
+    expect(find.text('NOTIFICATIONS'), findsNothing, reason: 'nothing is ever added to it');
+    await finish(tester);
+  });
+
+  testWidgets('a running timer: its manager can switch notifications and change the message', (tester) async {
+    final v = view(role: 'director');
+    (v['config'] as Map)['notify'] = {'onAdd': true, 'message': 'Suffer more, Toy!'};
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, v);
+    await timers.addShared(id: 't1', role: TimerRole.director, key: 'D', partnerName: 'PC 1');
+
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+
+    expect(find.text('Tell your player when time is added'), findsOneWidget);
+    expect(find.text('Suffer more, Toy! Added by your Director.'), findsOneWidget);
+    expect(find.text('Change the message'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets("the player doesn't manage a director's notifications", (tester) async {
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, view(role: 'player'));
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+    expect(find.text('NOTIFICATIONS'), findsNothing);
+    await finish(tester);
+  });
 }

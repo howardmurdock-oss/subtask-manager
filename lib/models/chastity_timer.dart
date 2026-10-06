@@ -128,6 +128,8 @@ class ChastityTimerConfig {
   const ChastityTimerConfig({
     required this.baseSeconds,
     this.openEnded = false,
+    this.notifyOnAdd = true,
+    this.notifyMessage,
     this.hidden = false,
     this.maxTotalSeconds,
     this.director = const DirectorLimits(),
@@ -143,6 +145,12 @@ class ChastityTimerConfig {
   /// No end time: it runs until someone ends it, or its maximum if it has
   /// one. Nothing adds or removes time - there is no end to move.
   final bool openEnded;
+
+  /// Tell the player each time time is added - by the director or the
+  /// public - in [notifyMessage]'s words, or plain ones. Who added it is
+  /// always said.
+  final bool notifyOnAdd;
+  final String? notifyMessage;
   final bool hidden;
 
   /// No change pushes the end past start + this. Null: no ceiling.
@@ -161,6 +169,7 @@ class ChastityTimerConfig {
   Map<String, dynamic> toJson() => {
         'baseSeconds': baseSeconds,
         'openEnded': openEnded,
+        'notify': {'onAdd': notifyOnAdd, 'message': notifyMessage},
         'hidden': hidden,
         'maxTotalSeconds': maxTotalSeconds,
         'director': director.toJson(),
@@ -176,6 +185,8 @@ class ChastityTimerConfig {
     return ChastityTimerConfig(
       baseSeconds: (json['baseSeconds'] as num?)?.toInt() ?? 0,
       openEnded: json['openEnded'] == true,
+      notifyOnAdd: json['openEnded'] != true && sub('notify')?['onAdd'] != false,
+      notifyMessage: sub('notify')?['message'] as String?,
       hidden: json['hidden'] == true,
       maxTotalSeconds: (json['maxTotalSeconds'] as num?)?.toInt(),
       director: DirectorLimits.fromJson(sub('director')),

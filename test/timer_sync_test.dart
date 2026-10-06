@@ -123,7 +123,7 @@ void main() {
     await sync.handleIncomingSyncMessage(
         from('TES123', SyncMessageType.timerChanged, {'timerId': 'timer-1', 'summary': 'Added 1 hour'}));
 
-    expect(fetched.single.path, endsWith('/timer/timer-1/view'));
+    expect(fetched.where((u) => u.path.endsWith('/timer/timer-1/view')).length, 1);
   });
 
   test('the new message types survive the trip through JSON', () {

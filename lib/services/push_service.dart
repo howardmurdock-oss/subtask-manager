@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'timer_notice.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -11,6 +12,7 @@ import '../core/security/encryption_helper.dart';
 import '../models/sync_message.dart';
 import 'schedule_coordinator.dart';
 import 'schedule_service.dart';
+import 'timer_notice.dart';
 
 /// Firebase Cloud Messaging transport.
 ///
@@ -531,6 +533,10 @@ class PushService {
             messageText: message.payload['text'] as String? ?? 'New message',
           );
           break;
+        case SyncMessageType.timerChanged:
+          // Also handed to the app; whichever comes first announces it.
+          await TimerNotice.announce(message);
+          return;
         default:
           // Everything else is applied silently when the app next opens; only
           // arrivals a user would want to know about immediately warrant a

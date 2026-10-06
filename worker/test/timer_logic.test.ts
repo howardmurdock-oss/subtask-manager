@@ -270,3 +270,19 @@ test('the time so far: shown even when the time left is hidden', () => {
   assert.equal(pub.startAt, START);
   assert.equal((viewFor(t, 'player', at(11)) as any).closedAt, at(10), 'ran for its ten hours');
 });
+
+test('telling the player about added time: on unless switched off, with a clean message', () => {
+  assert.deepEqual(timer().config.notify, { onAdd: true, message: null }, 'on for timers set up before the setting');
+  assert.equal(timer({ notify: { onAdd: false } }).config.notify.onAdd, false);
+  assert.equal(timer({ openEnded: true }).config.notify.onAdd, false, 'nothing is ever added to an open-ended timer');
+  const messy = timer({ notify: { onAdd: true, message: '  {time} more\nof suffering,\tToy  ' } });
+  assert.equal(messy.config.notify.message, '{time} more of suffering, Toy');
+  assert.equal(timer({ notify: { message: 'x'.repeat(500) } }).config.notify.message!.length, 120);
+  assert.equal(timer({ notify: { message: '   ' } }).config.notify.message, null);
+  assert.equal(timer({ notify: { message: 42 } }).config.notify.message, null);
+});
+
+test('the public never sees the notification settings', () => {
+  const pub = viewFor(timer({ public: { enabled: true } }), 'public', at(1)) as any;
+  assert.equal(JSON.stringify(pub).includes('notify'), false);
+});

@@ -64,3 +64,28 @@ String actorLabel(TimerActor actor, {String? partnerName, required TimerRole vie
       return 'Public vote';
   }
 }
+
+/// Longest custom notification message; the Worker keeps the same limit.
+const int noticeMessageMax = 120;
+
+/// What the player is told when time is added: the manager's own words, or
+/// plain ones - always saying who added it. "{time}" in the message is
+/// replaced by the amount.
+String addedNotice({String? message, Duration? amount, required TimerActor by}) {
+  final who = switch (by) {
+    TimerActor.director => 'your Director',
+    TimerActor.public => 'the public',
+    TimerActor.player => 'you',
+    TimerActor.random => 'chance',
+  };
+  final time = amount == null ? null : formatSpan(amount);
+  final own = message?.trim() ?? '';
+  if (own.isEmpty) {
+    return time == null ? 'Time was added by $who.' : '$time was added by $who.';
+  }
+  var text = own.replaceAll('{time}', time ?? 'some time');
+  text = text.replaceFirst(RegExp(r'[\s.,;:]+$'), '');
+  if (text.isNotEmpty) text = text[0].toUpperCase() + text.substring(1);
+  // "...Toy!" reads better followed by a sentence than by a comma.
+  return RegExp(r'[!?]$').hasMatch(text) ? '$text Added by $who.' : '$text, added by $who.';
+}

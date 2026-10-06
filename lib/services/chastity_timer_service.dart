@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../core/notifications/notification_service.dart';
 import '../models/chastity_timer.dart';
 import 'push_service.dart';
+import 'timer_notice.dart';
 
 /// A reply from the Worker: its status and decoded JSON body.
 class TimerApiResponse {
@@ -71,6 +72,14 @@ class ChastityTimerService extends ChangeNotifier {
   static const String publicLinkBase = 'https://subtaskmanager.com/t/';
 
   static String get apiBase => '${PushService.workerBaseUrl}/timer';
+
+  /// Where this device listens for messages (its relay topic). Set by the
+  /// sync service; the player's timers are told it, so public additions can
+  /// be announced.
+  static String? Function()? ownTopic;
+
+  /// Per timer, the topic the Worker was last told.
+  static const String notifyTopicsKey = 'chastity_timer_notify_topics_v1';
 
   /// Swapped out in tests; the real one talks to the Worker over HTTPS.
   @visibleForTesting
@@ -334,12 +343,34 @@ class ChastityTimerService extends ChangeNotifier {
   ChastityTimerView _accept(Map<String, dynamic> json) {
     final view = ChastityTimerView.fromJson(json);
     _views[view.id] = view;
+    _tellTopic(view);
     _armEndNotification(view);
     notifyListeners();
     if (view.isOver && !_seenFinished.contains(view.id) && _announced.add(view.id)) {
       _finished.add(view);
     }
     return view;
+  }
+
+  /// A player's timer is told where this device listens, once, and again
+  /// whenever that changes.
+  Future<void> _tellTopic(ChastityTimerView view) async {
+    final topic = ownTopic?.call();
+    final record = recordOf(view.id);
+    if (topic == null || record == null || record.role != TimerRole.player || view.isOver) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final told = Map<String, dynamic>.from(jsonDecode(prefs.getString(notifyTopicsKey) ?? '{}') as Map);
+      if (told[view.id] == topic) return;
+      await TimerNotice.startCounting(view.id, view.serverNow);
+      final response = await _call('POST', Uri.parse('$apiBase/${view.id}/notify-topic'),
+          key: record.key, body: {'topic': topic});
+      if (!response.ok) return;
+      told[view.id] = topic;
+      await prefs.setString(notifyTopicsKey, jsonEncode(told));
+    } catch (e) {
+      if (kDebugMode) print('ChastityTimerService: topic error: $e');
+    }
   }
 
   static int _notificationId(String timerId) => 700000 + (timerId.hashCode & 0xFFFF);

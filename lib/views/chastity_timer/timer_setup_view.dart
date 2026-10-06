@@ -59,6 +59,9 @@ class _TimerSetupViewState extends State<TimerSetupView> {
   String _comboDigits = '';
   final _comboController = TextEditingController();
 
+  bool _notifyOn = true;
+  final _noticeController = TextEditingController();
+
   bool _saving = false;
 
   bool get _isDirector => widget.role == TimerRole.director;
@@ -76,6 +79,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
   @override
   void dispose() {
     _comboController.dispose();
+    _noticeController.dispose();
     super.dispose();
   }
 
@@ -124,6 +128,8 @@ class _TimerSetupViewState extends State<TimerSetupView> {
     final config = ChastityTimerConfig(
       baseSeconds: _base.inSeconds,
       openEnded: _openEnded,
+      notifyOnAdd: !_openEnded && _notifyOn,
+      notifyMessage: _noticeController.text.trim().isEmpty ? null : _noticeController.text.trim(),
       hidden: !_openEnded && _hidden,
       maxTotalSeconds: _ceilingOn && _limitOffered ? _ceiling.inSeconds : null,
       director: DirectorLimits(
@@ -357,6 +363,33 @@ class _TimerSetupViewState extends State<TimerSetupView> {
               ],
             ),
           ),
+          // Nothing is ever added to a timer with no end time.
+          if (!_openEnded) ...[
+            _section(theme, 'NOTIFICATIONS'),
+            Card(
+              child: Column(
+                children: [
+                  SwitchListTile(
+                    value: _notifyOn,
+                    onChanged: (v) => setState(() => _notifyOn = v),
+                    title: Text(_isDirector ? 'Tell them when time is added' : 'Tell me when time is added'),
+                    subtitle: Text(_isDirector
+                        ? 'Each time you or the public add time.'
+                        : 'Each time anyone adds time.'),
+                  ),
+                  if (_notifyOn)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                      child: NoticeMessageField(
+                        controller: _noticeController,
+                        by: _isDirector ? TimerActor.director : TimerActor.public,
+                        onChanged: () => setState(() {}),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
           _section(theme, 'PUBLIC LINK'),
           Card(
             child: Column(
@@ -667,6 +700,84 @@ class _DurationDialogState extends State<_DurationDialog> {
           onPressed: () => Navigator.pop(context, _total),
           child: const Text('Set'),
         ),
+      ],
+    );
+  }
+}
+
+/// The player's notification message: their own words, with "{time}" for
+/// the amount, and a preview of how it reads with who added it.
+class NoticeMessageField extends StatelessWidget {
+  const NoticeMessageField({super.key, required this.controller, required this.by, this.onChanged});
+
+  final TextEditingController controller;
+  final TimerActor by;
+  final VoidCallback? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: controller,
+          maxLength: noticeMessageMax,
+          onChanged: (_) => onChanged?.call(),
+          decoration: const InputDecoration(
+            labelText: 'Message (optional)',
+            hintText: '{time} was added',
+            helperText: 'Use {time} for the amount. Who added it is always said.',
+            helperMaxLines: 2,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text('Reads as:', style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+        Text(
+          '"${addedNotice(message: controller.text, amount: const Duration(minutes: 10), by: by)}"',
+          style: const TextStyle(fontStyle: FontStyle.italic),
+        ),
+      ],
+    );
+  }
+}
+
+/// Edits the notification message. Returns it ('' for the plain one), or
+/// null when cancelled.
+Future<String?> showNoticeMessageDialog(BuildContext context, String? current) {
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) => _NoticeMessageDialog(initial: current ?? ''),
+  );
+}
+
+class _NoticeMessageDialog extends StatefulWidget {
+  const _NoticeMessageDialog({required this.initial});
+  final String initial;
+
+  @override
+  State<_NoticeMessageDialog> createState() => _NoticeMessageDialogState();
+}
+
+class _NoticeMessageDialogState extends State<_NoticeMessageDialog> {
+  late final _controller = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Notification message'),
+      content: SingleChildScrollView(
+        child: NoticeMessageField(controller: _controller, by: TimerActor.director, onChanged: () => setState(() {})),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(context, _controller.text.trim()), child: const Text('Save')),
       ],
     );
   }

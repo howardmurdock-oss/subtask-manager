@@ -19,6 +19,7 @@ import 'storage_service.dart';
 import 'schedule_coordinator.dart';
 import 'push_service.dart';
 import 'patreon_sponsorship.dart';
+import 'timer_notice.dart';
 
 // ---------------------------------------------------------------------------
 // Background isolate entry point — must be top-level & annotated
@@ -1059,6 +1060,11 @@ class DirectiveSyncTaskHandler extends TaskHandler {
             tokensAwarded: bonusTokens,
             reviewerName: '$senderName conquered all directives in the quest chain!',
           );
+          break;
+
+        case SyncMessageType.timerChanged:
+          _queuePendingSyncMessage(msg);
+          TimerNotice.announce(msg);
           break;
 
         // Liveness and state chatter: stale by the time the app opens, which

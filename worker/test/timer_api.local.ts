@@ -346,4 +346,23 @@ await check('starting timers over and over from one address is slowed down', asy
   assert.ok(limited > 0, 'some were refused');
 });
 
+await check("the player's device says where it listens; votes still go through when told", async () => {
+  const t = (await call('/timer', {
+    body: { managedBy: 'director', config: { baseSeconds: H, public: { enabled: true }, notify: { message: '  {time} more, Toy\n' } } },
+  })).body;
+  const d = (await call(`/timer/${t.id}/view`, { key: t.directorKey })).body;
+  assert.deepEqual(d.config.notify, { onAdd: true, message: '{time} more, Toy' });
+  const topic = 'orders_relay_0123456789abcdef01234567';
+  assert.equal((await call(`/timer/${t.id}/notify-topic`, { key: t.directorKey, body: { topic } })).status, 403, 'not the director');
+  assert.equal((await call(`/timer/${t.id}/notify-topic`, { key: t.playerKey, body: { topic: 'somewhere-else' } })).status, 400);
+  assert.equal((await call(`/timer/${t.id}/notify-topic`, { key: t.playerKey, body: { topic } })).status, 200);
+  // Nothing listens on that topic here: the vote must still count.
+  assert.equal((await call(`/t/${t.publicId}/vote`, { body: { direction: 1 }, ip: '10.7.7.7' })).status, 200);
+  assert.equal((await call(`/t/${t.publicId}/vote`, { body: { direction: 1 }, ip: '10.7.7.8' })).status, 200, 'held for the minute');
+  const off = await call(`/timer/${t.id}/configure`, { key: t.directorKey, body: { config: { notify: { onAdd: false } } } });
+  assert.equal(off.body.config.notify.onAdd, false);
+  const pub = (await call(`/t/${t.publicId}/state`)).body;
+  assert.equal(JSON.stringify(pub).includes('notify'), false);
+});
+
 console.log(`\n${passed} passed`);
