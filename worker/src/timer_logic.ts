@@ -347,7 +347,12 @@ export function sanitizeConfig(raw: any, managedBy: 'player' | 'director'): Time
     openEnded,
     // Nothing to hide, change or roll without an end time.
     hidden: !openEnded && r.hidden === true,
-    maxTotalSeconds: r.maxTotalSeconds == null ? null : clampInt(r.maxTotalSeconds, 60, 5 * YEAR, YEAR),
+    // A player's own timer with no end time has no limit either: they end
+    // it when they like, and a limit would only make it a timed lock.
+    maxTotalSeconds:
+      r.maxTotalSeconds == null || (openEnded && managedBy === 'player')
+        ? null
+        : clampInt(r.maxTotalSeconds, 60, 5 * YEAR, YEAR),
     director: {
       canAdd: r.director?.canAdd !== false,
       canRemove: r.director?.canRemove !== false,

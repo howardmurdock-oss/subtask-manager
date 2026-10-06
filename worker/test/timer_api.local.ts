@@ -288,4 +288,29 @@ await check('a player-managed timer is the player\'s to configure', async () => 
   assert.equal((await call(`/t/${linked.body.publicId}/state`)).status, 200);
 });
 
+await check('a timer with no end time can be created, viewed, shared and ended', async () => {
+  const made = await call('/timer', {
+    body: { managedBy: 'player', config: { baseSeconds: H, openEnded: true, maxTotalSeconds: 48 * H, public: { enabled: true } } },
+  });
+  assert.equal(made.status, 200, JSON.stringify(made.body));
+  const t = made.body;
+  const v = (await call(`/timer/${t.id}/view`, { key: t.playerKey })).body;
+  assert.equal(v.status, 'running');
+  assert.equal(v.endAt, null);
+  assert.equal(v.config.openEnded, true);
+  assert.equal(v.config.maxTotalSeconds, null, "a player's own: no limit");
+  const add = await call(`/timer/${t.id}/adjust`, { key: t.playerKey, body: { delta: 600, eventId: 'o1' } });
+  assert.equal(add.status, 409);
+  const pub = await call(`/t/${t.publicId}/state`);
+  assert.equal(pub.status, 200);
+  assert.equal(pub.body.openEnded, true);
+  assert.equal(pub.body.acceptingVotes, false);
+  assert.equal((await call(`/t/${t.publicId}`)).status, 200, 'the public page renders');
+  const ended = await call(`/timer/${t.id}/release`, { key: t.playerKey, body: {} });
+  assert.equal(ended.status, 200);
+  const after = (await call(`/timer/${t.id}/view`, { key: t.playerKey })).body;
+  assert.equal(after.status, 'released');
+  assert.ok(after.closedAt);
+});
+
 console.log(`\n${passed} passed`);

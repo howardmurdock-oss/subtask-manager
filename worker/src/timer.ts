@@ -129,8 +129,10 @@ export class ChastityTimer {
     const { status, endAt } = resolve(this.state(meta), Date.now());
     const closedAt = status === 'released' ? meta.releasedAt! : endAt;
     // Re-armed on every change: the end moves, and a running timer's alarm
-    // sits past its current end.
-    await this.ctx.storage.setAlarm(Math.max(closedAt, Date.now()) + RETAIN_AFTER_CLOSE_MS);
+    // sits past its current end. With no end time there is nothing to sit
+    // past: it is checked again later, and re-armed while still running.
+    const from = Number.isFinite(closedAt) ? Math.max(closedAt, Date.now()) : Date.now();
+    await this.ctx.storage.setAlarm(from + RETAIN_AFTER_CLOSE_MS);
   }
 
   async alarm(): Promise<void> {

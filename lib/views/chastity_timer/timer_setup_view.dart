@@ -63,6 +63,10 @@ class _TimerSetupViewState extends State<TimerSetupView> {
 
   bool get _isDirector => widget.role == TimerRole.director;
 
+  /// Your own timer with no end time needs no limit: you end it when you
+  /// like, and a limit would only make it a timed lock.
+  bool get _limitOffered => !_openEnded || _isDirector;
+
   @override
   void initState() {
     super.initState();
@@ -121,7 +125,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
       baseSeconds: _base.inSeconds,
       openEnded: _openEnded,
       hidden: !_openEnded && _hidden,
-      maxTotalSeconds: _ceilingOn ? _ceiling.inSeconds : null,
+      maxTotalSeconds: _ceilingOn && _limitOffered ? _ceiling.inSeconds : null,
       director: DirectorLimits(
         canAdd: _directorCanAdd,
         canRemove: _directorCanRemove,
@@ -266,6 +270,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
                       'The player sees that it is running, and who changed it, but not how long is left or by how much.'),
                 ),
                 ],
+                if (_limitOffered)
                 SwitchListTile(
                   value: _ceilingOn,
                   onChanged: (v) => setState(() => _ceilingOn = v),
@@ -274,7 +279,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
                       ? 'A safety limit: it ends on its own after this long, counted from the start.'
                       : 'No change can push it past this, counted from the start.'),
                 ),
-                if (_ceilingOn)
+                if (_ceilingOn && _limitOffered)
                   _DurationTile(
                       label: 'At most',
                       value: _ceiling,

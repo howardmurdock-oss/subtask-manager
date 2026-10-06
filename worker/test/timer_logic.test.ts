@@ -252,6 +252,13 @@ test('an open-ended timer with a maximum ends there by itself', () => {
   assert.equal((viewFor(t, 'player', at(49)) as any).closedAt, at(48));
 });
 
+test("a player's own timer with no end time has no limit: they end it when they like", () => {
+  const t = timer({ openEnded: true, maxTotalSeconds: 48 * H }, 'player');
+  assert.equal(t.config.maxTotalSeconds, null);
+  assert.equal(resolve(t, at(10_000)).status, 'running');
+  assert.equal(timer({ openEnded: false, maxTotalSeconds: 48 * H }, 'player').config.maxTotalSeconds, 48 * H);
+});
+
 test('the time so far: shown even when the time left is hidden', () => {
   const t = timer({ hidden: true, public: { enabled: true, showTimeLeft: false } });
   const player = viewFor(t, 'player', at(3)) as any;

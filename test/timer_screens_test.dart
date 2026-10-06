@@ -485,7 +485,9 @@ void main() {
 
     expect(find.text('Starts at'), findsNothing);
     expect(find.text('RANDOM CHANGES'), findsNothing);
-    expect(find.text('End by itself eventually'), findsOneWidget);
+    expect(find.text('End by itself eventually'), findsNothing,
+        reason: 'their own timer, ended when they like: a limit would make it a timed lock');
+    expect(find.text('Maximum length'), findsNothing);
     expect(find.text('Share a public link'), findsOneWidget);
     await finish(tester);
   });
