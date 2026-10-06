@@ -33,6 +33,18 @@ const RETAIN_AFTER_CLOSE_MS = 30 * 24 * 60 * 60 * 1000;
  * capped per day, so only a director with no cap could get near it. */
 const MAX_EVENTS = 20000;
 
+/** New public links a timer may get in a day. Plenty for changing your mind. */
+export const LINK_CHANGES_PER_DAY = 10;
+
+/** Counts a new link against today's allowance; false once it is used up. */
+export function countLinkChange(meta: { linkChanges?: { day: number; count: number } }, now: number): boolean {
+  const day = Math.floor(now / 86_400_000);
+  const used = meta.linkChanges?.day === day ? meta.linkChanges.count : 0;
+  if (used >= LINK_CHANGES_PER_DAY) return false;
+  meta.linkChanges = { day, count: used + 1 };
+  return true;
+}
+
 interface Meta {
   id: string;
   startAt: number;
@@ -50,6 +62,9 @@ interface Meta {
    * missing playerSeenAt proves nothing - the player may have connected
    * before it was tracked. */
   seenTracked?: boolean;
+  /** New public links made today: switching the link on, or replacing it.
+   * Capped so it can't be done endlessly; removing a link never counts. */
+  linkChanges?: { day: number; count: number };
 }
 
 export async function sha256Hex(text: string): Promise<string> {
@@ -267,7 +282,10 @@ export class ChastityTimer {
           random: meta.config.random,
           combination: meta.config.combination,
         };
-        if (meta.config.public.enabled && !meta.publicId) meta.publicId = body.newPublicId ?? null;
+        if (meta.config.public.enabled && !meta.publicId) {
+          if (!countLinkChange(meta, now)) return reply({ error: 'link-changes' }, 429);
+          meta.publicId = body.newPublicId ?? null;
+        }
         if (!meta.config.public.enabled) meta.publicId = null;
         this.saveMeta(meta);
         await this.scheduleCleanup(meta);
@@ -277,6 +295,7 @@ export class ChastityTimer {
       case 'replace-link': {
         if (!manager) return reply({ error: 'not-allowed' }, 403);
         if (!meta.config.public.enabled) return reply({ error: 'public-disabled' }, 409);
+        if (!countLinkChange(meta, now)) return reply({ error: 'link-changes' }, 429);
         const previous = meta.publicId;
         meta.publicId = body.newPublicId;
         this.saveMeta(meta);

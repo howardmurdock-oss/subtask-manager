@@ -128,6 +128,7 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     'public-disabled': "This timer isn't taking votes.",
     'turnstile': 'Please complete the check below first.',
     'at-maximum': 'This timer is already at its maximum length.',
+    'slow-down': 'Too many tries just now. Wait a minute, then try again.',
   };
 
   // "2d 4h", "35m": how long it has run.

@@ -42,6 +42,10 @@ String describeTimerError(String? code) {
       return "This device doesn't have access to that timer any more.";
     case 'no such timer':
       return 'That timer no longer exists.';
+    case 'slow-down':
+      return 'Too many tries just now. Wait a minute, then try again.';
+    case 'link-changes':
+      return "The link has been changed too often today. You can still switch it off; a new one can be made tomorrow.";
     case 'offline':
       return "Couldn't reach the timer. Check your connection.";
     default:

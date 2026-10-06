@@ -84,6 +84,25 @@ class_name = "ChastityTimer"
 tag = "v2"
 new_sqlite_classes = ["ChastityTimer"]
 
+# Flood guards. Normal use stays far below these.
+# Starting a timer, per internet address.
+[[ratelimits]]
+name = "TIMER_CREATE_LIMIT"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }
+
+# Anything done to one timer, by either side.
+[[ratelimits]]
+name = "TIMER_OP_LIMIT"
+namespace_id = "1002"
+simple = { limit = 60, period = 60 }
+
+# A public page's reads and votes, per visitor.
+[[ratelimits]]
+name = "TIMER_PUBLIC_LIMIT"
+namespace_id = "1003"
+simple = { limit = 30, period = 60 }
+
 # The link-preview and forum images (src/images) are bundled as raw bytes.
 [[rules]]
 type = "Data"

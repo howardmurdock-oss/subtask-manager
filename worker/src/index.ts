@@ -45,7 +45,30 @@ export interface Env {
   // The website download stats page, subtaskmanager.com/download/stats.
   // Set with: npx wrangler secret put STATS_PASSWORD
   STATS_PASSWORD?: string;
+  // Cloudflare rate limiters (wrangler.toml [[ratelimits]]). Unset, as in
+  // tests, nothing is limited.
+  TIMER_CREATE_LIMIT?: RateLimit;
+  TIMER_OP_LIMIT?: RateLimit;
+  TIMER_PUBLIC_LIMIT?: RateLimit;
 }
+
+/** Cloudflare's rate-limit binding. */
+interface RateLimit {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
+/** False when this key has gone over its limit. A limiter that fails lets the
+ * request through: it is a guard against floods, not a lock. */
+async function withinLimit(limiter: RateLimit | undefined, key: string): Promise<boolean> {
+  if (!limiter) return true;
+  try {
+    return (await limiter.limit({ key })).success;
+  } catch {
+    return true;
+  }
+}
+
+const slowDown = () => json({ error: 'slow-down' }, 429);
 
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
@@ -1247,16 +1270,28 @@ export default {
       return handleBlobGet(url, env).catch((e) => json({ error: String(e) }, 500));
     }
 
+    const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
     if (request.method === 'POST' && url.pathname === '/timer') {
+      // Starting a timer needs no key: limited per address.
+      if (!(await withinLimit(env.TIMER_CREATE_LIMIT, ip))) return slowDown();
       return handleTimerCreate(request, env).catch((e) => json({ error: String(e) }, 500));
     }
     const timerRoute = url.pathname.match(/^\/timer\/([A-Za-z0-9_-]{8,64})\/([a-z-]+)$/);
     if (timerRoute) {
+      // Per timer: a script working one timer hard gets nowhere, and two
+      // people sharing an address never slow each other down.
+      if (!(await withinLimit(env.TIMER_OP_LIMIT, timerRoute[1]))) return slowDown();
       return handleTimerOp(request, env, timerRoute[1], timerRoute[2]).catch((e) => json({ error: String(e) }, 500));
     }
     const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote|embed|badge\.svg|badge\.png|preview\.png))?\/?$/);
     if (publicRoute) {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
+      // The page's own reads and votes, per visitor. Not the page, images or
+      // widget: other sites fetch those through one shared address.
+      const op = publicRoute[2];
+      if ((op === 'state' || op === 'vote') && !(await withinLimit(env.TIMER_PUBLIC_LIMIT, ip))) {
+        return withCors(slowDown());
+      }
       return handlePublicTimer(request, env, publicRoute[1], publicRoute[2] ?? '')
         .catch((e) => withCors(json({ error: String(e) }, 500)));
     }

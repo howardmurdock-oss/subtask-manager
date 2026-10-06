@@ -18,10 +18,16 @@ const check = async (name: string, fn: () => Promise<void>) => {
   console.log(`ok - ${name}`);
 };
 
-async function call(path: string, init: { method?: string; key?: string; body?: unknown } = {}) {
+// Each timer started from its own made-up address, so the limit on starting
+// them only comes into it where a check is about it. Everything else from one.
+async function call(path: string, init: { method?: string; key?: string; body?: unknown; ip?: string } = {}) {
   const r = await fetch(BASE + path, {
     method: init.method ?? (init.body ? 'POST' : 'GET'),
-    headers: { 'content-type': 'application/json', ...(init.key ? { 'X-Timer-Key': init.key } : {}) },
+    headers: {
+      'content-type': 'application/json',
+      'CF-Connecting-IP': init.ip ?? (path !== '/timer' ? '10.0.0.1' : `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`),
+      ...(init.key ? { 'X-Timer-Key': init.key } : {}),
+    },
     body: init.body ? JSON.stringify(init.body) : undefined,
   });
   const text = await r.text();
@@ -311,6 +317,33 @@ await check('a timer with no end time can be created, viewed, shared and ended',
   const after = (await call(`/timer/${t.id}/view`, { key: t.playerKey })).body;
   assert.equal(after.status, 'released');
   assert.ok(after.closedAt);
+});
+
+await check('a timer gets a limited number of new links a day, and can always remove one', async () => {
+  const t = (await call('/timer', { body: { managedBy: 'player', config: { baseSeconds: H } } })).body;
+  const set = (enabled: boolean) =>
+    call(`/timer/${t.id}/configure`, { key: t.playerKey, body: { config: { public: { enabled } } } });
+  for (let i = 0; i < 10; i++) {
+    assert.equal((await set(true)).status, 200, `link ${i + 1}`);
+    assert.equal((await set(false)).status, 200);
+  }
+  const refused = await set(true);
+  assert.equal(refused.status, 429);
+  assert.equal(refused.body.error, 'link-changes');
+  const v = (await call(`/timer/${t.id}/view`, { key: t.playerKey })).body;
+  assert.equal(v.config.public.enabled, false, 'the refused change was not kept');
+});
+
+await check('starting timers over and over from one address is slowed down', async () => {
+  let limited = 0;
+  for (let i = 0; i < 12; i++) {
+    const r = await call('/timer', { body: { managedBy: 'player', config: { baseSeconds: H } }, ip: '10.255.0.1' });
+    if (r.status === 429) {
+      assert.equal(r.body.error, 'slow-down');
+      limited++;
+    }
+  }
+  assert.ok(limited > 0, 'some were refused');
 });
 
 console.log(`\n${passed} passed`);
