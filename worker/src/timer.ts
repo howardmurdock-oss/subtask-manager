@@ -15,6 +15,7 @@
  * has to see them to enforce caps and to hold the combination until the end.
  */
 
+import { OrderQueue, PROOF_MAX_CHARS, validIssuerKey } from './public_orders.ts';
 import { deliverToTopic, type Env } from './index.ts';
 import {
   refuse,
@@ -76,6 +77,10 @@ interface Meta {
   /** Public additions not yet announced, and when the last announcement
    * went out: at most one a minute, however busy the link. */
   publicNotice?: { pending: number; lastAt: number };
+  /** Skips of public orders used today (UTC day number). */
+  orderSkips?: { day: number; used: number };
+  /** No public orders are taken or delivered until then: after a skip. */
+  ordersPausedUntil?: number | null;
 }
 
 export async function sha256Hex(text: string): Promise<string> {
@@ -97,6 +102,7 @@ function reply(body: unknown, status = 200): Response {
 
 export class ChastityTimer {
   private readonly sql: SqlStorage;
+  private readonly orders: OrderQueue;
 
   constructor(private readonly ctx: DurableObjectState, private readonly env: Env) {
     this.sql = ctx.storage.sql;
@@ -109,6 +115,64 @@ export class ChastityTimer {
          delta INTEGER NOT NULL,
          visitor TEXT)`,
     );
+    this.orders = new OrderQueue(this.sql);
+  }
+
+  private running(meta: Meta, now: number): boolean {
+    return resolve(this.state(meta), now).status === 'running';
+  }
+
+  /** Moves public orders on, and wakes the player for one now delivered. */
+  private async advanceOrders(meta: Meta, now: number): Promise<void> {
+    const delivered = this.orders.advance(this.running(meta, now), meta.ordersPausedUntil ?? null, now);
+    if (delivered) await this.announce(meta, 'order');
+  }
+
+  private skipsLeft(meta: Meta, now: number): number {
+    const day = Math.floor(now / 86_400_000);
+    const used = meta.orderSkips?.day === day ? meta.orderSkips.used : 0;
+    return Math.max(0, (meta.config.publicOrders?.skipsPerDay ?? 0) - used);
+  }
+
+  /** What the page shows of public orders: the list, whether it is taking
+   * them, and how each has gone - never who sent one, or any proof. */
+  private ordersPublic(meta: Meta, now: number) {
+    const cfg = meta.config.publicOrders;
+    if (!cfg?.enabled || !meta.config.public.enabled) return { enabled: false };
+    const paused = (meta.ordersPausedUntil ?? 0) > now;
+    const full = cfg.maxQueued != null && this.orders.openCount() >= cfg.maxQueued;
+    const running = this.running(meta, now);
+    return {
+      enabled: true,
+      accepting: running && !paused && !full,
+      reason: !running ? 'not-running' : paused ? 'paused' : full ? 'full' : null,
+      pausedUntil: paused ? meta.ordersPausedUntil : null,
+      proofTo: cfg.proofTo,
+      perVisitorDaily: cfg.perVisitorDaily,
+      list: cfg.orders,
+      waiting: this.orders.queuedCount(),
+      feed: this.orders.feed(),
+    };
+  }
+
+  /** What either side's app sees: the order in progress (with the key to
+   * encrypt its proof to), how many wait, and skips left. */
+  private ordersPrivate(meta: Meta, now: number) {
+    const cfg = meta.config.publicOrders;
+    if (!cfg?.enabled) return { enabled: false };
+    return {
+      enabled: true,
+      proofTo: cfg.proofTo,
+      active: this.orders.active(),
+      waiting: this.orders.queuedCount(),
+      skipsLeft: this.skipsLeft(meta, now),
+      pausedUntil: (meta.ordersPausedUntil ?? 0) > now ? meta.ordersPausedUntil : null,
+      feed: this.orders.feed(),
+    };
+  }
+
+  private publicView(meta: Meta, now: number) {
+    return { ...viewFor(this.state(meta), 'public', now), orders: this.ordersPublic(meta, now) };
   }
 
   private meta(): Meta | null {
@@ -160,7 +224,13 @@ export class ChastityTimer {
     const from = Number.isFinite(closedAt) ? Math.max(closedAt, Date.now()) : Date.now();
     // An announcement held back is sent when its minute is up.
     const notice = meta.publicNotice?.pending ? meta.publicNotice.lastAt + NOTICE_GAP_MS : Infinity;
-    await this.ctx.storage.setAlarm(Math.min(from + RETAIN_AFTER_CLOSE_MS, Math.max(notice, Date.now())));
+    // Public orders: a deadline, proof due for deletion, or a pause ending
+    // with orders waiting.
+    const pause = meta.ordersPausedUntil && this.orders.queuedCount() > 0 ? meta.ordersPausedUntil : Infinity;
+    const orders = Math.min(this.orders.nextWake(), pause);
+    await this.ctx.storage.setAlarm(
+      Math.min(from + RETAIN_AFTER_CLOSE_MS, Math.max(notice, Date.now()), Math.max(orders, Date.now())),
+    );
   }
 
   /** Public time added: announced to the player now, or held for the rest
@@ -181,14 +251,14 @@ export class ChastityTimer {
 
   /** Wakes the player's app to look at the timer. It carries nothing but the
    * timer's id: what was added, and by whom, the app fetches itself. */
-  private async announce(meta: Meta): Promise<void> {
+  private async announce(meta: Meta, check: 'public' | 'order' = 'public'): Promise<void> {
     if (!meta.playerTopic) return;
     const message = {
       id: `timer-${crypto.randomUUID()}`,
       type: 'timerChanged',
       senderId: 'timer-service',
       timestamp: new Date().toISOString(),
-      payload: { timerId: meta.id, check: 'public' },
+      payload: { timerId: meta.id, check },
     };
     try {
       await deliverToTopic(this.env, meta.playerTopic, JSON.stringify(message));
@@ -205,6 +275,8 @@ export class ChastityTimer {
       this.saveMeta(meta);
       if (meta.config.notify?.onAdd) await this.announce(meta);
     }
+    this.orders.purgeProofs(Date.now());
+    await this.advanceOrders(meta, Date.now());
     const { status, endAt } = resolve(this.state(meta), Date.now());
     const closedAt = status === 'released' ? meta.releasedAt! : endAt;
     if (status === 'running' || Date.now() < closedAt + RETAIN_AFTER_CLOSE_MS) {
@@ -252,7 +324,8 @@ export class ChastityTimer {
     // The public side: no key, a narrower view, one step per vote.
     if (op === 'public-view') {
       if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
-      return reply(viewFor(this.state(meta), 'public', now));
+      await this.advanceOrders(meta, now);
+      return reply(this.publicView(meta, now));
     }
     // For a player's profile page (never routed from outside): the public
     // view, only if this timer may be shown there - its link is on, and a
@@ -262,7 +335,41 @@ export class ChastityTimer {
       if (meta.config.managedBy === 'director' && !meta.config.public.shareWithPlayer) {
         return reply({ error: 'not shown' }, 404);
       }
-      return reply(viewFor(this.state(meta), 'public', now));
+      await this.advanceOrders(meta, now);
+      return reply(this.publicView(meta, now));
+    }
+
+    // A visitor's order, from the approved list.
+    if (op === 'public-order') {
+      if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
+      await this.advanceOrders(meta, now);
+      const cfg = meta.config.publicOrders;
+      const refuseOrder = (error: string) => reply({ error, view: this.publicView(meta, now) }, 409);
+      if (!cfg?.enabled || !meta.config.public.enabled) return refuseOrder('orders-off');
+      if (!this.running(meta, now)) return refuseOrder('not-running');
+      if ((meta.ordersPausedUntil ?? 0) > now) return refuseOrder('paused');
+      const def = cfg.orders.find((o) => o.id === body.orderId);
+      if (!def) return refuseOrder('unknown-order');
+      const visitor = typeof body.visitor === 'string' ? body.visitor : 'unknown';
+      if (this.orders.sentToday(visitor, now) >= cfg.perVisitorDaily) return refuseOrder('visitor-cap');
+      if (cfg.maxQueued != null && this.orders.openCount() >= cfg.maxQueued) return refuseOrder('full');
+      const receiptHash = typeof body.receiptHash === 'string' && /^[0-9a-f]{64}$/.test(body.receiptHash) ? body.receiptHash : null;
+      if (!receiptHash) return reply({ error: 'bad-receipt' }, 400);
+      // Proof for the sender needs their key; without one it goes nowhere.
+      const issuerKey = cfg.proofTo === 'issuer' ? validIssuerKey(body.issuerKey) : null;
+      if (cfg.proofTo === 'issuer' && def.verification === 'photoProof' && !issuerKey) return reply({ error: 'bad-key' }, 400);
+      const no = this.orders.add(def, visitor, issuerKey, receiptHash, now);
+      await this.advanceOrders(meta, now);
+      await this.scheduleCleanup(meta);
+      return reply({ no, view: this.publicView(meta, now) });
+    }
+
+    // The sender collecting their proof: only with their order's receipt.
+    if (op === 'public-proof') {
+      if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
+      const receiptHash = typeof body.receipt === 'string' && body.receipt.length <= 200 ? await sha256Hex(body.receipt) : '';
+      const proof = this.orders.proofFor(Number(body.no), receiptHash, now);
+      return proof ? reply({ proof }) : reply({ error: 'no proof' }, 404);
     }
     if (op === 'public-vote') {
       if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
@@ -276,7 +383,7 @@ export class ChastityTimer {
       );
       if (delta > 0) await this.notePublicAdd(meta, delta, now);
       await this.scheduleCleanup(meta);
-      return reply(viewFor(this.state(meta), 'public', now));
+      return reply(this.publicView(meta, now));
     }
 
     const role = await this.roleOf(meta, request.headers.get('X-Timer-Key'));
@@ -308,11 +415,45 @@ export class ChastityTimer {
       manager,
       publicId: linkFor(),
       ...(manager ? { partnerConnected: partnerSeen() } : {}),
+      orders: this.ordersPrivate(meta, now),
     });
 
     switch (op) {
       case 'view':
+        await this.advanceOrders(meta, now);
         return reply({ ...about(), ...viewFor(this.state(meta), role as Viewer, now) });
+
+      case 'order-result': {
+        // The player's own report: done, with any proof, or failed.
+        if (role !== 'player') return reply({ error: 'not-allowed' }, 403);
+        await this.advanceOrders(meta, now);
+        const result = body.result === 'completed' ? 'completed' : body.result === 'failed' ? 'failed' : null;
+        if (!result) return reply({ error: 'bad-result' }, 400);
+        const active = this.orders.active();
+        // Proof is kept only for a sender who can open it, already encrypted.
+        const proof =
+          result === 'completed' && active?.issuerKey && typeof body.proof === 'string' && body.proof.length <= PROOF_MAX_CHARS
+            ? body.proof
+            : null;
+        if (!this.orders.finish(Number(body.no), result, proof, now)) return reply({ error: 'not-active' }, 409);
+        await this.advanceOrders(meta, now);
+        await this.scheduleCleanup(meta);
+        return reply({ ...about(), ...viewFor(this.state(meta), role, now) });
+      }
+
+      case 'order-skip': {
+        if (role !== 'player') return reply({ error: 'not-allowed' }, 403);
+        await this.advanceOrders(meta, now);
+        if (this.skipsLeft(meta, now) <= 0) return reply({ error: 'no-skips' }, 409);
+        if (!this.orders.skip(Number(body.no), now)) return reply({ error: 'not-active' }, 409);
+        const day = Math.floor(now / 86_400_000);
+        meta.orderSkips = { day, used: (meta.orderSkips?.day === day ? meta.orderSkips.used : 0) + 1 };
+        // A breather: nothing new is taken or delivered for a while.
+        meta.ordersPausedUntil = now + (meta.config.publicOrders?.skipPauseMinutes ?? 30) * 60 * 1000;
+        this.saveMeta(meta);
+        await this.scheduleCleanup(meta);
+        return reply({ ...about(), ...viewFor(this.state(meta), role, now) });
+      }
 
       case 'adjust': {
         const delta = Number(body.delta);

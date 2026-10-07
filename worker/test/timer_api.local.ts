@@ -437,4 +437,93 @@ await check("a player's page: one link, showing whichever of their timers may be
   assert.equal((await as('view', undefined, rekeyed.key)).status, 200);
 });
 
+await check('public orders: sent from the list, delivered one at a time, proof only to its sender', async () => {
+  const sha = async (t: string) =>
+    [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const issuerKey = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.publicKey))));
+  const t = (await call('/timer', {
+    body: {
+      managedBy: 'player',
+      config: {
+        baseSeconds: 10 * H,
+        public: { enabled: true },
+        publicOrders: {
+          enabled: true,
+          proofTo: 'issuer',
+          perVisitorDaily: 2,
+          maxQueued: 3,
+          skipsPerDay: 1,
+          skipPauseMinutes: 5,
+          orders: [
+            { id: 'plank', title: 'Plank, 2 minutes', durationType: 'deadlineCountdown', deadlineMinutes: 30, rewardTokens: 5, penaltyTokens: 2 },
+            { id: 'check', title: 'Cage check', verification: 'photoProof', rewardTokens: 3 },
+          ],
+        },
+      },
+    },
+  })).body;
+  const order = (orderId: string, ip: string, receipt: string) =>
+    sha(receipt).then((receiptHash) =>
+      call(`/t/${t.publicId}/order`, { body: { orderId, issuerKey, receiptHash }, ip }));
+
+  const page = (await call(`/t/${t.publicId}/state`)).body;
+  assert.equal(page.orders.enabled, true);
+  assert.equal(page.orders.accepting, true);
+  assert.deepEqual(page.orders.list.map((o: any) => o.id), ['plank', 'check']);
+
+  const first = await order('plank', '10.8.0.1', 'receipt-1');
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal((await order('check', '10.8.0.1', 'receipt-2')).status, 200);
+  assert.equal((await order('plank', '10.8.0.1', 'receipt-3')).body.error, 'visitor-cap');
+  assert.equal((await order('nope', '10.8.0.2', 'receipt-4')).body.error, 'unknown-order');
+
+  // The player sees the one in progress, with the key to encrypt proof to.
+  let mine = (await call(`/timer/${t.id}/view`, { key: t.playerKey })).body.orders;
+  assert.equal(mine.active.def.id, 'plank');
+  assert.equal(mine.waiting, 1);
+  const result = (no: number, body: object, key = t.playerKey) =>
+    call(`/timer/${t.id}/order-result`, { key, body: { no, ...body } });
+  assert.equal((await result(mine.active.no, { result: 'completed' }, t.directorKey)).status, 403, 'only the player');
+  assert.equal((await result(mine.active.no, { result: 'completed' })).status, 200);
+
+  // The next one is delivered, and its proof kept for its sender alone.
+  mine = (await call(`/timer/${t.id}/view`, { key: t.playerKey })).body.orders;
+  assert.equal(mine.active.def.id, 'check');
+  assert.equal(mine.active.issuerKey, issuerKey);
+  await result(mine.active.no, { result: 'completed', proof: 'CIPHERTEXT' });
+  const proof = (receipt: string) => call(`/t/${t.publicId}/proof`, { body: { no: mine.active.no, receipt } });
+  assert.equal((await proof('receipt-1')).status, 404, "another order's receipt");
+  assert.equal((await proof('receipt-2')).body.proof, 'CIPHERTEXT');
+
+  // The feed: what, and how it went - not who, nor the proof.
+  const feed = (await call(`/t/${t.publicId}/state`)).body.orders.feed;
+  assert.deepEqual(feed.map((f: any) => f.status), ['completed', 'completed']);
+  assert.equal(feed[0].hasProof, true);
+  assert.equal(JSON.stringify(feed).includes('CIPHERTEXT') || JSON.stringify(feed).includes('10.8.0.1'), false);
+
+  // A skip: no penalty here, and a pause - nothing new taken meanwhile.
+  await order('plank', '10.8.0.3', 'receipt-5');
+  mine = (await call(`/timer/${t.id}/view`, { key: t.playerKey })).body.orders;
+  const skipped = await call(`/timer/${t.id}/order-skip`, { key: t.playerKey, body: { no: mine.active.no } });
+  assert.equal(skipped.status, 200);
+  assert.equal(skipped.body.orders.skipsLeft, 0);
+  assert.ok(skipped.body.orders.pausedUntil > Date.now());
+  assert.equal((await order('plank', '10.8.0.4', 'receipt-6')).body.error, 'paused');
+  const pausedPage = (await call(`/t/${t.publicId}/state`)).body.orders;
+  assert.equal(pausedPage.accepting, false);
+  assert.equal(pausedPage.reason, 'paused');
+
+  // Over: nothing more is taken.
+  await call(`/timer/${t.id}/release`, { key: t.playerKey, body: {} });
+  assert.equal((await order('plank', '10.8.0.5', 'receipt-7')).body.error, 'not-running');
+});
+
+await check('a timer without public orders takes none, and the page says so', async () => {
+  const plain = (await call('/timer', { body: { managedBy: 'player', config: { baseSeconds: H, public: { enabled: true } } } })).body;
+  assert.equal((await call(`/t/${plain.publicId}/state`)).body.orders.enabled, false);
+  const r = await call(`/t/${plain.publicId}/order`, { body: { orderId: 'x', receiptHash: 'a'.repeat(64) }, ip: '10.8.1.1' });
+  assert.equal(r.body.error, 'orders-off');
+});
+
 console.log(`\n${passed} passed`);

@@ -1022,7 +1022,12 @@ async function handleTimerOp(request: Request, env: Env, timerId: string, op: st
   const body: any = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
 
   if (op === 'view') return callTimer(env, timerId, 'view', {}, key);
-  if (op === 'adjust' || op === 'release' || op === 'reissue-key' || op === 'notify-topic') return callTimer(env, timerId, op, body, key);
+  if (
+    op === 'adjust' || op === 'release' || op === 'reissue-key' || op === 'notify-topic' ||
+    op === 'order-result' || op === 'order-skip'
+  ) {
+    return callTimer(env, timerId, op, body, key);
+  }
 
   if (op === 'configure' || op === 'replace-link') {
     const before = (await (await callTimer(env, timerId, 'view', {}, key)).json()) as { publicId?: string | null };
@@ -1142,6 +1147,32 @@ async function handlePublicTimer(request: Request, env: Env, publicId: string, o
 
   if (op === 'state' && request.method === 'GET') {
     return withCors(await callTimer(env, row.timer_id, 'public-view', { publicId }));
+  }
+
+  if (op === 'order' && request.method === 'POST') {
+    const body: any = await request.json().catch(() => ({}));
+    const ip = request.headers.get('CF-Connecting-IP');
+    if (!(await verifyTurnstile(env, body.turnstileToken, ip))) {
+      return withCors(json({ error: 'turnstile' }, 403));
+    }
+    // The same visitor as for votes: their address, hashed, for this link
+    // and today - what the per-visitor allowance counts against.
+    const day = new Date().toISOString().slice(0, 10);
+    const visitor = (await sha256Hex(`${ip ?? 'unknown'}:${publicId}:${day}`)).slice(0, 16);
+    return withCors(await callTimer(env, row.timer_id, 'public-order', {
+      publicId,
+      visitor,
+      orderId: body.orderId,
+      issuerKey: body.issuerKey,
+      receiptHash: body.receiptHash,
+    }));
+  }
+
+  if (op === 'proof' && request.method === 'POST') {
+    // The receipt goes in the body, never the address: an address ends up
+    // in logs and histories.
+    const body: any = await request.json().catch(() => ({}));
+    return withCors(await callTimer(env, row.timer_id, 'public-proof', { publicId, no: body.no, receipt: body.receipt }));
   }
 
   if (op === 'vote' && request.method === 'POST') {
@@ -1436,13 +1467,13 @@ export default {
       if (!(await withinLimit(env.TIMER_OP_LIMIT, timerRoute[1]))) return slowDown();
       return handleTimerOp(request, env, timerRoute[1], timerRoute[2]).catch((e) => json({ error: String(e) }, 500));
     }
-    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote|embed|badge\.svg|badge\.png|preview\.png))?\/?$/);
+    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote|order|proof|embed|badge\.svg|badge\.png|preview\.png))?\/?$/);
     if (publicRoute) {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
       // The page's own reads and votes, per visitor. Not the page, images or
       // widget: other sites fetch those through one shared address.
       const op = publicRoute[2];
-      if ((op === 'state' || op === 'vote') && !(await withinLimit(env.TIMER_PUBLIC_LIMIT, ip))) {
+      if ((op === 'state' || op === 'vote' || op === 'order' || op === 'proof') && !(await withinLimit(env.TIMER_PUBLIC_LIMIT, ip))) {
         return withCors(slowDown());
       }
       return handlePublicTimer(request, env, publicRoute[1], publicRoute[2] ?? '')

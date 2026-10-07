@@ -14,6 +14,8 @@
  * to be awake for one to happen, and nobody can re-roll one.
  */
 
+import { sanitizePublicOrders, type PublicOrdersConfig } from './public_orders.ts';
+
 export type Actor = 'player' | 'director' | 'random' | 'public';
 
 export interface TimerConfig {
@@ -32,6 +34,8 @@ export interface TimerConfig {
    * ends it - not the emergency release. Director-managed timers only; the
    * player's app credits them. Null: no reward. */
   rewardTokens: number | null;
+  /** Orders the public may send from the page - see public_orders.ts. */
+  publicOrders: PublicOrdersConfig;
   /** The player does not see the time left, or how much each change was. */
   hidden: boolean;
   /** No change may push the end past start + this. Null: no ceiling. */
@@ -369,6 +373,7 @@ export function sanitizeConfig(raw: any, managedBy: 'player' | 'director'): Time
     openEnded,
     // Nothing to hide, change or roll without an end time.
     hidden: !openEnded && r.hidden === true,
+    publicOrders: sanitizePublicOrders(r.publicOrders),
     // A player rewarding themselves would mean nothing.
     rewardTokens:
       managedBy === 'director' && typeof r.rewardTokens === 'number' && r.rewardTokens >= 1
