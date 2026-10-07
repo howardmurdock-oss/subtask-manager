@@ -74,9 +74,7 @@ class TimerNotice {
   static Future<bool> _announcePublic(SharedPreferences prefs, String timerId) async {
     final record = _recordOf(prefs, timerId);
     if (record == null || record.role != TimerRole.player) return false;
-    final response = await ChastityTimerService.request(
-        'GET', Uri.parse('${ChastityTimerService.apiBase}/$timerId/view'),
-        key: record.key);
+    final response = await ChastityTimerService.fetchView(timerId, record.key);
     if (!response.ok) return false;
     final view = ChastityTimerView.fromJson(response.body);
 

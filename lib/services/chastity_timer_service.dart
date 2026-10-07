@@ -162,6 +162,11 @@ class ChastityTimerService extends ChangeNotifier {
   /// Timers whose reward this device has credited.
   static const String rewardedKey = 'chastity_timer_rewarded_v1';
 
+  /// A timer's view, fetched with [key] - for code outside this service that
+  /// runs without it, such as a push handled in the background.
+  static Future<TimerApiResponse> fetchView(String id, String key) =>
+      request('GET', Uri.parse('$apiBase/$id/view'), key: key);
+
   /// Credits a completed timer's reward to the player: set by the sync
   /// service, which holds the token balance. Called once per timer.
   void Function(ChastityTimerView view, int tokens)? onReward;
