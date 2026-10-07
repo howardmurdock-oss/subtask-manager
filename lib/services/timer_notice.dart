@@ -8,6 +8,7 @@ import '../models/chastity_timer.dart';
 import '../models/sync_message.dart';
 import '../views/chastity_timer/timer_format.dart';
 import 'chastity_timer_service.dart';
+import 'public_order_bridge.dart';
 
 /// Tells a timer's person what changed on it - once, from whichever path a
 /// `timerChanged` message reaches first: the app, a push woken in the
@@ -41,6 +42,7 @@ class TimerNotice {
       if (timerId == null) return false;
 
       if (msg.payload['check'] == 'public') return await _announcePublic(prefs, timerId);
+      if (msg.payload['check'] == 'order') return await _announceOrder(prefs, timerId);
 
       final summary = msg.payload['summary'] as String?;
       if (summary == null || summary.isEmpty) return false;
@@ -107,6 +109,19 @@ class TimerNotice {
           message: view.config.notifyMessage, amount: Duration(seconds: total), by: TimerActor.public);
     }
     await NotificationService.showGenericNotification(title: title, body: body);
+    return true;
+  }
+
+  /// A public order delivered: fetched with this device's key - so a forged
+  /// wake-up announces nothing - and announced once.
+  static Future<bool> _announceOrder(SharedPreferences prefs, String timerId) async {
+    final record = _recordOf(prefs, timerId);
+    if (record == null || record.role != TimerRole.player) return false;
+    final response = await ChastityTimerService.fetchView(timerId, record.key);
+    if (!response.ok) return false;
+    final active = ChastityTimerView.fromJson(response.body).orders?.active;
+    if (active == null) return false;
+    await PublicOrderBridge.announce(timerId, active.no, active.def);
     return true;
   }
 

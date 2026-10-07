@@ -410,6 +410,13 @@ class ChastityTimerService extends ChangeNotifier {
       final pastEnd = view.endAt != null && !view.serverNow.isBefore(view.endAt!);
       final last = _lastFetched[r.id];
       final stale = view.endAt == null && (last == null || now.difference(last) >= const Duration(minutes: 1));
+      // Public orders arrive by push; this catches any that did not.
+      final ordersDue = view.config.publicOrders.enabled &&
+          (last == null || now.difference(last) >= const Duration(minutes: 2));
+      if (ordersDue) {
+        await refresh(r.id);
+        continue;
+      }
       if (pastEnd || stale) await refresh(r.id);
     }
   }
@@ -630,6 +637,14 @@ class ChastityTimerService extends ChangeNotifier {
 
   /// The player's emergency release, or the director ending it early.
   Future<String?> release(String id) => _act(id, 'release', const {});
+
+  /// The player's result for public order [no]: done (with any proof,
+  /// already encrypted for its sender) or failed.
+  Future<String?> reportPublicOrder(String id, int no, {required bool completed, String? proof}) =>
+      _act(id, 'order-result', {'no': no, 'result': completed ? 'completed' : 'failed', if (proof != null) 'proof': proof});
+
+  /// Skips public order [no]: no penalty, and a pause before the next.
+  Future<String?> skipPublicOrder(String id, int no) => _act(id, 'order-skip', {'no': no});
 
   Future<String?> _act(String id, String op, Map<String, dynamic> body, {bool thenRefresh = false}) async {
     final record = recordOf(id);

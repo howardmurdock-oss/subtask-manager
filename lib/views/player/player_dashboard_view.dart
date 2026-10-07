@@ -20,6 +20,7 @@ import '../../services/debug_settings.dart';
 import '../../widgets/base64_image.dart';
 import '../../models/chastity_timer.dart';
 import '../chastity_timer/timer_dashboard_card.dart';
+import '../../services/public_order_bridge.dart';
 
 class PlayerDashboardView extends StatelessWidget {
   const PlayerDashboardView({super.key});
@@ -170,6 +171,12 @@ class PlayerDashboardView extends StatelessWidget {
   }
 
   void _showProofSubmissionDialog(BuildContext context, ActiveOrder activeOrder) {
+    // An order from a timer's public page: its proof goes where the timer
+    // says, not to whoever is picked here.
+    if (PublicOrderBridge.isPublic(activeOrder) && publicOrderBridge?.destinationOf(activeOrder) != null) {
+      _showPublicProofDialog(context, activeOrder);
+      return;
+    }
     final engine = Provider.of<OrderEngine>(context, listen: false);
     final partnerService = Provider.of<PartnerService>(context, listen: false);
     final syncService = Provider.of<SyncService>(context, listen: false);
@@ -510,6 +517,159 @@ class PlayerDashboardView extends StatelessWidget {
           },
         );
       },
+    );
+  }
+
+  /// Proof for a public order. Where it goes was set with the timer: its
+  /// sender (encrypted, so only their browser can open it), its director for
+  /// the usual review, or nowhere but this device's log.
+  void _showPublicProofDialog(BuildContext context, ActiveOrder activeOrder) {
+    final engine = Provider.of<OrderEngine>(context, listen: false);
+    final partnerService = Provider.of<PartnerService>(context, listen: false);
+    final syncService = Provider.of<SyncService>(context, listen: false);
+    final bridge = publicOrderBridge!;
+    final dest = bridge.destinationOf(activeOrder)!;
+    final needsPhoto = activeOrder.order.verificationType == VerificationType.photoProof;
+    final noteController = TextEditingController(text: activeOrder.submissionProof ?? '');
+    String? image = activeOrder.proofImageBase64;
+    var busy = false;
+    final skipsLeft = bridge.skipsLeftFor(activeOrder);
+
+    final where = switch (dest.to) {
+      PublicProofDestination.issuer =>
+        'Ordered by the public. Your proof goes to whoever sent it - encrypted, so only their browser can open it, and only for a day.',
+      PublicProofDestination.director =>
+        'Ordered by the public. Your proof goes to ${dest.directorName ?? 'your director'} to check.',
+      PublicProofDestination.none => 'Ordered by the public. Your proof stays in your own log.',
+    };
+
+    void snack(String text) => ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(text), behavior: SnackBarBehavior.floating));
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> submit() async {
+            final note = noteController.text.trim().isEmpty ? null : noteController.text.trim();
+            if (dest.to == PublicProofDestination.director) {
+              final code = PartnerService.normalizeCode(dest.directorCode ?? '');
+              final partner = partnerService.unblockedContacts
+                  .where((p) => PartnerService.normalizeCode(p.pairingCode) == code)
+                  .firstOrNull;
+              if (partner == null) {
+                snack("Couldn't find your director to send it to.");
+                return;
+              }
+              final idx = engine.activeOrders.indexWhere((o) => o.id == activeOrder.id);
+              if (idx != -1) {
+                engine.activeOrders[idx] = activeOrder.copyWith(
+                  assignedByDirector: true,
+                  assignedByPartnerId: partner.id,
+                  assignedByPartnerCode: partner.pairingCode,
+                  assignedByPartnerName: partner.displayName,
+                );
+              }
+              engine.submitOrCompleteOrder(activeOrder.id, proofNote: note, proofImageBase64: image);
+              final updated = engine.underReviewOrders.where((o) => o.id == activeOrder.id).firstOrNull;
+              if (updated != null) syncService.sendProofForReview(updated, targetPartner: partner);
+              Navigator.pop(ctx);
+              snack('Sent to ${partner.displayName} to check.');
+              return;
+            }
+            setDialogState(() => busy = true);
+            final error = await bridge.submit(activeOrder, note: note, imageBase64: image);
+            if (!ctx.mounted) return;
+            setDialogState(() => busy = false);
+            if (error != null && error != 'not-active') {
+              snack("Couldn't send it. Check your connection and try again.");
+              return;
+            }
+            Navigator.pop(ctx);
+            snack(error == 'not-active'
+                ? 'It had already run out of time.'
+                : dest.to == PublicProofDestination.issuer
+                    ? 'Done. Your proof is on its way to whoever sent it.'
+                    : 'Done.');
+          }
+
+          Future<void> skip() async {
+            setDialogState(() => busy = true);
+            final error = await bridge.skip(activeOrder.id);
+            if (!ctx.mounted) return;
+            setDialogState(() => busy = false);
+            if (error != null) {
+              snack(error == 'no-skips' ? 'No skips left today.' : "Couldn't skip it. Try again in a moment.");
+              return;
+            }
+            Navigator.pop(ctx);
+            snack('Skipped. Public orders are paused for a little while.');
+          }
+
+          return AlertDialog(
+            title: Text(activeOrder.order.title),
+            content: SizedBox(
+              width: 440,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(where, style: const TextStyle(fontSize: 13)),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: noteController,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        hintText: activeOrder.order.verificationType == VerificationType.noteProof
+                            ? 'Your written proof'
+                            : 'A note (optional)',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (image != null)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Base64Image(image!, height: 180, width: double.infinity, fit: BoxFit.cover),
+                      ),
+                    Row(children: [
+                      TextButton.icon(
+                        icon: const Icon(Icons.photo_camera_rounded, size: 18),
+                        label: const Text('Camera'),
+                        onPressed: busy
+                            ? null
+                            : () => _pickProofImage(context, ImageSource.camera, setDialogState, (b64, _) => image = b64),
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.photo_library_rounded, size: 18),
+                        label: const Text('Gallery'),
+                        onPressed: busy
+                            ? null
+                            : () => _pickProofImage(context, ImageSource.gallery, setDialogState, (b64, _) => image = b64),
+                      ),
+                    ]),
+                    if (needsPhoto && image == null)
+                      const Text('This one needs a photo.', style: TextStyle(fontSize: 12, color: Colors.orangeAccent)),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              if (skipsLeft > 0)
+                TextButton(onPressed: busy ? null : skip, child: Text('Skip ($skipsLeft left today)')),
+              TextButton(onPressed: busy ? null : () => Navigator.pop(ctx), child: const Text('Cancel')),
+              FilledButton(
+                onPressed: busy || (needsPhoto && image == null) ? null : submit,
+                child: Text(switch (dest.to) {
+                  PublicProofDestination.issuer => 'Send proof',
+                  PublicProofDestination.director => 'Send to check',
+                  PublicProofDestination.none => 'Mark done',
+                }),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 

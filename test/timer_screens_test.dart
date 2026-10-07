@@ -612,4 +612,59 @@ void main() {
     await tester.pump();
     await finish(tester);
   });
+
+  testWidgets('setting up public orders: a written order, and a warning when photos go to strangers', (tester) async {
+    await pump(tester, const TimerSetupView(role: TimerRole.player));
+    // The page itself: text fields scroll too, sideways.
+    final list = find.byWidgetPredicate((w) => w is Scrollable && w.axisDirection == AxisDirection.down).first;
+    await tester.scrollUntilVisible(find.text('Let anyone with the link vote'), 300, scrollable: list);
+    await tester.tap(find.text('Let anyone with the link vote'));
+    await tester.pump();
+    await tester.scrollUntilVisible(find.text('Let visitors send orders'), 300, scrollable: list);
+    await tester.tap(find.text('Let visitors send orders'));
+    await tester.pump();
+    expect(find.text('No orders yet. Add at least one.'), findsOneWidget);
+
+    await tester.tap(find.text('Write one'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Title'), '20 push-ups');
+    await tester.enterText(find.widgetWithText(TextField, 'Minutes to do it'), '15');
+    await tester.tap(find.text('Add').last);
+    await tester.pumpAndSettle();
+    expect(find.text('20 push-ups'), findsOneWidget);
+    expect(find.text('15 min · +5'), findsOneWidget);
+
+    await tester.scrollUntilVisible(find.text('Whoever sent the order'), 300, scrollable: list);
+    await tester.ensureVisible(find.text('Whoever sent the order'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Whoever sent the order'));
+    await tester.pump();
+    await tester.scrollUntilVisible(find.textContaining('Your photos go to strangers'), 200, scrollable: list);
+    expect(find.textContaining('Your photos go to strangers'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('the timer screen shows public orders: in progress, waiting, and how recent ones went', (tester) async {
+    final v = view(role: 'player');
+    v['orders'] = {
+      'enabled': true,
+      'proofTo': 'director',
+      'active': {'no': 2, 'def': {'id': 'plank', 'title': 'Plank'}},
+      'waiting': 3,
+      'skipsLeft': 1,
+      'feed': [
+        {'no': 2, 'title': 'Plank', 'status': 'active', 'at': now},
+        {'no': 1, 'title': 'Cage check', 'status': 'completed', 'at': now},
+      ],
+    };
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, v);
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+    await tester.scrollUntilVisible(find.text('PUBLIC ORDERS'), 300, scrollable: find.byType(Scrollable).first);
+    expect(find.text('In progress: Plank - it is in your orders.'), findsOneWidget);
+    expect(find.text('3 waiting'), findsOneWidget);
+    expect(find.text('1 skips left today'), findsOneWidget);
+    expect(find.text('done'), findsOneWidget);
+    await finish(tester);
+  });
 }

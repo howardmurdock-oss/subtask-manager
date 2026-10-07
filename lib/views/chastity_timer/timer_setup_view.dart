@@ -11,6 +11,7 @@ import '../../services/partner_service.dart';
 import '../../services/sync_service.dart';
 import 'timer_detail_view.dart';
 import 'timer_format.dart';
+import 'public_orders_editor.dart';
 
 /// Setting up a timer. A director sets one up for a player, and manages it;
 /// a player can set up their own, optionally with a director who may change
@@ -45,6 +46,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
   Duration _randomAddUpTo = const Duration(hours: 1);
 
   bool _publicOn = false;
+  PublicOrdersSettings _publicOrders = const PublicOrdersSettings();
   Duration _publicStep = const Duration(minutes: 10);
   bool _publicRemove = false;
   Duration _publicPerVisitor = const Duration(hours: 1);
@@ -129,6 +131,10 @@ class _TimerSetupViewState extends State<TimerSetupView> {
       _snack('Choose who the timer is for.');
       return;
     }
+    if (_publicOn && _publicOrders.enabled && _publicOrders.orders.isEmpty) {
+      _snack('Add at least one order the public may send, or switch public orders off.');
+      return;
+    }
     if (_comboOn && _combination.length < 3) {
       _snack('Enter a combination of at least 3 digits.');
       return;
@@ -142,6 +148,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
       openEnded: _openEnded,
       notifyOnAdd: !_openEnded && _notifyOn,
       rewardTokens: _reward,
+      publicOrders: _publicOn ? _publicOrders : const PublicOrdersSettings(),
       notifyMessage: _noticeController.text.trim().isEmpty ? null : _noticeController.text.trim(),
       hidden: !_openEnded && _hidden,
       maxTotalSeconds: _ceilingOn && _limitOffered ? _ceiling.inSeconds : null,
@@ -461,6 +468,21 @@ class _TimerSetupViewState extends State<TimerSetupView> {
               ],
             ),
           ),
+          // Orders from the page: only with a page to send them from.
+          if (_publicOn) ...[
+            _section(theme, 'PUBLIC ORDERS'),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                child: PublicOrdersEditor(
+                  value: _publicOrders,
+                  onChanged: (v) => setState(() => _publicOrders = v),
+                  isDirector: _isDirector,
+                  hasDirector: _isDirector || _partner != null,
+                ),
+              ),
+            ),
+          ],
           // Tokens are the director's to give.
           if (_isDirector) ...[
             _section(theme, 'REWARD'),

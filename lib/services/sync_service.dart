@@ -2038,7 +2038,8 @@ class SyncService extends ChangeNotifier {
     await timers.refresh(timerId);
     // The Worker's own wake-up for public additions comes from no contact;
     // anything else must be from the partner on the timer.
-    final fromWorker = msg.senderId == 'timer-service' && msg.payload['check'] == 'public';
+    final fromWorker = msg.senderId == 'timer-service' &&
+        (msg.payload['check'] == 'public' || msg.payload['check'] == 'order');
     final contact = _contactFor(code: msg.payload['senderCode'] as String?, id: msg.senderId);
     if (!fromWorker && contact == null) return;
     await TimerNotice.announce(SyncMessage(

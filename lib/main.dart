@@ -18,6 +18,7 @@ import 'services/chastity_timer_service.dart';
 import 'views/home_screen.dart';
 import 'views/disguise/panic_decoy_view.dart';
 import 'views/security/pin_lock_screen.dart';
+import 'services/public_order_bridge.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,6 +59,9 @@ void main() async {
   syncService.attachTimerService(timerService);
   timerService.refreshAll();
   timerService.startWatching();
+  // Orders the public sends from a timer's page, carried into the player's
+  // list and their results back.
+  publicOrderBridge = PublicOrderBridge(engine: orderEngine, timers: timerService)..start();
 
   // Register for push once the pairing code is loaded, so the Worker learns
   // which topic this device answers to. The topic is the same hashed code the

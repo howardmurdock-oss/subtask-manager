@@ -6,6 +6,8 @@
 /// reach - which, beyond an id, is only a key.
 library;
 
+import 'order_item.dart';
+
 /// Who a change came from.
 enum TimerActor { player, director, random, public }
 
@@ -131,6 +133,7 @@ class ChastityTimerConfig {
     this.notifyOnAdd = true,
     this.notifyMessage,
     this.rewardTokens,
+    this.publicOrders = const PublicOrdersSettings(),
     this.hidden = false,
     this.maxTotalSeconds,
     this.director = const DirectorLimits(),
@@ -156,6 +159,9 @@ class ChastityTimerConfig {
   /// Tokens the player earns by completing it - it runs out, or the
   /// director ends it; not by emergency release. A director's timers only.
   final int? rewardTokens;
+
+  /// Orders the public may send from the timer's page.
+  final PublicOrdersSettings publicOrders;
   final bool hidden;
 
   /// No change pushes the end past start + this. Null: no ceiling.
@@ -176,6 +182,7 @@ class ChastityTimerConfig {
         'openEnded': openEnded,
         'notify': {'onAdd': notifyOnAdd, 'message': notifyMessage},
         'rewardTokens': rewardTokens,
+        'publicOrders': publicOrders.toJson(),
         'hidden': hidden,
         'maxTotalSeconds': maxTotalSeconds,
         'director': director.toJson(),
@@ -194,6 +201,7 @@ class ChastityTimerConfig {
       notifyOnAdd: json['openEnded'] != true && sub('notify')?['onAdd'] != false,
       notifyMessage: sub('notify')?['message'] as String?,
       rewardTokens: (json['rewardTokens'] as num?)?.toInt(),
+      publicOrders: PublicOrdersSettings.fromJson(sub('publicOrders') ?? const {}),
       hidden: json['hidden'] == true,
       maxTotalSeconds: (json['maxTotalSeconds'] as num?)?.toInt(),
       director: DirectorLimits.fromJson(sub('director')),
@@ -242,7 +250,11 @@ class ChastityTimerView {
     required this.clockOffset,
     this.atMaximum = false,
     this.partnerConnected,
+    this.orders,
   });
+
+  /// Public orders as they stand: the one in progress, how many wait, the
+  /// feed. Null when the timer takes none.
 
   final String id;
   final TimerRole role;
@@ -274,6 +286,7 @@ class ChastityTimerView {
   /// their key. False means they may never have received it. Null: not known,
   /// or not this device's to know.
   final bool? partnerConnected;
+  final PublicOrdersStatus? orders;
 
   /// The Worker's clock minus this device's, so a countdown is right even
   /// when the device's clock is not.
@@ -346,6 +359,9 @@ class ChastityTimerView {
       publicId: json['publicId'] as String?,
       atMaximum: json['atMaximum'] == true,
       partnerConnected: json['partnerConnected'] as bool?,
+      orders: json['orders'] is Map && (json['orders'] as Map)['enabled'] == true
+          ? PublicOrdersStatus.fromJson(Map<String, dynamic>.from(json['orders'] as Map))
+          : null,
       clockOffset: serverNow == null
           ? Duration.zero
           : Duration(milliseconds: serverNow - local.millisecondsSinceEpoch),
@@ -471,5 +487,250 @@ class TimerProfile {
         publicId: json['publicId'] as String,
         name: json['name'] as String?,
         showHistory: json['showHistory'] == true,
+      );
+}
+
+/// One order the public may send: the fields of an [OrderItem] the page
+/// shows and the player's app needs to rebuild it.
+class PublicOrderDef {
+  const PublicOrderDef({
+    required this.id,
+    required this.title,
+    this.description = '',
+    this.category = 'General',
+    this.tier = 1,
+    this.durationType = DurationType.instant,
+    this.actionSeconds = 0,
+    this.deadlineMinutes = 0,
+    this.verification = VerificationType.honorCheck,
+    this.rewardTokens = 0,
+    this.penaltyTokens = 0,
+  });
+
+  final String id;
+  final String title;
+  final String description;
+  final String category;
+  final int tier;
+  final DurationType durationType;
+  final int actionSeconds;
+  final int deadlineMinutes;
+  final VerificationType verification;
+  final int rewardTokens;
+  final int penaltyTokens;
+
+  factory PublicOrderDef.fromOrder(OrderItem o) => PublicOrderDef(
+        id: _safeId(o.id),
+        title: o.title,
+        description: o.description,
+        category: o.category,
+        tier: o.tier,
+        durationType: o.durationType,
+        actionSeconds: o.actionDurationSeconds,
+        deadlineMinutes: o.durationMinutes,
+        verification: o.verificationType,
+        rewardTokens: o.rewardTokens,
+        penaltyTokens: o.penaltyTokens,
+      );
+
+  /// Order ids as the Worker accepts them: letters, digits, - and _.
+  static String _safeId(String raw) {
+    final clean = raw.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+    if (clean.isEmpty) return 'order';
+    return clean.length > 64 ? clean.substring(0, 64) : clean;
+  }
+
+  /// As an order for the player's list. [id] keeps each delivery its own.
+  OrderItem toOrder({required String id}) => OrderItem(
+        id: id,
+        title: title,
+        description: description,
+        category: category,
+        tier: tier,
+        durationType: durationType,
+        actionDurationSeconds: actionSeconds,
+        durationMinutes: deadlineMinutes,
+        verificationType: verification,
+        rewardTokens: rewardTokens,
+        penaltyTokens: penaltyTokens,
+        allowRandomDraw: false,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'description': description,
+        'category': category,
+        'tier': tier,
+        'durationType': durationType.name,
+        'actionSeconds': actionSeconds,
+        'deadlineMinutes': deadlineMinutes,
+        'verification': verification.name,
+        'rewardTokens': rewardTokens,
+        'penaltyTokens': penaltyTokens,
+      };
+
+  factory PublicOrderDef.fromJson(Map<String, dynamic> json) => PublicOrderDef(
+        id: json['id'] as String? ?? '',
+        title: json['title'] as String? ?? '',
+        description: json['description'] as String? ?? '',
+        category: json['category'] as String? ?? 'General',
+        tier: (json['tier'] as num?)?.toInt() ?? 1,
+        durationType: DurationType.values.firstWhere((d) => d.name == json['durationType'],
+            orElse: () => DurationType.instant),
+        actionSeconds: (json['actionSeconds'] as num?)?.toInt() ?? 0,
+        deadlineMinutes: (json['deadlineMinutes'] as num?)?.toInt() ?? 0,
+        verification: VerificationType.values.firstWhere((v) => v.name == json['verification'],
+            orElse: () => VerificationType.honorCheck),
+        rewardTokens: (json['rewardTokens'] as num?)?.toInt() ?? 0,
+        penaltyTokens: (json['penaltyTokens'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// Where proof for a public order goes.
+enum PublicProofTo { director, issuer }
+
+/// What the timer's manager allows the public to order, and how.
+class PublicOrdersSettings {
+  const PublicOrdersSettings({
+    this.enabled = false,
+    this.orders = const [],
+    this.maxQueued,
+    this.perVisitorDaily = 1,
+    this.proofTo = PublicProofTo.director,
+    this.skipsPerDay = 2,
+    this.skipPauseMinutes = 30,
+  });
+
+  final bool enabled;
+  final List<PublicOrderDef> orders;
+
+  /// Waiting or in progress at once; null for no limit.
+  final int? maxQueued;
+  final int perVisitorDaily;
+  final PublicProofTo proofTo;
+  final int skipsPerDay;
+  final int skipPauseMinutes;
+
+  PublicOrdersSettings copyWith({
+    bool? enabled,
+    List<PublicOrderDef>? orders,
+    int? maxQueued,
+    bool noLimit = false,
+    int? perVisitorDaily,
+    PublicProofTo? proofTo,
+    int? skipsPerDay,
+    int? skipPauseMinutes,
+  }) =>
+      PublicOrdersSettings(
+        enabled: enabled ?? this.enabled,
+        orders: orders ?? this.orders,
+        maxQueued: noLimit ? null : (maxQueued ?? this.maxQueued),
+        perVisitorDaily: perVisitorDaily ?? this.perVisitorDaily,
+        proofTo: proofTo ?? this.proofTo,
+        skipsPerDay: skipsPerDay ?? this.skipsPerDay,
+        skipPauseMinutes: skipPauseMinutes ?? this.skipPauseMinutes,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'enabled': enabled,
+        'orders': orders.map((o) => o.toJson()).toList(),
+        'maxQueued': maxQueued,
+        'perVisitorDaily': perVisitorDaily,
+        'proofTo': proofTo.name,
+        'skipsPerDay': skipsPerDay,
+        'skipPauseMinutes': skipPauseMinutes,
+      };
+
+  factory PublicOrdersSettings.fromJson(Map<String, dynamic> json) => PublicOrdersSettings(
+        enabled: json['enabled'] == true,
+        orders: ((json['orders'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((m) => PublicOrderDef.fromJson(Map<String, dynamic>.from(m)))
+            .toList(),
+        maxQueued: (json['maxQueued'] as num?)?.toInt(),
+        perVisitorDaily: (json['perVisitorDaily'] as num?)?.toInt() ?? 1,
+        proofTo: json['proofTo'] == 'issuer' ? PublicProofTo.issuer : PublicProofTo.director,
+        skipsPerDay: (json['skipsPerDay'] as num?)?.toInt() ?? 2,
+        skipPauseMinutes: (json['skipPauseMinutes'] as num?)?.toInt() ?? 30,
+      );
+}
+
+/// The public order in progress, as delivered to the player.
+class PublicOrderActive {
+  const PublicOrderActive({required this.no, required this.def, this.deliveredAt, this.dueAt, this.issuerKey});
+
+  final int no;
+  final PublicOrderDef def;
+  final DateTime? deliveredAt;
+  final DateTime? dueAt;
+
+  /// The sender's key, to encrypt proof to. Null if proof goes to the director.
+  final String? issuerKey;
+
+  factory PublicOrderActive.fromJson(Map<String, dynamic> json) {
+    DateTime? t(String k) =>
+        json[k] == null ? null : DateTime.fromMillisecondsSinceEpoch((json[k] as num).toInt());
+    return PublicOrderActive(
+      no: (json['no'] as num).toInt(),
+      def: PublicOrderDef.fromJson(Map<String, dynamic>.from(json['def'] as Map)),
+      deliveredAt: t('deliveredAt'),
+      dueAt: t('dueAt'),
+      issuerKey: json['issuerKey'] as String?,
+    );
+  }
+}
+
+/// One line of the feed: what was ordered, and how it went.
+class PublicOrderFeedEntry {
+  const PublicOrderFeedEntry({required this.no, required this.title, required this.status, required this.at});
+
+  final int no;
+  final String title;
+
+  /// queued, active, completed, failed, expired, skipped or cancelled.
+  final String status;
+  final DateTime at;
+
+  factory PublicOrderFeedEntry.fromJson(Map<String, dynamic> json) => PublicOrderFeedEntry(
+        no: (json['no'] as num).toInt(),
+        title: json['title'] as String? ?? '',
+        status: json['status'] as String? ?? '',
+        at: DateTime.fromMillisecondsSinceEpoch((json['at'] as num?)?.toInt() ?? 0),
+      );
+}
+
+/// Public orders on a timer, as either side's app sees them.
+class PublicOrdersStatus {
+  const PublicOrdersStatus({
+    required this.proofTo,
+    this.active,
+    this.waiting = 0,
+    this.skipsLeft = 0,
+    this.pausedUntil,
+    this.feed = const [],
+  });
+
+  final PublicProofTo proofTo;
+  final PublicOrderActive? active;
+  final int waiting;
+  final int skipsLeft;
+  final DateTime? pausedUntil;
+  final List<PublicOrderFeedEntry> feed;
+
+  factory PublicOrdersStatus.fromJson(Map<String, dynamic> json) => PublicOrdersStatus(
+        proofTo: json['proofTo'] == 'issuer' ? PublicProofTo.issuer : PublicProofTo.director,
+        active: json['active'] is Map
+            ? PublicOrderActive.fromJson(Map<String, dynamic>.from(json['active'] as Map))
+            : null,
+        waiting: (json['waiting'] as num?)?.toInt() ?? 0,
+        skipsLeft: (json['skipsLeft'] as num?)?.toInt() ?? 0,
+        pausedUntil: json['pausedUntil'] == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch((json['pausedUntil'] as num).toInt()),
+        feed: ((json['feed'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((m) => PublicOrderFeedEntry.fromJson(Map<String, dynamic>.from(m)))
+            .toList(),
       );
 }

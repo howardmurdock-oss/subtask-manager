@@ -94,6 +94,29 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   .list li span:last-child { color:var(--muted); }
   .list a { color:var(--text); text-decoration:none; }
   .list a:hover { text-decoration:underline; }
+  .orders { margin-top:22px; padding-top:16px; border-top:1px solid var(--line); text-align:left; }
+  .orders > .label { font-size:11px; }
+  .note { color:var(--muted); font-size:13px; margin:4px 0 10px; }
+  .order { border:1px solid var(--line); border-radius:14px; padding:12px; margin-top:10px; }
+  .order h3 { margin:0; font-size:15px; }
+  .order p { margin:4px 0 0; color:var(--muted); font-size:13px; white-space:pre-line; }
+  .order .meta { font-size:12px; color:var(--muted); margin-top:6px; }
+  .order button { margin-top:10px; width:100%; padding:11px; background:var(--accent); }
+  .feed { list-style:none; margin:8px 0 0; padding:0; }
+  .feed li { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:7px 0; font-size:14px; border-bottom:1px solid var(--line); }
+  .feed li:last-child { border-bottom:0; }
+  .feed .st { color:var(--muted); font-size:13px; white-space:nowrap; }
+  .feed .st.ok { color:var(--remove); } .feed .st.bad { color:var(--add); }
+  .feed button { flex:none; padding:6px 10px; font-size:12px; background:var(--accent); border-radius:10px; }
+  .mine { font-size:11px; font-weight:700; color:var(--accent); margin-left:6px; }
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.75); display:flex; align-items:center; justify-content:center; padding:16px; z-index:10; }
+  .sheet { width:100%; max-width:420px; max-height:90vh; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px; text-align:center; }
+  .sheet h2 { margin:0 0 8px; font-size:20px; }
+  .sheet p { color:var(--muted); margin:0 0 16px; }
+  .sheet img { max-width:100%; border-radius:12px; }
+  .sheet .row { display:flex; gap:10px; }
+  .sheet button { background:var(--accent); }
+  .sheet button.plain { background:var(--line); color:var(--text); }
 </style>
 </head>
 <body>
@@ -110,12 +133,30 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   <div id="cf"></div>
   <div class="msg" id="msg" role="status"></div>
   <div class="foot" id="votefoot">Each vote counts once toward a daily limit set by the person who's locked.</div>
+  <div class="orders" id="orders" hidden>
+    <div class="label">Send an order</div>
+    <div class="note" id="ordersNote"></div>
+    <div id="orderList"></div>
+    <div class="label" style="margin-top:18px">Orders so far</div>
+    <ul class="feed" id="feedList"></ul>
+    <div class="note" id="feedEmpty">None yet.</div>
+  </div>
   <div class="list" id="also" hidden><div class="label">Also running</div><ul id="alsoList"></ul></div>
   <div class="list" id="past" hidden><div class="label">Past timers</div><ul id="pastList"></ul></div>
   <!-- Back to the website: a link that goes wide brings people to the app.
        Tagged so those visits can be told apart from others. -->
   <div class="made">Made with <a href="https://subtaskmanager.com/?from=timer">(sub)Task Manager</a> · <a href="https://subtaskmanager.com/?from=timer">Get the app</a></div>
 </main>
+<div class="overlay" id="age" hidden>
+  <div class="sheet">
+    <h2>Adults only</h2>
+    <p>This page takes orders for an adult's chastity play, and can show explicit photos. Are you of legal age where you live?</p>
+    <div class="row"><button class="plain" id="ageNo">No</button><button id="ageYes">Yes, I am</button></div>
+  </div>
+</div>
+<div class="overlay" id="shown" hidden>
+  <div class="sheet"><div id="shownBody"></div><button class="plain" id="shownClose" style="margin-top:14px;width:100%">Close</button></div>
+</div>
 <script>
 (() => {
   const id = ${JSON.stringify(id)};
@@ -188,6 +229,7 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
 
   function render() {
     renderLists();
+    renderOrders();
     const who = profile && profile.name ? profile.name : null;
     if (!view) {
       if (!profile) return;
@@ -257,6 +299,7 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
       }
       offset = s.now - Date.now();
       render();
+      if (view && view.orders && view.orders.enabled) adultCheck();
     } catch { $('sub').textContent = "Couldn't reach the timer. Check your connection."; }
   }
 
@@ -287,11 +330,189 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     render();
   }
 
+  // ---- Public orders --------------------------------------------------------
+  // A visitor picks from the list the person approved. Proof for them comes
+  // encrypted to a key made here, in this browser: only this browser can
+  // open it, and only for a day.
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  };
+  const MINE = 'stm-orders-v1', KEY = 'stm-proof-key-v1', ADULT = 'stm-adult-v1';
+  const timerId = () => (isProfile ? (view && view.publicId) : id);
+  const ordersBase = () => (isProfile ? voteBase : base);
+  const mine = () => store.get(MINE, []).filter((m) => Date.now() - m.at < 3 * 86400000);
+  const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const statusText = { queued: ['waiting', ''], active: ['in progress', ''], completed: ['done \u2713', 'ok'], failed: ['failed', 'bad'],
+    expired: ['ran out of time', 'bad'], skipped: ['skipped', ''], cancelled: ['cancelled', ''] };
+  const orderReasons = {
+    'visitor-cap': "You've sent all the orders you can today. Come back tomorrow.",
+    'paused': "They've just skipped one, so orders are paused for a little while.",
+    'full': 'Their order queue is full right now. Try again later.',
+    'not-running': 'This timer has finished.',
+    'orders-off': "This timer isn't taking orders.",
+    'unknown-order': "That order isn't on the list any more.",
+    'turnstile': 'Please complete the check first.',
+    'bad-key': "Your browser couldn't make a key to receive proof.",
+    'slow-down': 'Too many tries just now. Wait a minute, then try again.',
+  };
+  let ordersShown = '';
+
+  function adultCheck() {
+    if (store.get(ADULT, false)) return Promise.resolve(true);
+    return new Promise((done) => {
+      $('age').hidden = false;
+      $('ageYes').onclick = () => { store.set(ADULT, true); $('age').hidden = true; done(true); };
+      $('ageNo').onclick = () => {
+        document.body.replaceChildren(Object.assign(document.createElement('main'), { textContent: "This page isn't for you." }));
+        done(false);
+      };
+    });
+  }
+
+  function describe(o) {
+    const bits = [];
+    if ((o.durationType === 'deadlineCountdown' || o.durationType === 'actionWithDeadline') && o.deadlineMinutes) bits.push(o.deadlineMinutes + ' min to do it');
+    if (o.actionSeconds && (o.durationType === 'actionTimer' || o.durationType === 'actionWithDeadline')) bits.push('for ' + human(o.actionSeconds));
+    if (o.verification === 'photoProof') bits.push('photo proof');
+    if (o.verification === 'noteProof') bits.push('written proof');
+    if (o.rewardTokens) bits.push('+' + o.rewardTokens + ' tokens');
+    if (o.penaltyTokens) bits.push('\u2212' + o.penaltyTokens + ' if failed');
+    return bits.join(' \u00b7 ');
+  }
+
+  function renderOrders() {
+    const o = view && view.orders;
+    $('orders').hidden = !(o && o.enabled);
+    if (!o || !o.enabled) return;
+    const key = JSON.stringify(o) + (token ? 1 : 0) + mine().length;
+    if (key === ordersShown) return;
+    ordersShown = key;
+    const notes = { 'paused': orderReasons.paused, 'full': orderReasons.full, 'not-running': orderReasons['not-running'] };
+    $('ordersNote').textContent = o.accepting
+      ? 'Pick one to send. They carry it out in the app, and how it went shows here.' +
+        (o.proofTo === 'issuer' ? ' If it needs a photo, the photo comes to you - in this browser only, for a day.' : '') +
+        (o.waiting ? ' ' + o.waiting + ' waiting ahead of yours.' : '')
+      : notes[o.reason] || '';
+    $('orderList').replaceChildren(...(o.accepting ? o.list : []).map((def) => {
+      const card = document.createElement('div');
+      card.className = 'order';
+      const h = document.createElement('h3'); h.textContent = def.title;
+      const p = document.createElement('p'); p.textContent = def.description;
+      const meta = document.createElement('div'); meta.className = 'meta'; meta.textContent = describe(def);
+      const b = document.createElement('button');
+      b.textContent = 'Send this order';
+      b.disabled = !!siteKey && !token;
+      b.onclick = () => sendOrder(def, b);
+      card.append(h);
+      if (def.description) card.append(p);
+      if (meta.textContent) card.append(meta);
+      card.append(b);
+      return card;
+    }));
+    const ours = new Map(mine().filter((m) => m.pid === timerId()).map((m) => [m.no, m]));
+    $('feedList').replaceChildren(...o.feed.map((f) => {
+      const li = document.createElement('li');
+      const left = document.createElement('span');
+      left.textContent = f.title;
+      if (ours.has(f.no)) { const tag = document.createElement('span'); tag.className = 'mine'; tag.textContent = 'YOURS'; left.append(tag); }
+      const [label, tone] = statusText[f.status] || [f.status, ''];
+      const right = document.createElement('span');
+      right.className = 'st ' + tone;
+      right.textContent = label;
+      li.append(left);
+      if (f.hasProof && ours.has(f.no)) {
+        const see = document.createElement('button');
+        see.textContent = 'See proof';
+        see.onclick = () => showProof(ours.get(f.no));
+        li.append(see);
+      } else {
+        li.append(right);
+      }
+      return li;
+    }));
+    $('feedEmpty').hidden = o.feed.length > 0;
+  }
+
+  async function issuerKey() {
+    const saved = store.get(KEY, null);
+    if (saved) return saved.pub;
+    const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+    const pub = b64(await crypto.subtle.exportKey('raw', pair.publicKey));
+    store.set(KEY, { pub, priv: await crypto.subtle.exportKey('jwk', pair.privateKey) });
+    return pub;
+  }
+
+  async function sendOrder(def, button) {
+    if (!(await adultCheck())) return;
+    button.disabled = true;
+    $('msg').textContent = '';
+    try {
+      const receipt = hex(crypto.getRandomValues(new Uint8Array(32)));
+      const receiptHash = hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(receipt)));
+      const body = { orderId: def.id, turnstileToken: token, receiptHash };
+      if (view.orders.proofTo === 'issuer') body.issuerKey = await issuerKey();
+      const r = await fetch(ordersBase() + '/order', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const res = await r.json();
+      if (res.view) { view = isProfile ? { ...res.view, publicId: view.publicId } : res.view; offset = res.view.now - Date.now(); }
+      if (r.ok) {
+        store.set(MINE, [...mine(), { pid: timerId(), no: res.no, receipt, title: def.title, at: Date.now() }]);
+        $('msg').textContent = 'Order sent. Watch for it under "Orders so far".';
+      } else {
+        $('msg').textContent = orderReasons[res.error] || "That order didn't go through.";
+      }
+    } catch { $('msg').textContent = "That order didn't go through. Check your connection."; }
+    if (siteKey && window.turnstile) { token = null; window.turnstile.reset('#cf'); }
+    ordersShown = '';
+    render();
+  }
+
+  function showSheet(...nodes) {
+    $('shownBody').replaceChildren(...nodes);
+    $('shown').hidden = false;
+  }
+  $('shownClose').onclick = () => { $('shown').hidden = true; $('shownBody').replaceChildren(); };
+
+  async function showProof(m) {
+    if (!(await adultCheck())) return;
+    const text = (t) => Object.assign(document.createElement('p'), { textContent: t });
+    try {
+      const r = await fetch(ordersBase() + '/proof', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ no: m.no, receipt: m.receipt }),
+      });
+      if (!r.ok) { showSheet(text('This proof is no longer available. Proof is kept for a day.')); return; }
+      const env = JSON.parse((await r.json()).proof);
+      const saved = store.get(KEY, null);
+      if (!saved) { showSheet(text("This browser no longer has the key to open it.")); return; }
+      const priv = await crypto.subtle.importKey('jwk', saved.priv, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+      const epk = await crypto.subtle.importKey('raw', unb64(env.epk), { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+      const bits = await crypto.subtle.deriveBits({ name: 'ECDH', public: epk }, priv, 256);
+      const hk = await crypto.subtle.importKey('raw', bits, 'HKDF', false, ['deriveKey']);
+      const aes = await crypto.subtle.deriveKey(
+        { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: new TextEncoder().encode('stm-proof-v1') },
+        hk, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(env.iv) }, aes, unb64(env.ct));
+      const title = Object.assign(document.createElement('h2'), { textContent: m.title });
+      if (['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(env.mime)) {
+        const img = document.createElement('img');
+        img.alt = 'Proof';
+        img.src = URL.createObjectURL(new Blob([plain], { type: env.mime }));
+        showSheet(title, img, text('Only this browser can open it, and only until a day after it was sent.'));
+      } else {
+        showSheet(title, text(new TextDecoder().decode(plain)));
+      }
+    } catch { showSheet(text("Couldn't open this proof.")); }
+  }
+
   $('add').onclick = () => vote(1);
   $('remove').onclick = () => vote(-1);
 
   if (siteKey) {
-    window.onTurnstile = (t) => { token = t; render(); };
+    window.onTurnstile = (t) => { token = t; ordersShown = ''; render(); };
     const wait = setInterval(() => {
       if (!window.turnstile) return;
       clearInterval(wait);

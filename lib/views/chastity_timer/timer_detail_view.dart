@@ -269,6 +269,11 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                     const SizedBox(height: 12),
                     _publicCard(view, theme),
                   ],
+                  if (view.orders != null ||
+                      (view.isManager && view.config.publicOrders.orders.isNotEmpty && !view.isOver)) ...[
+                    const SizedBox(height: 12),
+                    _publicOrdersCard(view, theme),
+                  ],
                   const SizedBox(height: 12),
                   _historyCard(view, record, theme),
                 ],
@@ -649,6 +654,74 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                         await save(on: true, message: message.isEmpty ? null : message);
                       },
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static const _orderStatus = {
+    'queued': 'waiting',
+    'active': 'in progress',
+    'completed': 'done',
+    'failed': 'failed',
+    'expired': 'ran out of time',
+    'skipped': 'skipped',
+    'cancelled': 'cancelled',
+  };
+
+  /// Orders the public sends: the one in progress, the rest waiting, and how
+  /// recent ones went. The manager can stop taking them.
+  Widget _publicOrdersCard(ChastityTimerView view, ThemeData theme) {
+    final orders = view.orders;
+    final isPlayer = view.role == TimerRole.player;
+    final muted = TextStyle(fontSize: 13, color: theme.colorScheme.onSurface.withValues(alpha: 0.7));
+    final paused = orders?.pausedUntil != null && orders!.pausedUntil!.isAfter(DateTime.now());
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('PUBLIC ORDERS', style: _label(theme)),
+            if (view.isManager && !view.isOver)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: view.config.publicOrders.enabled,
+                onChanged: _busy
+                    ? null
+                    : (on) => _run(
+                          () => _timers.configure(widget.timerId, {
+                            'publicOrders': {...view.config.publicOrders.toJson(), 'enabled': on},
+                          }),
+                          done: on ? 'Taking public orders again.' : 'No longer taking public orders.',
+                        ),
+                title: const Text('Taking orders from the page'),
+              ),
+            if (orders != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                orders.active == null
+                    ? 'Nothing in progress.'
+                    : isPlayer
+                        ? 'In progress: ${orders.active!.def.title} - it is in your orders.'
+                        : 'In progress: ${orders.active!.def.title}',
+              ),
+              if (orders.waiting > 0) Text('${orders.waiting} waiting', style: muted),
+              if (isPlayer) Text('${orders.skipsLeft} skips left today', style: muted),
+              if (paused) Text('Paused after a skip until ${TimeOfDay.fromDateTime(orders.pausedUntil!).format(context)}', style: muted),
+              if (orders.feed.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                for (final f in orders.feed.take(5))
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(children: [
+                      Expanded(child: Text(f.title, overflow: TextOverflow.ellipsis)),
+                      Text(_orderStatus[f.status] ?? f.status, style: muted),
+                    ]),
+                  ),
+              ],
+            ],
           ],
         ),
       ),
