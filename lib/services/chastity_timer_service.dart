@@ -284,6 +284,28 @@ class ChastityTimerService extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// The last view of each timer, kept so a relaunch knows straight away
+  /// which are over - and counts the running ones down from where they were
+  /// - instead of showing every timer as running until the Worker answers.
+  static const String viewsKey = 'chastity_timer_views_v1';
+
+  /// Timers whose key the Worker no longer accepts: not counted as running.
+  static const String lostKey = 'chastity_timer_lost_v1';
+
+  final Map<String, Map<String, dynamic>> _savedViews = {};
+  final Set<String> _lost = {};
+
+  /// Whether this device's key to [id] no longer works.
+  bool isLost(String id) => _lost.contains(id);
+
+  Future<void> _saveViews() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(viewsKey, jsonEncode(_savedViews));
+      await prefs.setStringList(lostKey, _lost.toList());
+    } catch (_) {}
+  }
+
   /// Timers whose reward this device has credited.
   static const String rewardedKey = 'chastity_timer_rewarded_v1';
 
@@ -342,7 +364,7 @@ class ChastityTimerService extends ChangeNotifier {
   /// Timers not yet over, most recent first, for this device's [role].
   List<TimerRecord> active({TimerRole? role}) => _records
       .where((r) => role == null || r.role == role)
-      .where((r) => !(_views[r.id]?.isOver ?? false))
+      .where((r) => !(_views[r.id]?.isOver ?? false) && !_lost.contains(r.id))
       .toList()
     ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
 
@@ -420,6 +442,22 @@ class ChastityTimerService extends ChangeNotifier {
       _declined
         ..clear()
         ..addAll(prefs.getStringList(declinedKey) ?? const []);
+      _lost
+        ..clear()
+        ..addAll(prefs.getStringList(lostKey) ?? const []);
+      _savedViews.clear();
+      final rawViews = prefs.getString(viewsKey);
+      if (rawViews != null) {
+        (jsonDecode(rawViews) as Map).forEach((id, saved) {
+          if (saved is! Map || recordOf(id as String) == null) return;
+          final json = Map<String, dynamic>.from(saved['json'] as Map);
+          final at = DateTime.fromMillisecondsSinceEpoch((saved['at'] as num).toInt());
+          _savedViews[id] = Map<String, dynamic>.from(saved);
+          // As it was when last fetched, on the Worker's clock: a timer that
+          // has since run out shows as over at once.
+          _views[id] = ChastityTimerView.fromJson(json, receivedAt: at);
+        });
+      }
       final rawProfile = prefs.getString(profileKey);
       _profile = rawProfile == null ? null : TimerProfile.fromJson(Map<String, dynamic>.from(jsonDecode(rawProfile) as Map));
       _profileTimers
@@ -527,6 +565,9 @@ class ChastityTimerService extends ChangeNotifier {
     }
     _records.removeWhere((r) => r.id == id);
     _views.remove(id);
+    _savedViews.remove(id);
+    _lost.remove(id);
+    await _saveViews();
     await NotificationService.cancelNotification(_notificationId(id));
     await _save();
     notifyListeners();
@@ -539,10 +580,16 @@ class ChastityTimerService extends ChangeNotifier {
     _lastFetched[id] = DateTime.now();
     final response = await _call('GET', Uri.parse('$apiBase/$id/view'), key: record.key);
     if (!response.ok) {
-      if (response.status == 403 || response.status == 404) {
-        // Deleted on the Worker (kept 30 days after the end), or the key no
-        // longer works. Nothing more can be done with it here.
+      if (response.status == 404) {
+        // Deleted on the Worker, 30 days after it ended: nothing is left to
+        // show. It used to stay here, counted as running for ever.
+        await forget(id);
+      } else if (response.status == 403) {
+        // The key no longer works (replaced, say): kept, but not running.
+        _lost.add(id);
         _views.remove(id);
+        _savedViews.remove(id);
+        await _saveViews();
         notifyListeners();
       }
       return null;
@@ -597,6 +644,9 @@ class ChastityTimerService extends ChangeNotifier {
   ChastityTimerView _accept(Map<String, dynamic> json) {
     final view = ChastityTimerView.fromJson(json);
     _views[view.id] = view;
+    _savedViews[view.id] = {'json': json, 'at': DateTime.now().millisecondsSinceEpoch};
+    _lost.remove(view.id);
+    _saveViews();
     _tellTopic(view);
     _creditReward(view);
     final record = recordOf(view.id);

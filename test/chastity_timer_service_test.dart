@@ -168,6 +168,56 @@ void main() {
     expect(over.elapsed, const Duration(minutes: 30));
   });
 
+  group('after a relaunch', () {
+    test('finished timers are known to be over straight away, before the Worker answers', () async {
+      serve((_, url, __, ___) {
+        final id = url.pathSegments[url.pathSegments.length - 2];
+        return TimerApiResponse(200, id == 'done'
+            ? view(id: id, status: 'ended', endAt: now - 1000)
+            : view(id: id, endAt: now + 3600 * 1000));
+      });
+      final first = ChastityTimerService();
+      await first.load();
+      await first.addShared(id: 'done', role: TimerRole.player, key: 'K');
+      await first.addShared(id: 'live', role: TimerRole.player, key: 'K');
+      await pumpEventQueue();
+
+      // The next launch: nothing fetched yet.
+      calls.clear();
+      final again = ChastityTimerService();
+      await again.load();
+      expect(calls, isEmpty);
+      expect(again.viewOf('done')!.isOver, isTrue);
+      expect(again.active().map((r) => r.id), ['live'], reason: 'only the one still running');
+      expect(again.viewOf('live')!.remaining!.inMinutes, inInclusiveRange(58, 60), reason: 'counting from where it was');
+    });
+
+    test('a timer the Worker has deleted is forgotten, not shown as running for ever', () async {
+      serve((_, __, ___, ____) => TimerApiResponse(200, view(endAt: now + 3600 * 1000)));
+      final service = ChastityTimerService();
+      await service.load();
+      await service.addShared(id: 't1', role: TimerRole.player, key: 'K');
+      serve((_, __, ___, ____) => const TimerApiResponse(404, {'error': 'no such timer'}));
+      await service.refresh('t1');
+      expect(service.recordOf('t1'), isNull);
+      expect(service.active(), isEmpty);
+    });
+
+    test('one whose key no longer works is not counted as running', () async {
+      serve((_, __, ___, ____) => TimerApiResponse(200, view(endAt: now + 3600 * 1000)));
+      final service = ChastityTimerService();
+      await service.load();
+      await service.addShared(id: 't1', role: TimerRole.player, key: 'K');
+      serve((_, __, ___, ____) => const TimerApiResponse(403, {'error': 'not your timer'}));
+      await service.refresh('t1');
+      expect(service.isLost('t1'), isTrue);
+      expect(service.active(), isEmpty);
+      final again = ChastityTimerService();
+      await again.load();
+      expect(again.active(), isEmpty, reason: 'still so after a relaunch');
+    });
+  });
+
   group('a reward for completing it', () {
     Map<String, dynamic> done({String status = 'ended', String? releasedBy, String role = 'player', int? reward = 50}) {
       final v = view(status: status, endAt: now - 1000, role: role, manager: role == 'director');

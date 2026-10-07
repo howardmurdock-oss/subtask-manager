@@ -35,13 +35,16 @@ class _TimerHubViewState extends State<TimerHubView> {
     final theme = Theme.of(context);
     final records = timers.records.where((r) => r.role == widget.role).toList()
       ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
-    final running = records.where((r) => !(timers.viewOf(r.id)?.isOver ?? false)).toList();
-    final finished = records.where((r) => timers.viewOf(r.id)?.isOver ?? false).toList();
+    bool over(TimerRecord r) => (timers.viewOf(r.id)?.isOver ?? false) || timers.isLost(r.id);
+    final running = records.where((r) => !over(r)).toList();
+    final finished = records.where(over).toList();
 
     Widget tile(TimerRecord r) {
       final view = timers.viewOf(r.id);
       final String subtitle;
-      if (view == null) {
+      if (timers.isLost(r.id)) {
+        subtitle = 'No longer reachable from this device';
+      } else if (view == null) {
         subtitle = 'Not reachable right now';
       } else if (view.status == TimerStatus.released) {
         final how = view.endedByPlayerChoice
