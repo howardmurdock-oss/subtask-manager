@@ -667,4 +667,33 @@ void main() {
     expect(find.text('done'), findsOneWidget);
     await finish(tester);
   });
+
+  testWidgets('on a running timer, its manager can send photo proof to whoever ordered', (tester) async {
+    final v = view(role: 'player')..['manager'] = true;
+    (v['config'] as Map)['publicOrders'] = {
+      'enabled': true,
+      'proofTo': 'director',
+      'orders': [
+        {'id': 'check', 'title': 'Cage check', 'verification': 'photoProof'},
+      ],
+    };
+    v['orders'] = {'enabled': true, 'proofTo': 'director', 'waiting': 0, 'skipsLeft': 2, 'feed': []};
+    Object? sent;
+    ChastityTimerService.request = (m, u, {key, body}) async {
+      if (u.path.endsWith('/configure')) sent = body;
+      return TimerApiResponse(200, v);
+    };
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+    final list = find.byWidgetPredicate((w) => w is Scrollable && w.axisDirection == AxisDirection.down).first;
+    await tester.scrollUntilVisible(find.text('Photo proof goes to'), 300, scrollable: list);
+    expect(find.text('Your own log'), findsOneWidget, reason: 'their own timer, with no director');
+
+    await tester.tap(find.text('Your own log'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Whoever sent it').last);
+    await tester.pumpAndSettle();
+    expect(((sent as Map)['config'] as Map)['publicOrders']['proofTo'], 'issuer');
+    await finish(tester);
+  });
 }

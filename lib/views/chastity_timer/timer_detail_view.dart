@@ -698,6 +698,38 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                         ),
                 title: const Text('Taking orders from the page'),
               ),
+            // Where photo proof goes - for orders sent from now on.
+            if (view.isManager && !view.isOver)
+              Row(children: [
+                const Expanded(child: Text('Photo proof goes to')),
+                DropdownButton<PublicProofTo>(
+                  value: view.config.publicOrders.proofTo,
+                  onChanged: _busy
+                      ? null
+                      : (to) {
+                          if (to == null || to == view.config.publicOrders.proofTo) return;
+                          _run(
+                            () => _timers.configure(widget.timerId, {
+                              'publicOrders': {...view.config.publicOrders.toJson(), 'proofTo': to.name},
+                            }),
+                            done: to == PublicProofTo.issuer
+                                ? 'Photos for orders sent from now on go to whoever sent them.'
+                                : 'Photos for orders sent from now on stay with this timer.',
+                          );
+                        },
+                  items: [
+                    DropdownMenuItem(
+                      value: PublicProofTo.director,
+                      child: Text(view.role == TimerRole.director
+                          ? 'You'
+                          : _timers.recordOf(widget.timerId)?.partnerCode != null
+                              ? 'Your director'
+                              : 'Your own log'),
+                    ),
+                    const DropdownMenuItem(value: PublicProofTo.issuer, child: Text('Whoever sent it')),
+                  ],
+                ),
+              ]),
             if (orders != null) ...[
               const SizedBox(height: 6),
               Text(

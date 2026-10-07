@@ -393,7 +393,9 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     const notes = { 'paused': orderReasons.paused, 'full': orderReasons.full, 'not-running': orderReasons['not-running'] };
     $('ordersNote').textContent = o.accepting
       ? 'Pick one to send. They carry it out in the app, and how it went shows here.' +
-        (o.proofTo === 'issuer' ? ' If it needs a photo, the photo comes to you - in this browser only, for a day.' : '') +
+        (o.proofTo === 'issuer'
+          ? ' If it needs a photo, the photo comes to you - in this browser only, for a day.'
+          : " Photo proof goes to the person who manages this timer, not to you.") +
         (o.waiting ? ' ' + o.waiting + ' waiting ahead of yours.' : '')
       : notes[o.reason] || '';
     $('orderList').replaceChildren(...(o.accepting ? o.list : []).map((def) => {
