@@ -394,3 +394,39 @@ class TimerRecord {
         addedAt: DateTime.tryParse(json['addedAt'] as String? ?? '') ?? DateTime.now(),
       );
 }
+
+/// A timer a partner sent while another was already running: held until
+/// the player accepts or declines it.
+class TimerInvite {
+  const TimerInvite({
+    required this.id,
+    required this.key,
+    this.partnerCode,
+    this.partnerName,
+    required this.receivedAt,
+  });
+
+  final String id;
+
+  /// The player's key to it. Never shown, never logged.
+  final String key;
+  final String? partnerCode;
+  final String? partnerName;
+  final DateTime receivedAt;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'key': key,
+        'partnerCode': partnerCode,
+        'partnerName': partnerName,
+        'receivedAt': receivedAt.toIso8601String(),
+      };
+
+  factory TimerInvite.fromJson(Map<String, dynamic> json) => TimerInvite(
+        id: json['id'] as String,
+        key: json['key'] as String,
+        partnerCode: json['partnerCode'] as String?,
+        partnerName: json['partnerName'] as String?,
+        receivedAt: DateTime.tryParse(json['receivedAt'] as String? ?? '') ?? DateTime.now(),
+      );
+}

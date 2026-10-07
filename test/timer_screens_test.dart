@@ -569,4 +569,47 @@ void main() {
     expect(find.text('Set a reward'), findsOneWidget);
     await finish(tester);
   });
+
+  testWidgets('two timers running: the card says so, rather than showing one', (tester) async {
+    ChastityTimerService.request = (m, u, {key, body}) async {
+      final id = u.pathSegments[u.pathSegments.length - 2];
+      return TimerApiResponse(200, view(role: 'player')..['id'] = id);
+    };
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P', partnerName: 'Tessa');
+    await timers.addShared(id: 't2', role: TimerRole.player, key: 'P', partnerName: 'Sam');
+
+    await pump(tester, const Scaffold(body: TimerDashboardCard(role: TimerRole.player)));
+
+    expect(find.text('2 timers running'), findsOneWidget);
+    expect(find.textContaining('Sam'), findsOneWidget);
+    expect(find.textContaining('Tessa'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('a request is put first, and warns when both would use a combination', (tester) async {
+    ChastityTimerService.request = (m, u, {key, body}) async {
+      final id = u.pathSegments[u.pathSegments.length - 2];
+      final v = view(role: 'player')..['id'] = id;
+      (v['config'] as Map)['rewardTokens'] = id == 't2' ? 30 : null;
+      return TimerApiResponse(200, v);
+    };
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P', partnerName: 'Tessa');
+    await timers.addInvite(TimerInvite(id: 't2', key: 'P2', partnerName: 'Sam', receivedAt: DateTime.now()));
+
+    await pump(tester, const Scaffold(body: TimerDashboardCard(role: TimerRole.player)));
+    expect(find.text('Timer request'), findsOneWidget);
+
+    await tester.tap(find.text('Timer request'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Sam wants to start a timer'), findsOneWidget);
+    expect(find.text('You already have one from Tessa running.'), findsOneWidget);
+    expect(find.textContaining('Completing it earns 30 tokens.'), findsOneWidget);
+    expect(find.textContaining('Both timers use a lock combination'), findsOneWidget);
+    expect(find.text('Accept anyway'), findsOneWidget);
+    expect(find.text('Decline'), findsOneWidget);
+    await tester.tap(find.text('Later'));
+    await tester.pump();
+    await finish(tester);
+  });
 }

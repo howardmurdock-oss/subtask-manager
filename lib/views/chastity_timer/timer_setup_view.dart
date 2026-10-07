@@ -72,6 +72,11 @@ class _TimerSetupViewState extends State<TimerSetupView> {
 
   bool get _isDirector => widget.role == TimerRole.director;
 
+  bool _otherComboRunning(BuildContext context) {
+    final timers = Provider.of<ChastityTimerService>(context, listen: false);
+    return timers.runningAsPlayer().any((r) => timers.viewOf(r.id)?.config.combinationEnabled ?? false);
+  }
+
   /// Your own timer with no end time needs no limit: you end it when you
   /// like, and a limit would only make it a timed lock.
   bool get _limitOffered => !_openEnded || _isDirector;
@@ -495,6 +500,22 @@ class _TimerSetupViewState extends State<TimerSetupView> {
                       ? "For a combination lock, or a lockbox holding the key. The player only sees it when the timer ends."
                       : 'Set your lock to it, then scramble the dials. The app shows it again when the timer ends.'),
                 ),
+                // One lock, two codes: only with a separate lock for each.
+                if (_comboOn && !_isDirector && _otherComboRunning(context))
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 20),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                              'Another running timer already uses a combination. Use a separate lock for this one.'),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (_comboOn) ...[
                   SwitchListTile(
                     value: _comboGenerate,

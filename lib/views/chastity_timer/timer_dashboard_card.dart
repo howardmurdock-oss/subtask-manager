@@ -8,6 +8,7 @@ import '../../services/chastity_timer_service.dart';
 import 'timer_detail_view.dart';
 import 'timer_format.dart';
 import 'timer_hub_view.dart';
+import 'timer_invite.dart';
 
 /// The Chastity Timer on a dashboard: the running timer's countdown, or a
 /// way in to start one. A card rather than another tab: a phone does not
@@ -58,7 +59,19 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
 
     String headline;
     String detail;
-    if (record != null && finished) {
+    // A request waiting for an answer comes first.
+    final invite = widget.role == TimerRole.player && timers.invites.isNotEmpty ? timers.invites.first : null;
+    final several = !finished && mine.length > 1;
+    if (invite != null) {
+      headline = 'Timer request';
+      detail = '${invite.partnerName ?? 'Your director'} wants to start a timer. Tap to answer.';
+    } else if (several) {
+      headline = '${mine.length} timers running';
+      final names = mine.map((r) => r.partnerName ?? (widget.role == TimerRole.player ? 'your own' : 'yourself')).toList();
+      detail = widget.role == TimerRole.player
+          ? 'From ${names.join(', ')}. Tap to see them.'
+          : 'For ${names.join(', ')}. Tap to see them.';
+    } else if (record != null && finished) {
       final released = view.status == TimerStatus.released;
       if (widget.role == TimerRole.player) {
         headline = released ? 'Timer released' : 'Timer finished';
@@ -67,7 +80,9 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
             : "You're free. Tap to see how it went.";
       } else {
         headline = released ? 'Timer released' : 'Timer finished';
-        detail = '${record.partnerName ?? 'Your player'}${view.endedByPlayerChoice ? ' ended their timer' : released && view.releasedBy == TimerRole.player ? ' used the emergency release' : "'s timer is over"}. Tap to see how it went.';
+        detail = timers.wasDeclined(record.id)
+            ? '${record.partnerName ?? 'Your player'} declined it. They already had a timer running.'
+            : '${record.partnerName ?? 'Your player'}${view.endedByPlayerChoice ? ' ended their timer' : released && view.releasedBy == TimerRole.player ? ' used the emergency release' : "'s timer is over"}. Tap to see how it went.';
       }
     } else if (record == null) {
       headline = widget.role == TimerRole.player ? 'No timer running' : 'No timers running';
@@ -91,18 +106,17 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
           ? 'left for ${record.partnerName ?? 'your player'}'
           : 'left on your timer';
     }
-    if (!finished && mine.length > 1) detail = '$detail  ·  ${mine.length - 1} more';
 
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => record == null
-              ? TimerHubView(role: widget.role)
-              : mine.length > 1 && !finished
-                  ? TimerHubView(role: widget.role)
-                  : TimerDetailView(timerId: record.id),
-        )),
+        onTap: () => invite != null
+            ? showTimerInviteDialog(context, invite)
+            : Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => record == null || several
+                    ? TimerHubView(role: widget.role)
+                    : TimerDetailView(timerId: record.id),
+              )),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -132,7 +146,7 @@ class _TimerDashboardCardState extends State<TimerDashboardCard> {
                     Text(
                       headline,
                       style: TextStyle(
-                        fontSize: record != null && !finished && (view?.remaining != null || (view?.config.openEnded ?? false)) ? 22 : 16,
+                        fontSize: invite == null && !several && record != null && !finished && (view?.remaining != null || (view?.config.openEnded ?? false)) ? 22 : 16,
                         fontWeight: FontWeight.bold,
                         fontFeatures: const [FontFeature.tabularFigures()],
                       ),

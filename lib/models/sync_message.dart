@@ -39,6 +39,9 @@ enum SyncMessageType {
 
   /// A nudge that a shared timer changed, so the partner fetches it again.
   timerChanged,
+
+  /// The player turned down a timer sent while they had another running.
+  timerDeclined,
 }
 
 class SyncMessage {

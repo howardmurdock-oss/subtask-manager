@@ -1963,6 +1963,28 @@ class SyncService extends ChangeNotifier {
     // Only from someone this device is paired with.
     if (timers == null || contact == null || timerId == null || key == null) return;
     final role = msg.payload['role'] == 'director' ? TimerRole.director : TimerRole.player;
+
+    // A player with a timer already running is asked first: two directors
+    // must not be able to lock them up on top of each other unasked. The
+    // same timer sent again (a key sent again) is not a new request.
+    if (role == TimerRole.player && timers.recordOf(timerId) == null) {
+      await timers.refreshAll();
+      if (timers.runningAsPlayer().isNotEmpty) {
+        await timers.addInvite(TimerInvite(
+          id: timerId,
+          key: key,
+          partnerCode: contact.pairingCode,
+          partnerName: contact.displayName,
+          receivedAt: DateTime.now(),
+        ));
+        NotificationService.showGenericNotification(
+          title: '${contact.displayName} wants to start a timer',
+          body: 'You already have a timer running. Open the app to accept or decline.',
+        );
+        return;
+      }
+    }
+
     await timers.addShared(
       id: timerId,
       role: role,
@@ -1973,6 +1995,39 @@ class SyncService extends ChangeNotifier {
     NotificationService.showGenericNotification(
       title: 'New timer from ${contact.displayName}',
       body: 'Open the app to see it.',
+    );
+  }
+
+  /// Tells the director the player turned their timer down.
+  Future<bool> declineTimer(TimerInvite invite) async {
+    final contact = _contactFor(code: invite.partnerCode, id: null);
+    if (contact == null) return false;
+    return _sendToContact(
+      contact,
+      SyncMessage(
+        type: SyncMessageType.timerDeclined,
+        senderId: _deviceId,
+        payload: {'senderCode': _pairingCode, 'senderName': _nickname, 'timerId': invite.id},
+      ),
+    );
+  }
+
+  /// The player turned down a timer this device sent: it is ended.
+  Future<void> _onTimerDeclined(SyncMessage msg) async {
+    final timers = _timerService;
+    final timerId = msg.payload['timerId'] as String?;
+    final contact = _contactFor(code: msg.payload['senderCode'] as String?, id: msg.senderId);
+    final record = timerId == null ? null : timers?.recordOf(timerId);
+    // Only the partner the timer was sent to can turn it down.
+    if (timers == null || contact == null || record == null) return;
+    if (record.role != TimerRole.director ||
+        PartnerService.normalizeCode(record.partnerCode ?? '') != PartnerService.normalizeCode(contact.pairingCode)) {
+      return;
+    }
+    await timers.markDeclined(record.id);
+    NotificationService.showGenericNotification(
+      title: '${contact.displayName} declined your timer',
+      body: 'They already had one running. Your timer has been ended.',
     );
   }
 
@@ -3774,6 +3829,10 @@ class SyncService extends ChangeNotifier {
 
       case SyncMessageType.timerChanged:
         await _onTimerChanged(msg);
+        break;
+
+      case SyncMessageType.timerDeclined:
+        await _onTimerDeclined(msg);
         break;
 
       default:

@@ -352,7 +352,9 @@ class _TimerDetailViewState extends State<TimerDetailView> {
     String? extra;
     if (view.status == TimerStatus.released) {
       big = 'Unlocked';
-      small = view.endedByPlayerChoice
+      small = _timers.wasDeclined(view.id)
+          ? 'Declined: they already had a timer running'
+          : view.endedByPlayerChoice
           ? (view.role == TimerRole.player ? 'You ended it' : 'Ended by your player')
           : view.releasedBy == TimerRole.player
               ? 'Ended by emergency release'

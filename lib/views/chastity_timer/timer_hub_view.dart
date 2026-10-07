@@ -6,6 +6,7 @@ import '../../services/chastity_timer_service.dart';
 import 'timer_detail_view.dart';
 import 'timer_format.dart';
 import 'timer_setup_view.dart';
+import 'timer_invite.dart';
 
 /// Every timer this device can reach on one side, running first, and the
 /// way to start a new one.
@@ -49,7 +50,7 @@ class _TimerHubViewState extends State<TimerHubView> {
                 : view.config.openEnded
                     ? 'Ended'
                     : 'Ended early';
-        subtitle = '$how · ran for ${formatSpan(view.elapsed)}';
+        subtitle = timers.wasDeclined(r.id) ? 'Declined' : '$how · ran for ${formatSpan(view.elapsed)}';
       } else if (view.isOver) {
         subtitle = 'Finished · ran for ${formatSpan(view.elapsed)}';
       } else if (view.config.openEnded) {
@@ -112,6 +113,20 @@ class _TimerHubViewState extends State<TimerHubView> {
                   ],
                 ),
               ),
+            if (widget.role == TimerRole.player && timers.invites.isNotEmpty) ...[
+              _heading('REQUESTS', theme),
+              ...timers.invites.map((i) => Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.mark_email_unread_rounded, color: Colors.pinkAccent),
+                      title: Text('${i.partnerName ?? 'Your director'} wants to start a timer',
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: const Text('Tap to accept or decline.'),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => showTimerInviteDialog(context, i),
+                    ),
+                  )),
+              const SizedBox(height: 12),
+            ],
             if (running.isNotEmpty) ...[
               _heading('RUNNING', theme),
               ...running.map(tile),

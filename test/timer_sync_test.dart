@@ -132,4 +132,87 @@ void main() {
       expect(decoded.type, type);
     }
   });
+
+  group('a second timer while one is running', () {
+    final second = PartnerContact(
+      id: 'contact-2',
+      displayName: 'Sam',
+      pairingCode: 'SAM456',
+      pairingSecret: 'secret-2',
+      role: PartnerRole.dominant,
+    );
+    final released = <String>[];
+
+    setUp(() async {
+      released.clear();
+      await partners.addContact(second);
+      // Each timer answers as itself; a release is noted.
+      ChastityTimerService.request = (method, url, {key, body}) async {
+        fetched.add(url);
+        final segments = url.pathSegments;
+        final id = segments[segments.length - 2];
+        if (segments.last == 'release') {
+          released.add(id);
+          return TimerApiResponse(200, {...view(id, 'director'), 'status': 'released', 'releasedBy': 'director'});
+        }
+        return TimerApiResponse(200, view(id, key == 'D' ? 'director' : 'player'));
+      };
+    });
+
+    Future<void> share(String code, String id, {String key = 'P'}) => sync.handleIncomingSyncMessage(
+        from(code, SyncMessageType.timerShare, {'timerId': id, 'key': key, 'role': 'player'}));
+
+    test('the first starts straight away; the second waits for the player to say yes', () async {
+      await share('TES123', 'timer-1');
+      expect(timers.recordOf('timer-1'), isNotNull);
+
+      await share('SAM456', 'timer-2');
+      expect(timers.recordOf('timer-2'), isNull, reason: 'not started on them unasked');
+      expect(timers.invites.single.id, 'timer-2');
+      expect(timers.invites.single.partnerName, 'Sam');
+    });
+
+    test('the same timer sent again is not a new request', () async {
+      await share('TES123', 'timer-1');
+      await share('TES123', 'timer-1', key: 'P2');
+      expect(timers.invites, isEmpty);
+      expect(timers.recordOf('timer-1')!.key, 'P2');
+    });
+
+    test('accepting starts it; the request is gone, across a restart too', () async {
+      await share('TES123', 'timer-1');
+      await share('SAM456', 'timer-2');
+      expect(await timers.acceptInvite('timer-2'), isNotNull);
+      expect(timers.recordOf('timer-2')!.partnerName, 'Sam');
+      expect(timers.invites, isEmpty);
+
+      final again = ChastityTimerService();
+      await again.load();
+      expect(again.invites, isEmpty);
+      expect(again.recordOf('timer-2'), isNotNull);
+    });
+
+    test('a request waits across a restart', () async {
+      await share('TES123', 'timer-1');
+      await share('SAM456', 'timer-2');
+      final again = ChastityTimerService();
+      await again.load();
+      expect(again.invites.single.id, 'timer-2');
+    });
+
+    test("declined, the director's copy ends the timer and says why", () async {
+      // The director's side: it sent timer-2 to Sam's player, here 'SAM456'.
+      await timers.addShared(id: 'timer-2', role: TimerRole.director, key: 'D', partnerCode: 'SAM456', partnerName: 'Sam');
+      await sync.handleIncomingSyncMessage(from('SAM456', SyncMessageType.timerDeclined, {'timerId': 'timer-2'}));
+      expect(released, ['timer-2']);
+      expect(timers.wasDeclined('timer-2'), isTrue);
+    });
+
+    test('only the partner it was sent to can turn it down', () async {
+      await timers.addShared(id: 'timer-2', role: TimerRole.director, key: 'D', partnerCode: 'SAM456', partnerName: 'Sam');
+      await sync.handleIncomingSyncMessage(from('TES123', SyncMessageType.timerDeclined, {'timerId': 'timer-2'}));
+      expect(released, isEmpty);
+      expect(timers.wasDeclined('timer-2'), isFalse);
+    });
+  });
 }

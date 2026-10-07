@@ -68,6 +68,97 @@ class ChastityTimerService extends ChangeNotifier {
   /// Finished timers whose end this device has shown its person.
   static const String seenFinishedKey = 'chastity_timer_seen_finished_v1';
 
+  /// Timers sent while another was running, waiting for a yes or no.
+  static const String invitesKey = 'chastity_timer_invites_v1';
+
+  /// Timers of this device's that the player declined.
+  static const String declinedKey = 'chastity_timer_declined_v1';
+
+  final List<TimerInvite> _invites = [];
+  final Set<String> _declined = {};
+  final _inviteArrived = StreamController<TimerInvite>.broadcast();
+
+  /// Requests waiting for an answer, oldest first.
+  List<TimerInvite> get invites => List.unmodifiable(_invites);
+
+  /// Fires as a request arrives.
+  Stream<TimerInvite> get inviteArrived => _inviteArrived.stream;
+
+  /// Whether the player declined this timer, which this device sent.
+  bool wasDeclined(String id) => _declined.contains(id);
+
+  /// Timers this device is the player on that are certainly still running.
+  /// One not fetched yet is not counted: it may long since have ended.
+  List<TimerRecord> runningAsPlayer() => _records
+      .where((r) => r.role == TimerRole.player)
+      .where((r) => _views[r.id] != null && !_views[r.id]!.isOver)
+      .toList();
+
+  /// Holds a timer sent while another is running, for the player to answer.
+  /// The same timer sent again (a key sent again) replaces the request.
+  Future<void> addInvite(TimerInvite invite) async {
+    final fresh = !_invites.any((i) => i.id == invite.id);
+    _invites
+      ..removeWhere((i) => i.id == invite.id)
+      ..add(invite);
+    await _saveInvites();
+    notifyListeners();
+    if (fresh) _inviteArrived.add(invite);
+  }
+
+  /// A look at a requested timer before answering: its length, its reward,
+  /// whether it uses a combination.
+  Future<ChastityTimerView?> peekInvite(TimerInvite invite) async {
+    final response = await _call('GET', Uri.parse('$apiBase/${invite.id}/view'), key: invite.key);
+    return response.ok ? ChastityTimerView.fromJson(response.body) : null;
+  }
+
+  /// Takes the timer on. Null if it could not be reached; the request stays.
+  Future<ChastityTimerView?> acceptInvite(String id) async {
+    final invite = _invites.where((i) => i.id == id).firstOrNull;
+    if (invite == null) return null;
+    final view = await addShared(
+      id: invite.id,
+      role: TimerRole.player,
+      key: invite.key,
+      partnerCode: invite.partnerCode,
+      partnerName: invite.partnerName,
+    );
+    if (view == null) return null;
+    _invites.removeWhere((i) => i.id == id);
+    await _saveInvites();
+    notifyListeners();
+    return view;
+  }
+
+  /// Turns the request down. The caller tells the director.
+  Future<TimerInvite?> declineInvite(String id) async {
+    final invite = _invites.where((i) => i.id == id).firstOrNull;
+    if (invite == null) return null;
+    _invites.removeWhere((i) => i.id == id);
+    await _saveInvites();
+    notifyListeners();
+    return invite;
+  }
+
+  /// The player turned down a timer this device sent them: it is ended, as
+  /// nobody is on the other end of it.
+  Future<void> markDeclined(String id) async {
+    if (!_declined.add(id)) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(declinedKey, _declined.toList());
+    } catch (_) {}
+    await release(id);
+  }
+
+  Future<void> _saveInvites() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(invitesKey, jsonEncode(_invites.map((i) => i.toJson()).toList()));
+    } catch (_) {}
+  }
+
   /// Timers whose reward this device has credited.
   static const String rewardedKey = 'chastity_timer_rewarded_v1';
 
@@ -175,6 +266,7 @@ class ChastityTimerService extends ChangeNotifier {
   void dispose() {
     _watchdog?.cancel();
     _finished.close();
+    _inviteArrived.close();
     super.dispose();
   }
 
@@ -195,6 +287,17 @@ class ChastityTimerService extends ChangeNotifier {
       _rewarded
         ..clear()
         ..addAll(prefs.getStringList(rewardedKey) ?? const []);
+      _declined
+        ..clear()
+        ..addAll(prefs.getStringList(declinedKey) ?? const []);
+      final rawInvites = prefs.getString(invitesKey);
+      _invites
+        ..clear()
+        ..addAll(rawInvites == null
+            ? const []
+            : (jsonDecode(rawInvites) as List)
+                .whereType<Map>()
+                .map((m) => TimerInvite.fromJson(Map<String, dynamic>.from(m))));
     } catch (e) {
       if (kDebugMode) print('ChastityTimerService: load error: $e');
     }

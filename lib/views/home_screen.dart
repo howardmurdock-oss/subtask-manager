@@ -25,6 +25,7 @@ import '../services/windows_updater.dart';
 import 'pairing/pairing_view.dart';
 import 'settings/settings_view.dart';
 import 'quests/quests_hub_view.dart';
+import 'chastity_timer/timer_invite.dart';
 
 enum AppRole { player, director }
 
@@ -45,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _isRequestDialogShowing = false;
   StreamSubscription<ActiveOrder>? _orderSubscription;
   StreamSubscription<ChastityTimerView>? _timerFinishedSubscription;
+  StreamSubscription<TimerInvite>? _timerInviteSubscription;
   final Set<String> _timerDialogsShown = {};
   Timer? _updateTimer;
 
@@ -80,6 +82,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _timerFinishedSubscription = timers.justFinished.listen((view) {
           if (mounted && view.role == TimerRole.player) _showTimerFinishedDialog(view);
         });
+        _timerInviteSubscription = timers.inviteArrived.listen((invite) {
+          if (mounted) showTimerInviteDialog(context, invite);
+        });
+        // Waiting from before: the first now, the rest from the timer list.
+        if (timers.invites.isNotEmpty) showTimerInviteDialog(context, timers.invites.first);
         // Timers are fetched at launch, before this was listening: one that
         // ended while the app was closed may already have been announced.
         for (final r in timers.finishedUnseen(role: TimerRole.player)) {
@@ -103,6 +110,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _updateTimer?.cancel();
     _orderSubscription?.cancel();
     _timerFinishedSubscription?.cancel();
+    _timerInviteSubscription?.cancel();
     super.dispose();
   }
 
