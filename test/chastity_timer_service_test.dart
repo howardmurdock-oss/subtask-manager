@@ -168,6 +168,56 @@ void main() {
     expect(over.elapsed, const Duration(minutes: 30));
   });
 
+  group('a reward for completing it', () {
+    Map<String, dynamic> done({String status = 'ended', String? releasedBy, String role = 'player', int? reward = 50}) {
+      final v = view(status: status, endAt: now - 1000, role: role, manager: role == 'director');
+      (v['config'] as Map)['rewardTokens'] = reward;
+      v['releasedBy'] = releasedBy;
+      return v;
+    }
+
+    Future<List<int>> credited(Map<String, dynamic> v, {TimerRole role = TimerRole.player, int refreshes = 2}) async {
+      serve((_, __, ___, ____) => TimerApiResponse(200, v));
+      final service = ChastityTimerService();
+      await service.load();
+      final paid = <int>[];
+      service.onReward = (_, tokens) => paid.add(tokens);
+      await service.addShared(id: 't1', role: role, key: 'K');
+      for (var i = 1; i < refreshes; i++) {
+        await service.refresh('t1');
+      }
+      await pumpEventQueue();
+      return paid;
+    }
+
+    test('is credited to the player once, when it runs out', () async {
+      expect(await credited(done()), [50]);
+    });
+
+    test('also when the director ends it', () async {
+      expect(await credited(done(status: 'released', releasedBy: 'director')), [50]);
+    });
+
+    test('not for the emergency release', () async {
+      expect(await credited(done(status: 'released', releasedBy: 'player')), isEmpty);
+    });
+
+    test('not while it is still running', () async {
+      final v = view(endAt: now + 3600 * 1000);
+      (v['config'] as Map)['rewardTokens'] = 50;
+      expect(await credited(v), isEmpty);
+    });
+
+    test("only on the player's device, where the balance is", () async {
+      expect(await credited(done(role: 'director'), role: TimerRole.director), isEmpty);
+    });
+
+    test('never twice, even after the app restarts', () async {
+      expect(await credited(done()), [50]);
+      expect(await credited(done()), isEmpty);
+    });
+  });
+
   group('when a timer ends', () {
     test('it is announced once, and stays in front of its person until seen', () async {
       serve((_, __, ___, ____) => TimerApiResponse(200, view(status: 'ended', endAt: now - 1000)));

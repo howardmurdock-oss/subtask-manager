@@ -68,6 +68,14 @@ class ChastityTimerService extends ChangeNotifier {
   /// Finished timers whose end this device has shown its person.
   static const String seenFinishedKey = 'chastity_timer_seen_finished_v1';
 
+  /// Timers whose reward this device has credited.
+  static const String rewardedKey = 'chastity_timer_rewarded_v1';
+
+  /// Credits a completed timer's reward to the player: set by the sync
+  /// service, which holds the token balance. Called once per timer.
+  void Function(ChastityTimerView view, int tokens)? onReward;
+  final Set<String> _rewarded = {};
+
   /// Where the public link page is served (a route on the website's domain).
   static const String publicLinkBase = 'https://subtaskmanager.com/t/';
 
@@ -184,6 +192,9 @@ class ChastityTimerService extends ChangeNotifier {
       _seenFinished
         ..clear()
         ..addAll(prefs.getStringList(seenFinishedKey) ?? const []);
+      _rewarded
+        ..clear()
+        ..addAll(prefs.getStringList(rewardedKey) ?? const []);
     } catch (e) {
       if (kDebugMode) print('ChastityTimerService: load error: $e');
     }
@@ -344,12 +355,27 @@ class ChastityTimerService extends ChangeNotifier {
     final view = ChastityTimerView.fromJson(json);
     _views[view.id] = view;
     _tellTopic(view);
+    _creditReward(view);
     _armEndNotification(view);
     notifyListeners();
     if (view.isOver && !_seenFinished.contains(view.id) && _announced.add(view.id)) {
       _finished.add(view);
     }
     return view;
+  }
+
+  /// A completed timer's reward, credited on the player's device - where
+  /// the balance is - once. Recorded before it is credited: a crash between
+  /// the two loses a reward rather than paying it twice.
+  Future<void> _creditReward(ChastityTimerView view) async {
+    final record = recordOf(view.id);
+    if (!_loaded || record == null || record.role != TimerRole.player) return;
+    if (!view.earnedReward || !_rewarded.add(view.id)) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(rewardedKey, _rewarded.toList());
+    } catch (_) {}
+    onReward?.call(view, view.config.rewardTokens!);
   }
 
   /// A player's timer is told where this device listens, once, and again

@@ -130,6 +130,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ' It ran for ${formatSpan(view.elapsed)}.',
               textAlign: TextAlign.center,
             ),
+            if (view.earnedReward && view.role == TimerRole.player) ...[
+              const SizedBox(height: 12),
+              Text('You earned ${view.config.rewardTokens} tokens.',
+                  textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700)),
+            ],
             if (digits != null) ...[
               const SizedBox(height: 16),
               const Text('Your combination', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),

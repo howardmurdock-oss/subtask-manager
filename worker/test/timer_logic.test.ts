@@ -286,3 +286,13 @@ test('the public never sees the notification settings', () => {
   const pub = viewFor(timer({ public: { enabled: true } }), 'public', at(1)) as any;
   assert.equal(JSON.stringify(pub).includes('notify'), false);
 });
+
+test("a reward for completing it: the director's to set, a whole number of tokens", () => {
+  assert.equal(timer().config.rewardTokens, null);
+  assert.equal(timer({ rewardTokens: 50 }).config.rewardTokens, 50);
+  assert.equal(timer({ rewardTokens: 12.7 }).config.rewardTokens, 13);
+  assert.equal(timer({ rewardTokens: 0 }).config.rewardTokens, null);
+  assert.equal(timer({ rewardTokens: -5 }).config.rewardTokens, null);
+  assert.equal(timer({ rewardTokens: 1e9 }).config.rewardTokens, 100_000);
+  assert.equal(timer({ rewardTokens: 50 }, 'player').config.rewardTokens, null, 'not on your own timer');
+});

@@ -28,6 +28,10 @@ export interface TimerConfig {
   /** Telling the player when time is added. The message is the manager's
    * own wording; the app always adds who added it. */
   notify: { onAdd: boolean; message: string | null };
+  /** Tokens the player earns by completing it: it runs out, or the director
+   * ends it - not the emergency release. Director-managed timers only; the
+   * player's app credits them. Null: no reward. */
+  rewardTokens: number | null;
   /** The player does not see the time left, or how much each change was. */
   hidden: boolean;
   /** No change may push the end past start + this. Null: no ceiling. */
@@ -365,6 +369,11 @@ export function sanitizeConfig(raw: any, managedBy: 'player' | 'director'): Time
     openEnded,
     // Nothing to hide, change or roll without an end time.
     hidden: !openEnded && r.hidden === true,
+    // A player rewarding themselves would mean nothing.
+    rewardTokens:
+      managedBy === 'director' && typeof r.rewardTokens === 'number' && r.rewardTokens >= 1
+        ? clampInt(r.rewardTokens, 1, 100_000, 1)
+        : null,
     notify: {
       // On unless switched off: before this setting, a director's additions
       // were always announced.

@@ -259,6 +259,11 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                     const SizedBox(height: 12),
                     _noticeCard(view, theme),
                   ],
+                  if (view.config.rewardTokens != null ||
+                      (view.isManager && view.role == TimerRole.director && !view.isOver)) ...[
+                    const SizedBox(height: 12),
+                    _rewardCard(view, record, theme),
+                  ],
                   if (view.isManager || view.config.publicLink.enabled) ...[
                     const SizedBox(height: 12),
                     _publicCard(view, theme),
@@ -520,6 +525,84 @@ class _TimerDetailViewState extends State<TimerDetailView> {
                 ? 'The player sees this only when the timer ends.'
                 : 'Your combination.'),
       ),
+    );
+  }
+
+  /// The tokens for completing it: what is on offer, and whether it was
+  /// earned. The director may set or change it while it runs.
+  Widget _rewardCard(ChastityTimerView view, TimerRecord record, ThemeData theme) {
+    final tokens = view.config.rewardTokens;
+    final isPlayer = view.role == TimerRole.player;
+    final them = record.partnerName ?? 'Your player';
+    final String text;
+    if (tokens == null) {
+      text = 'No reward for completing it.';
+    } else if (!view.isOver) {
+      text = isPlayer
+          ? 'Complete it to earn $tokens tokens. Not if you use the emergency release.'
+          : '$them earns $tokens tokens for completing it.';
+    } else if (view.earnedReward) {
+      text = isPlayer ? 'You earned $tokens tokens.' : '$them earned $tokens tokens.';
+    } else {
+      text = 'No tokens: it was ended by emergency release.';
+    }
+    final canChange = view.isManager && view.role == TimerRole.director && !view.isOver;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('REWARD', style: _label(theme)),
+            const SizedBox(height: 8),
+            Row(children: [
+              Icon(Icons.toll_rounded, size: 20, color: Colors.amber[600]),
+              const SizedBox(width: 8),
+              Expanded(child: Text(text)),
+            ]),
+            if (canChange)
+              TextButton.icon(
+                icon: const Icon(Icons.edit_rounded, size: 18),
+                label: Text(tokens == null ? 'Set a reward' : 'Change the reward'),
+                onPressed: _busy ? null : () => _changeReward(view),
+              )
+            else
+              const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _changeReward(ChastityTimerView view) async {
+    final controller = TextEditingController(text: '${view.config.rewardTokens ?? 50}');
+    final picked = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reward for completing it'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
+          decoration: const InputDecoration(labelText: 'Tokens', helperText: '0 for no reward'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, int.tryParse(controller.text.trim()) ?? 0),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (picked == null || !mounted) return;
+    await _run(
+      () => _timers.configure(widget.timerId, {'rewardTokens': picked > 0 ? picked : null}),
+      done: picked > 0 ? 'Reward set to $picked tokens.' : 'No reward now.',
+      partnerSummary: picked > 0
+          ? 'Your director set a reward of $picked tokens for completing your timer.'
+          : 'Your director took away the reward for your timer.',
     );
   }
 

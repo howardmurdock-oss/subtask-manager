@@ -130,6 +130,7 @@ class ChastityTimerConfig {
     this.openEnded = false,
     this.notifyOnAdd = true,
     this.notifyMessage,
+    this.rewardTokens,
     this.hidden = false,
     this.maxTotalSeconds,
     this.director = const DirectorLimits(),
@@ -151,6 +152,10 @@ class ChastityTimerConfig {
   /// always said.
   final bool notifyOnAdd;
   final String? notifyMessage;
+
+  /// Tokens the player earns by completing it - it runs out, or the
+  /// director ends it; not by emergency release. A director's timers only.
+  final int? rewardTokens;
   final bool hidden;
 
   /// No change pushes the end past start + this. Null: no ceiling.
@@ -170,6 +175,7 @@ class ChastityTimerConfig {
         'baseSeconds': baseSeconds,
         'openEnded': openEnded,
         'notify': {'onAdd': notifyOnAdd, 'message': notifyMessage},
+        'rewardTokens': rewardTokens,
         'hidden': hidden,
         'maxTotalSeconds': maxTotalSeconds,
         'director': director.toJson(),
@@ -187,6 +193,7 @@ class ChastityTimerConfig {
       openEnded: json['openEnded'] == true,
       notifyOnAdd: json['openEnded'] != true && sub('notify')?['onAdd'] != false,
       notifyMessage: sub('notify')?['message'] as String?,
+      rewardTokens: (json['rewardTokens'] as num?)?.toInt(),
       hidden: json['hidden'] == true,
       maxTotalSeconds: (json['maxTotalSeconds'] as num?)?.toInt(),
       director: DirectorLimits.fromJson(sub('director')),
@@ -287,6 +294,12 @@ class ChastityTimerView {
   /// Ended by the player's own choice, on a timer that was theirs to end.
   bool get endedByPlayerChoice =>
       status == TimerStatus.released && releasedBy == TimerRole.player && playerMayEnd;
+
+  /// Over, with its reward earned: anything but the emergency release.
+  bool get earnedReward =>
+      (config.rewardTokens ?? 0) > 0 &&
+      isOver &&
+      !(status == TimerStatus.released && releasedBy == TimerRole.player);
 
   /// How long it has run: so far, or in all once over.
   Duration get elapsed {

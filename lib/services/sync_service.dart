@@ -1815,6 +1815,11 @@ class SyncService extends ChangeNotifier {
   void attachTimerService(ChastityTimerService timerService) {
     _timerService = timerService;
     ChastityTimerService.ownTopic = () => _pairingCode.isEmpty ? null : _getHashedTopic(_pairingCode);
+    timerService.onReward = (view, tokens) {
+      _engine.adjustTokens(tokens, 'Completed a chastity timer');
+      // The director's dashboard shows the balance it was last sent.
+      broadcastPlayerState();
+    };
   }
 
   /// Loads what partners have announced, then tells them what this copy can

@@ -60,6 +60,12 @@ class _TimerSetupViewState extends State<TimerSetupView> {
   final _comboController = TextEditingController();
 
   bool _notifyOn = true;
+  bool _rewardOn = false;
+  final _rewardController = TextEditingController(text: '50');
+  int? get _reward {
+    final n = int.tryParse(_rewardController.text.trim());
+    return _isDirector && _rewardOn && n != null && n > 0 ? n : null;
+  }
   final _noticeController = TextEditingController();
 
   bool _saving = false;
@@ -80,6 +86,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
   void dispose() {
     _comboController.dispose();
     _noticeController.dispose();
+    _rewardController.dispose();
     super.dispose();
   }
 
@@ -129,6 +136,7 @@ class _TimerSetupViewState extends State<TimerSetupView> {
       baseSeconds: _base.inSeconds,
       openEnded: _openEnded,
       notifyOnAdd: !_openEnded && _notifyOn,
+      rewardTokens: _reward,
       notifyMessage: _noticeController.text.trim().isEmpty ? null : _noticeController.text.trim(),
       hidden: !_openEnded && _hidden,
       maxTotalSeconds: _ceilingOn && _limitOffered ? _ceiling.inSeconds : null,
@@ -448,6 +456,33 @@ class _TimerSetupViewState extends State<TimerSetupView> {
               ],
             ),
           ),
+          // Tokens are the director's to give.
+          if (_isDirector) ...[
+            _section(theme, 'REWARD'),
+            Card(
+              child: Column(
+                children: [
+                  SwitchListTile(
+                    value: _rewardOn,
+                    onChanged: (v) => setState(() => _rewardOn = v),
+                    title: const Text('Reward tokens for completing it'),
+                    subtitle: const Text(
+                        'Earned when it runs out, or when you end it. Not if they use the emergency release.'),
+                  ),
+                  if (_rewardOn)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                      child: TextField(
+                        controller: _rewardController,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
+                        decoration: const InputDecoration(labelText: 'Tokens', suffixText: 'tokens'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
           _section(theme, 'COMBINATION'),
           Card(
             child: Column(

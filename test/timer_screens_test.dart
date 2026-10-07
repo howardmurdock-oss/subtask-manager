@@ -137,6 +137,7 @@ void main() {
     expect(find.text('REMOVE TIME'), findsOneWidget);
     expect(find.text('4 8 2 1'), findsOneWidget);
     expect(find.text('End the timer now'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('+10 minutes'), 300, scrollable: find.byType(Scrollable).first);
     expect(find.text('+10 minutes'), findsOneWidget);
     await finish(tester);
   });
@@ -527,6 +528,45 @@ void main() {
     await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
     await pump(tester, const TimerDetailView(timerId: 't1'));
     expect(find.text('NOTIFICATIONS'), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('a director can offer tokens for completing it; a player cannot reward themselves', (tester) async {
+    await pump(tester, const TimerSetupView(role: TimerRole.director));
+    await tester.scrollUntilVisible(find.text('Reward tokens for completing it'), 300, scrollable: find.byType(Scrollable).first);
+    expect(find.text('Reward tokens for completing it'), findsOneWidget);
+    await finish(tester);
+
+    await pump(tester, const TimerSetupView(role: TimerRole.player));
+    await tester.scrollUntilVisible(find.text('COMBINATION'), 300, scrollable: find.byType(Scrollable).first);
+    expect(find.text('REWARD'), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('the player sees the reward on offer, then that they earned it', (tester) async {
+    final running = view(role: 'player');
+    (running['config'] as Map)['rewardTokens'] = 50;
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, running);
+    await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+    expect(find.text('Complete it to earn 50 tokens. Not if you use the emergency release.'), findsOneWidget);
+    await finish(tester);
+
+    final over = view(role: 'player', over: true)..['id'] = 't2';
+    (over['config'] as Map)['rewardTokens'] = 50;
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, over);
+    await timers.addShared(id: 't2', role: TimerRole.player, key: 'P');
+    await pump(tester, const TimerDetailView(timerId: 't2'));
+    expect(find.text('You earned 50 tokens.'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('the director can set a reward on a running timer', (tester) async {
+    ChastityTimerService.request = (m, u, {key, body}) async => TimerApiResponse(200, view(role: 'director'));
+    await timers.addShared(id: 't1', role: TimerRole.director, key: 'D', partnerName: 'PC 1');
+    await pump(tester, const TimerDetailView(timerId: 't1'));
+    expect(find.text('No reward for completing it.'), findsOneWidget);
+    expect(find.text('Set a reward'), findsOneWidget);
     await finish(tester);
   });
 }
