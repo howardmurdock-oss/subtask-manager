@@ -7,6 +7,9 @@ compatibility_date = "2026-09-01"
 routes = [
   { pattern = "subtaskmanager.com/t/*", zone_name = "subtaskmanager.com" },
   { pattern = "www.subtaskmanager.com/t/*", zone_name = "subtaskmanager.com" },
+  # A player's page: one link for all their timers.
+  { pattern = "subtaskmanager.com/p/*", zone_name = "subtaskmanager.com" },
+  { pattern = "www.subtaskmanager.com/p/*", zone_name = "subtaskmanager.com" },
   # Website download buttons: counted, then sent on to the GitHub release.
   { pattern = "subtaskmanager.com/download/*", zone_name = "subtaskmanager.com" },
   { pattern = "www.subtaskmanager.com/download/*", zone_name = "subtaskmanager.com" },

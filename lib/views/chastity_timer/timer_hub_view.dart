@@ -7,6 +7,7 @@ import 'timer_detail_view.dart';
 import 'timer_format.dart';
 import 'timer_setup_view.dart';
 import 'timer_invite.dart';
+import 'timer_profile_view.dart';
 
 /// Every timer this device can reach on one side, running first, and the
 /// way to start a new one.
@@ -113,6 +114,21 @@ class _TimerHubViewState extends State<TimerHubView> {
                   ],
                 ),
               ),
+            if (widget.role == TimerRole.player)
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.public_rounded, color: Colors.cyan),
+                  title: const Text('Your public page', style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(timers.profile == null
+                      ? 'One link that always shows your current timer.'
+                      : timers.profileLink!),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const TimerProfileView()),
+                  ),
+                ),
+              ),
+            if (widget.role == TimerRole.player) const SizedBox(height: 12),
             if (widget.role == TimerRole.player && timers.invites.isNotEmpty) ...[
               _heading('REQUESTS', theme),
               ...timers.invites.map((i) => Card(

@@ -430,3 +430,46 @@ class TimerInvite {
         receivedAt: DateTime.tryParse(json['receivedAt'] as String? ?? '') ?? DateTime.now(),
       );
 }
+
+/// The player's public page: one link for all their timers. The key proves
+/// this device may change it - never shown, except to move it to another.
+class TimerProfile {
+  const TimerProfile({
+    required this.profileId,
+    required this.key,
+    required this.publicId,
+    this.name,
+    this.showHistory = false,
+  });
+
+  final String profileId;
+  final String key;
+  final String publicId;
+  final String? name;
+  final bool showHistory;
+
+  TimerProfile copyWith({String? key, String? publicId, String? name, bool clearName = false, bool? showHistory}) =>
+      TimerProfile(
+        profileId: profileId,
+        key: key ?? this.key,
+        publicId: publicId ?? this.publicId,
+        name: clearName ? null : (name ?? this.name),
+        showHistory: showHistory ?? this.showHistory,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'profileId': profileId,
+        'key': key,
+        'publicId': publicId,
+        'name': name,
+        'showHistory': showHistory,
+      };
+
+  factory TimerProfile.fromJson(Map<String, dynamic> json) => TimerProfile(
+        profileId: json['profileId'] as String,
+        key: json['key'] as String,
+        publicId: json['publicId'] as String,
+        name: json['name'] as String?,
+        showHistory: json['showHistory'] == true,
+      );
+}

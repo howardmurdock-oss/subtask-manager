@@ -30,14 +30,21 @@ export function previewTags(p: { url: string; title: string; description: string
 <meta name="theme-color" content="${e(p.tone)}">`;
 }
 
+/**
+ * A timer's page - or, with [opts.profile], a player's page (/p/<id>): the
+ * same page, showing whichever of their timers is running, with their name,
+ * any others running, and past ones if they show them.
+ */
 export function publicPage(
   publicId: string,
   turnstileSiteKey: string | null,
   preview?: { title: string; description: string; state: 'locked' | 'unlocked' },
+  opts: { profile?: boolean } = {},
 ): string {
   const id = escapeHtml(publicId);
   const siteKey = turnstileSiteKey ? escapeHtml(turnstileSiteKey) : '';
-  const url = `https://subtaskmanager.com/t/${publicId}`;
+  const profile = opts.profile === true;
+  const url = `https://subtaskmanager.com/${profile ? 'p' : 't'}/${publicId}`;
   const tags = preview
     ? previewTags({
         url,
@@ -80,6 +87,13 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   .made { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); font-size:13px; color:var(--muted); }
   .made a { color:var(--accent); font-weight:700; text-decoration:none; }
   .made a:hover { text-decoration:underline; }
+  .list { margin-top:20px; padding-top:14px; border-top:1px solid var(--line); text-align:left; }
+  .list .label { font-size:11px; margin-bottom:6px; }
+  .list ul { list-style:none; margin:0; padding:0; }
+  .list li { display:flex; justify-content:space-between; gap:10px; padding:6px 0; font-size:14px; font-variant-numeric:tabular-nums; }
+  .list li span:last-child { color:var(--muted); }
+  .list a { color:var(--text); text-decoration:none; }
+  .list a:hover { text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -96,6 +110,8 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   <div id="cf"></div>
   <div class="msg" id="msg" role="status"></div>
   <div class="foot" id="votefoot">Each vote counts once toward a daily limit set by the person who's locked.</div>
+  <div class="list" id="also" hidden><div class="label">Also running</div><ul id="alsoList"></ul></div>
+  <div class="list" id="past" hidden><div class="label">Past timers</div><ul id="pastList"></ul></div>
   <!-- Back to the website: a link that goes wide brings people to the app.
        Tagged so those visits can be told apart from others. -->
   <div class="made">Made with <a href="https://subtaskmanager.com/?from=timer">(sub)Task Manager</a> · <a href="https://subtaskmanager.com/?from=timer">Get the app</a></div>
@@ -104,9 +120,11 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
 (() => {
   const id = ${JSON.stringify(id)};
   const siteKey = ${JSON.stringify(siteKey)};
+  const isProfile = ${profile ? 'true' : 'false'};
   const base = location.pathname.replace(/\\/$/, '');
   const $ = (x) => document.getElementById(x);
-  let view = null, token = null, offset = 0;
+  // On a player's page, votes go to whichever timer is showing.
+  let view = null, profile = null, voteBase = base, token = null, offset = 0;
 
   const human = (s) => {
     const m = Math.round(s / 60);
@@ -138,11 +156,53 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + min + 'm' : min + 'm';
   };
 
+  // A player's page: their other running timers, and past ones.
+  function renderLists() {
+    if (!profile) return;
+    const nowMs = Date.now() + offset;
+    const also = $('alsoList');
+    also.replaceChildren(...profile.others.map((t) => {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = '/t/' + t.publicId;
+      a.textContent = 'Another timer';
+      const right = document.createElement('span');
+      right.textContent = t.openEnded ? span(nowMs - t.startAt) + ' so far'
+        : t.endAt == null ? 'time hidden' : clock(t.endAt - nowMs) + ' left';
+      li.append(a, right);
+      return li;
+    }));
+    $('also').hidden = profile.others.length === 0;
+    const past = $('pastList');
+    past.replaceChildren(...profile.history.map((h) => {
+      const li = document.createElement('li');
+      const when = document.createElement('span');
+      when.textContent = new Date(h.closedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+      const ran = document.createElement('span');
+      ran.textContent = 'ran for ' + span(h.closedAt - h.startAt);
+      li.append(when, ran);
+      return li;
+    }));
+    $('past').hidden = profile.history.length === 0;
+  }
+
   function render() {
-    if (!view) return;
+    renderLists();
+    const who = profile && profile.name ? profile.name : null;
+    if (!view) {
+      if (!profile) return;
+      // Between timers: the page stays, and says so.
+      $('headline').textContent = (who || 'They') + " isn't locked up right now";
+      $('time').textContent = 'Unlocked';
+      $('sub').textContent = 'Check back later.';
+      $('ran').textContent = '';
+      $('buttons').hidden = $('votefoot').hidden = true;
+      $('msg').textContent = '';
+      return;
+    }
     const running = view.status === 'running';
     const nowMs = Date.now() + offset;
-    $('headline').textContent = running ? 'Someone is locked up' : 'This timer is over';
+    $('headline').textContent = running ? (who ? who + ' is locked up' : 'Someone is locked up') : 'This timer is over';
     $('ran').textContent = '';
     if (running && view.openEnded) {
       // No end time: it counts up, from the start.
@@ -185,8 +245,17 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
       // with the "this timer has ended" page, so load that.
       if (r.status === 404) { location.reload(); return; }
       if (!r.ok) { $('sub').textContent = "Couldn't reach the timer. Try again in a moment."; return; }
-      view = await r.json();
-      offset = view.now - Date.now();
+      const s = await r.json();
+      if (isProfile) {
+        profile = s;
+        // A different timer now showing: its own messages go with it.
+        if (s.featured && (!view || view.publicId !== s.featured.publicId)) $('msg').textContent = '';
+        view = s.featured;
+        voteBase = view ? '/t/' + view.publicId : null;
+      } else {
+        view = s;
+      }
+      offset = s.now - Date.now();
       render();
     } catch { $('sub').textContent = "Couldn't reach the timer. Check your connection."; }
   }
@@ -195,17 +264,22 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     $('add').disabled = $('remove').disabled = true;
     $('msg').textContent = '';
     try {
-      const r = await fetch(base + '/vote', {
+      if (!voteBase) return;
+      const r = await fetch(voteBase + '/vote', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ direction, turnstileToken: token }),
       });
       const body = await r.json();
       if (r.ok) {
-        view = body; offset = view.now - Date.now();
+        view = isProfile ? { ...body, publicId: view.publicId } : body;
+        offset = body.now - Date.now();
         $('msg').textContent = direction > 0 ? 'Time added. Thanks for voting.' : 'Time removed. Thanks for voting.';
       } else {
-        if (body.view) { view = body.view; offset = view.now - Date.now(); }
+        if (body.view) {
+          view = isProfile ? { ...body.view, publicId: view.publicId } : body.view;
+          offset = body.view.now - Date.now();
+        }
         $('msg').textContent = reasons[body.error] || "That vote didn't go through.";
       }
     } catch { $('msg').textContent = "That vote didn't go through. Check your connection."; }
@@ -290,4 +364,14 @@ ${previewTags({
 </main>
 </body>
 </html>`;
+}
+
+/** A player's page address that no longer works: replaced, or never real. */
+export function profileGonePage(): string {
+  return expiredPage()
+    .replace('<h1>This timer has ended</h1>', '<h1>This link no longer works</h1>')
+    .replace(
+      '<p>There was a chastity timer here, but it has expired, or its link has been switched off.</p>',
+      '<p>This page has moved to a new link, or been taken down.</p>',
+    );
 }

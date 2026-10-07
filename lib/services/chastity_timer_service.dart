@@ -159,6 +159,131 @@ class ChastityTimerService extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// The player's public page, if they have made one.
+  static const String profileKey = 'chastity_timer_profile_v1';
+
+  /// Timers the page has been told of.
+  static const String profileTimersKey = 'chastity_timer_profile_timers_v1';
+
+  /// Where a player's page is served.
+  static const String profileLinkBase = 'https://subtaskmanager.com/p/';
+
+  TimerProfile? _profile;
+  final Set<String> _profileTimers = {};
+
+  TimerProfile? get profile => _profile;
+  String? get profileLink => _profile == null ? null : '$profileLinkBase${_profile!.publicId}';
+
+  /// Makes the player's page, and tells it of every timer they are on.
+  Future<String?> createProfile({String? name}) async {
+    final response = await _call('POST', Uri.parse('${PushService.workerBaseUrl}/profile'), body: {'name': name});
+    if (!response.ok) return response.error ?? 'offline';
+    _profile = TimerProfile(
+      profileId: response.body['profileId'] as String,
+      key: response.body['key'] as String,
+      publicId: response.body['publicId'] as String,
+      name: response.body['name'] as String?,
+    );
+    _profileTimers.clear();
+    await _saveProfile();
+    notifyListeners();
+    await _tellProfileAll();
+    return null;
+  }
+
+  /// Changes the name shown on it, or whether past timers are listed.
+  Future<String?> updateProfile({String? name, bool clearName = false, bool? showHistory}) async {
+    final p = _profile;
+    if (p == null) return 'no-profile';
+    final response = await _profileCall('settings', {
+      if (name != null || clearName) 'name': clearName ? null : name,
+      if (showHistory != null) 'showHistory': showHistory,
+    });
+    if (!response.ok) return response.error ?? 'offline';
+    _profile = p.copyWith(
+      name: response.body['name'] as String?,
+      clearName: response.body['name'] == null,
+      showHistory: response.body['showHistory'] == true,
+    );
+    await _saveProfile();
+    notifyListeners();
+    return null;
+  }
+
+  /// A new link for the page. The old one stops working.
+  Future<String?> newProfileLink() async {
+    final p = _profile;
+    if (p == null) return 'no-profile';
+    final response = await _profileCall('new-link', const {});
+    if (!response.ok) return response.error ?? 'offline';
+    _profile = p.copyWith(publicId: response.body['publicId'] as String);
+    await _saveProfile();
+    notifyListeners();
+    return null;
+  }
+
+  /// The page as a code, for moving it to another device. Whoever has it can
+  /// take the page over.
+  String? exportProfile() => _profile == null ? null : 'stp1.${_profile!.profileId}.${_profile!.key}';
+
+  /// Takes over a page exported from another device. That device can no
+  /// longer change it. Returns an error, or null.
+  Future<String?> importProfile(String code) async {
+    final parts = code.trim().split('.');
+    if (parts.length != 3 || parts[0] != 'stp1' || parts[1].isEmpty || parts[2].isEmpty) return 'bad-code';
+    final response = await _call('POST', Uri.parse('${PushService.workerBaseUrl}/profile/${parts[1]}/rekey'),
+        key: parts[2], body: const {});
+    if (response.status == 403) return 'bad-code';
+    if (!response.ok) return response.error ?? 'offline';
+    _profile = TimerProfile(
+      profileId: parts[1],
+      key: response.body['key'] as String,
+      publicId: response.body['publicId'] as String,
+      name: response.body['name'] as String?,
+      showHistory: response.body['showHistory'] == true,
+    );
+    _profileTimers
+      ..clear()
+      ..addAll(((response.body['timers'] as List?) ?? const []).whereType<String>());
+    await _saveProfile();
+    notifyListeners();
+    await _tellProfileAll();
+    return null;
+  }
+
+  Future<TimerApiResponse> _profileCall(String op, Map<String, dynamic> body) => _call(
+      'POST', Uri.parse('${PushService.workerBaseUrl}/profile/${_profile!.profileId}/$op'),
+      key: _profile!.key, body: body);
+
+  /// Tells the page of a timer this device is the player on. Which of them
+  /// show is the Worker's to decide, each time: link on, and on a director's
+  /// timer only if they gave the player the link.
+  Future<void> _tellProfile(TimerRecord record) async {
+    if (_profile == null || record.role != TimerRole.player || _profileTimers.contains(record.id)) return;
+    final response = await _profileCall('add', {'timerId': record.id, 'timerKey': record.key});
+    if (!response.ok) return;
+    _profileTimers.add(record.id);
+    await _saveProfile();
+  }
+
+  Future<void> _tellProfileAll() async {
+    for (final r in List.of(_records)) {
+      await _tellProfile(r);
+    }
+  }
+
+  Future<void> _saveProfile() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_profile == null) {
+        await prefs.remove(profileKey);
+      } else {
+        await prefs.setString(profileKey, jsonEncode(_profile!.toJson()));
+      }
+      await prefs.setStringList(profileTimersKey, _profileTimers.toList());
+    } catch (_) {}
+  }
+
   /// Timers whose reward this device has credited.
   static const String rewardedKey = 'chastity_timer_rewarded_v1';
 
@@ -295,6 +420,11 @@ class ChastityTimerService extends ChangeNotifier {
       _declined
         ..clear()
         ..addAll(prefs.getStringList(declinedKey) ?? const []);
+      final rawProfile = prefs.getString(profileKey);
+      _profile = rawProfile == null ? null : TimerProfile.fromJson(Map<String, dynamic>.from(jsonDecode(rawProfile) as Map));
+      _profileTimers
+        ..clear()
+        ..addAll(prefs.getStringList(profileTimersKey) ?? const []);
       final rawInvites = prefs.getString(invitesKey);
       _invites
         ..clear()
@@ -390,6 +520,11 @@ class ChastityTimerService extends ChangeNotifier {
   /// Forgets a timer on this device. It carries on, on the Worker, for
   /// anyone else with a key.
   Future<void> forget(String id) async {
+    // Gone from the device: gone from the player's page too.
+    if (_profile != null && _profileTimers.remove(id)) {
+      await _profileCall('remove', {'timerId': id});
+      await _saveProfile();
+    }
     _records.removeWhere((r) => r.id == id);
     _views.remove(id);
     await NotificationService.cancelNotification(_notificationId(id));
@@ -464,6 +599,8 @@ class ChastityTimerService extends ChangeNotifier {
     _views[view.id] = view;
     _tellTopic(view);
     _creditReward(view);
+    final record = recordOf(view.id);
+    if (record != null) _tellProfile(record);
     _armEndNotification(view);
     notifyListeners();
     if (view.isOver && !_seenFinished.contains(view.id) && _announced.add(view.id)) {

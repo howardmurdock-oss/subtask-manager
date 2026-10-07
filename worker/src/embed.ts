@@ -53,7 +53,7 @@ const STYLE = `
 `;
 
 /** The live widget, framed on someone's site. */
-export function embedPage(timerUrl: string): string {
+export function embedPage(timerUrl: string, profile = false): string {
   const url = esc(timerUrl);
   return `<!doctype html>
 <html lang="en">
@@ -77,8 +77,9 @@ export function embedPage(timerUrl: string): string {
 <script>
 (() => {
   const base = location.pathname.replace(/\\/embed\\/?$/, '');
+  const isProfile = ${profile ? 'true' : 'false'};
   const $ = (x) => document.getElementById(x);
-  let view = null, offset = 0;
+  let view = null, offset = 0, loaded = false;
   const clock = (ms) => {
     const s = Math.max(0, Math.floor(ms / 1000));
     const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
@@ -91,7 +92,15 @@ export function embedPage(timerUrl: string): string {
     return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + min + 'm' : min + 'm';
   };
   function render() {
-    if (!view) return;
+    if (!view) {
+      // A player's page between timers.
+      if (isProfile && loaded) {
+        $('time').textContent = 'Not locked up';
+        $('sub').textContent = 'right now';
+        $('vote').textContent = 'See their page';
+      }
+      return;
+    }
     const running = view.status === 'running';
     const nowMs = Date.now() + offset;
     if (!running) {
@@ -119,8 +128,10 @@ export function embedPage(timerUrl: string): string {
       // Gone: the server answers this address with the ended widget now.
       if (r.status === 404) { location.reload(); return; }
       if (!r.ok) return;
-      view = await r.json();
-      offset = view.now - Date.now();
+      const s = await r.json();
+      view = isProfile ? s.featured : s;
+      offset = s.now - Date.now();
+      loaded = true;
       render();
     } catch {}
   }
@@ -201,11 +212,16 @@ export function previewText(view: PublicView): { title: string; description: str
   return { title: `Chastity Timer · ${left}`, description, state: 'locked' };
 }
 
-export function badgeSvg(view: PublicView | null): string {
+export function badgeSvg(view: PublicView | null, whenNone: 'ended' | 'idle' = 'ended'): string {
   let headline: string;
   let detail: string;
   let tone: string;
-  if (!view) {
+  if (!view && whenNone === 'idle') {
+    // A player's page between timers: the badge stays, and says so.
+    headline = 'Not locked up';
+    detail = 'Right now · subtaskmanager.com';
+    tone = '#34d399';
+  } else if (!view) {
     headline = 'Timer ended';
     detail = 'Get (sub)Task Manager · subtaskmanager.com';
     tone = '#22d3ee';

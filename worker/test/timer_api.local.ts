@@ -365,4 +365,76 @@ await check("the player's device says where it listens; votes still go through w
   assert.equal(JSON.stringify(pub).includes('notify'), false);
 });
 
+await check("a player's page: one link, showing whichever of their timers may be shown", async () => {
+  const made = await call('/profile', { body: { name: '  Toy\n ' } });
+  assert.equal(made.status, 200);
+  const p = made.body;
+  assert.equal(p.name, 'Toy');
+  const as = (op: string, body?: unknown, key = p.key) =>
+    fetch(`${BASE}/profile/${p.profileId}/${op}`, {
+      method: body ? 'POST' : 'GET',
+      headers: { 'content-type': 'application/json', 'X-Profile-Key': key, 'CF-Connecting-IP': '10.0.0.1' },
+      body: body ? JSON.stringify(body) : undefined,
+    }).then(async (r) => ({ status: r.status, body: await r.json() as any }));
+  const state = async (pid = p.publicId) => (await call(`/p/${pid}/state`)).body;
+
+  assert.equal((await as('view', undefined, 'wrong')).status, 403, 'not without its key');
+  assert.equal((await state()).featured, null, 'nothing yet');
+
+  // The player's own timer, link on.
+  const own = (await call('/timer', { body: { managedBy: 'player', config: { baseSeconds: H, public: { enabled: true } } } })).body;
+  assert.equal((await as('add', { timerId: own.id, timerKey: own.directorKey })).status, 403, "only as the timer's player");
+  assert.equal((await as('add', { timerId: own.id, timerKey: own.playerKey })).status, 200);
+  let s = await state();
+  assert.equal(s.name, 'Toy');
+  assert.equal(s.featured.publicId, own.publicId);
+  assert.equal(JSON.stringify(s).includes(own.id), false, 'the timer id stays private');
+
+  // A director's timer shows only once the player is given the link.
+  const dir = (await call('/timer', { body: { managedBy: 'director', config: { baseSeconds: 2 * H, public: { enabled: true } } } })).body;
+  await as('add', { timerId: dir.id, timerKey: dir.playerKey });
+  assert.equal((await state()).others.length, 0);
+  await call(`/timer/${dir.id}/configure`, { key: dir.directorKey, body: { config: { public: { enabled: true, shareWithPlayer: true } } } });
+  s = await state();
+  assert.equal(s.featured.publicId, dir.publicId, 'the most recently added comes first');
+  assert.equal(s.others[0].publicId, own.publicId);
+
+  // Link off: it leaves the page.
+  await call(`/timer/${dir.id}/configure`, { key: dir.directorKey, body: { config: { public: { enabled: false } } } });
+  assert.equal((await state()).featured.publicId, own.publicId);
+
+  // Ended: in the past list only if the player shows it.
+  await call(`/timer/${own.id}/release`, { key: own.playerKey, body: {} });
+  s = await state();
+  assert.equal(s.featured, null);
+  assert.equal(s.history.length, 0, 'history is off unless switched on');
+  assert.equal((await as('settings', { showHistory: true })).body.showHistory, true);
+  s = await state();
+  assert.equal(s.history.length, 1);
+  assert.equal(s.history[0].status, 'released');
+
+  // Deleted from the device: gone from the page.
+  await as('remove', { timerId: own.id });
+  assert.equal((await state()).history.length, 0);
+
+  // The page, widget and badge.
+  const page = await call(`/p/${p.publicId}`);
+  assert.equal(page.status, 200);
+  assert.ok(String(page.body).includes('Toy&#39;s Chastity Timer'), 'the name, escaped, in the preview');
+  assert.ok(String((await call(`/p/${p.publicId}/badge.svg`)).body).includes('Not locked up'));
+  assert.equal((await call(`/p/${p.publicId}/embed`)).status, 200);
+
+  // A new link: the old one stops working.
+  const moved = (await as('new-link', {})).body;
+  assert.notEqual(moved.publicId, p.publicId);
+  assert.equal((await call(`/p/${p.publicId}`)).status, 404);
+  assert.equal((await call(`/p/${moved.publicId}/state`)).status, 200);
+
+  // Moved to another device: the old key no longer works.
+  const rekeyed = (await as('rekey', {})).body;
+  assert.ok(rekeyed.key && rekeyed.key !== p.key);
+  assert.equal((await as('view')).status, 403);
+  assert.equal((await as('view', undefined, rekeyed.key)).status, 200);
+});
+
 console.log(`\n${passed} passed`);

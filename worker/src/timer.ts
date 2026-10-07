@@ -254,6 +254,16 @@ export class ChastityTimer {
       if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
       return reply(viewFor(this.state(meta), 'public', now));
     }
+    // For a player's profile page (never routed from outside): the public
+    // view, only if this timer may be shown there - its link is on, and a
+    // director's timer only if the director gave the player the link.
+    if (op === 'profile-view') {
+      if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
+      if (meta.config.managedBy === 'director' && !meta.config.public.shareWithPlayer) {
+        return reply({ error: 'not shown' }, 404);
+      }
+      return reply(viewFor(this.state(meta), 'public', now));
+    }
     if (op === 'public-vote') {
       if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
       const delta = (body.direction === -1 ? -1 : 1) * meta.config.public.stepSeconds;

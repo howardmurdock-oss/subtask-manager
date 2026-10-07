@@ -20,9 +20,19 @@
  */
 
 import { ChastityTimer, randomToken, sha256Hex } from './timer.ts';
-import { expiredPage, publicPage } from './public_page.ts';
+import { expiredPage, profileGonePage, publicPage } from './public_page.ts';
 import { badgeSvg, embedPage, endedEmbedPage, previewText, type PublicView } from './embed.ts';
 import { pngResponse } from './preview_images.ts';
+import {
+  addProfileTimer,
+  cleanName,
+  ensureProfileTables,
+  profileByPublicId,
+  profileState,
+  profileSummary,
+  profileWithKey,
+  removeProfileTimer,
+} from './profile.ts';
 import { DOWNLOADS, hasStatsPassword, isBot, releaseUrl, statsPage, summarize, type CountRow } from './download_stats.ts';
 
 export { ChastityTimer };
@@ -1079,8 +1089,8 @@ function timerEndedPage(): Response {
 }
 
 /** The forum image. A minute's caching keeps a post that goes wide cheap. */
-function badgeResponse(view: PublicView | null): Response {
-  return new Response(badgeSvg(view), {
+function badgeResponse(view: PublicView | null, whenNone: 'ended' | 'idle' = 'ended'): Response {
+  return new Response(badgeSvg(view, whenNone), {
     headers: {
       'content-type': 'image/svg+xml; charset=utf-8',
       'cache-control': 'public, max-age=60',
@@ -1151,6 +1161,115 @@ async function handlePublicTimer(request: Request, env: Env, publicId: string, o
     }));
   }
   return withCors(json({ error: 'not found' }, 404));
+}
+
+// ---------------------------------------------------------------------------
+// A player's public page (see profile.ts)
+// ---------------------------------------------------------------------------
+
+async function handleProfileCreate(request: Request, env: Env): Promise<Response> {
+  const body: any = await request.json().catch(() => ({}));
+  await ensureProfileTables(env.DB);
+  const id = randomToken(16);
+  const publicId = randomToken(9);
+  const key = randomToken(24);
+  const name = cleanName(body.name);
+  await env.DB.prepare(
+    'INSERT INTO profiles (id, public_id, key_hash, name, show_history, created_at) VALUES (?, ?, ?, ?, 0, ?)',
+  )
+    .bind(id, publicId, await sha256Hex(key), name, Date.now())
+    .run();
+  // The key goes to the player's app alone; only its hash is kept here.
+  return json({ profileId: id, publicId, key, name, showHistory: false, timers: [] });
+}
+
+async function handleProfileOp(request: Request, env: Env, profileId: string, op: string): Promise<Response> {
+  // The app sends it in the header its timer requests use.
+  const key = request.headers.get('X-Profile-Key') ?? request.headers.get('X-Timer-Key');
+  const row = await profileWithKey(env.DB, profileId, key, sha256Hex);
+  if (!row) return json({ error: 'not your profile' }, 403);
+  const body: any = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
+  const timerId = typeof body.timerId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(body.timerId) ? body.timerId : null;
+
+  switch (op) {
+    case 'view':
+      return json(await profileSummary(env.DB, row));
+
+    case 'settings': {
+      const name = 'name' in body ? cleanName(body.name) : row.name;
+      const showHistory = typeof body.showHistory === 'boolean' ? (body.showHistory ? 1 : 0) : row.show_history;
+      await env.DB.prepare('UPDATE profiles SET name = ?, show_history = ? WHERE id = ?').bind(name, showHistory, row.id).run();
+      return json(await profileSummary(env.DB, { ...row, name, show_history: showHistory }));
+    }
+
+    case 'add': {
+      // Only a timer this device is the player on: its key proves it.
+      if (!timerId || typeof body.timerKey !== 'string') return json({ error: 'bad-timer' }, 400);
+      const check = await callTimer(env, timerId, 'view', {}, body.timerKey);
+      if (!check.ok) return json({ error: 'not your timer' }, 403);
+      const view = (await check.json()) as { role?: string };
+      if (view.role !== 'player') return json({ error: 'not-player' }, 403);
+      await addProfileTimer(env.DB, row.id, timerId);
+      return json(await profileSummary(env.DB, row));
+    }
+
+    case 'remove':
+      if (!timerId) return json({ error: 'bad-timer' }, 400);
+      await removeProfileTimer(env.DB, row.id, timerId);
+      return json(await profileSummary(env.DB, row));
+
+    case 'new-link': {
+      // The old link stops working at once, as a timer's does.
+      const publicId = randomToken(9);
+      await env.DB.prepare('UPDATE profiles SET public_id = ? WHERE id = ?').bind(publicId, row.id).run();
+      return json(await profileSummary(env.DB, { ...row, public_id: publicId }));
+    }
+
+    case 'rekey': {
+      // Moving the profile to another device: the new device gets a fresh
+      // key, and the one it was moved from can no longer change it.
+      const key = randomToken(24);
+      await env.DB.prepare('UPDATE profiles SET key_hash = ? WHERE id = ?').bind(await sha256Hex(key), row.id).run();
+      return json({ ...(await profileSummary(env.DB, row)), key });
+    }
+  }
+  return json({ error: 'not found' }, 404);
+}
+
+async function handlePublicProfile(env: Env, publicId: string, op: string): Promise<Response> {
+  const row = await profileByPublicId(env.DB, publicId);
+  if (!row) {
+    if (op === 'embed') return new Response(endedEmbedPage(), { headers: EMBED_HEADERS });
+    if (op === 'badge.svg') return badgeResponse(null);
+    if (op === 'badge.png' || op === 'preview.png') return pngResponse(op === 'preview.png' ? 'preview' : 'badge', 'ended');
+    if (op === 'state') return withCors(json({ error: 'no such profile' }, 404));
+    return new Response(profileGonePage(), { status: 404, headers: PAGE_HEADERS });
+  }
+  await ensureTimerLinksTable(env);
+  const state = await profileState(env.DB, row, async (timerId, timerPublicId) => {
+    const r = await callTimer(env, timerId, 'profile-view', { publicId: timerPublicId });
+    return r.ok ? ((await r.json()) as PublicView) : null;
+  });
+  const url = `https://subtaskmanager.com/p/${publicId}`;
+
+  switch (op) {
+    case 'state':
+      return withCors(json(state));
+    case 'embed':
+      return new Response(embedPage(url, true), { headers: EMBED_HEADERS });
+    case 'badge.svg':
+      return badgeResponse(state.featured, 'idle');
+    case 'badge.png':
+    case 'preview.png':
+      return pngResponse(op === 'preview.png' ? 'preview' : 'badge', state.featured ? 'locked' : 'unlocked');
+  }
+  const preview = state.featured
+    ? previewText(state.featured)
+    : { title: 'Chastity Timer', description: 'Not locked up right now.', state: 'unlocked' as const };
+  if (state.name) preview.title = preview.title.replace('Chastity Timer', `${state.name}'s Chastity Timer`);
+  return new Response(publicPage(publicId, env.TURNSTILE_SITE_KEY ?? null, preview, { profile: true }), {
+    headers: PAGE_HEADERS,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1290,6 +1409,25 @@ export default {
       // Starting a timer needs no key: limited per address.
       if (!(await withinLimit(env.TIMER_CREATE_LIMIT, ip))) return slowDown();
       return handleTimerCreate(request, env).catch((e) => json({ error: String(e) }, 500));
+    }
+    if (request.method === 'POST' && url.pathname === '/profile') {
+      if (!(await withinLimit(env.TIMER_CREATE_LIMIT, `profile:${ip}`))) return slowDown();
+      return handleProfileCreate(request, env).catch((e) => json({ error: String(e) }, 500));
+    }
+    const profileRoute = url.pathname.match(/^\/profile\/([A-Za-z0-9_-]{8,64})\/([a-z-]+)$/);
+    if (profileRoute) {
+      if (!(await withinLimit(env.TIMER_OP_LIMIT, `profile:${profileRoute[1]}`))) return slowDown();
+      return handleProfileOp(request, env, profileRoute[1], profileRoute[2]).catch((e) => json({ error: String(e) }, 500));
+    }
+    const publicProfileRoute = url.pathname.match(/^\/p\/([A-Za-z0-9_-]{6,32})(?:\/(state|embed|badge\.svg|badge\.png|preview\.png))?\/?$/);
+    if (publicProfileRoute && (request.method === 'GET' || request.method === 'HEAD' || request.method === 'OPTIONS')) {
+      if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
+      const op = publicProfileRoute[2] ?? '';
+      if (op === 'state' && !(await withinLimit(env.TIMER_PUBLIC_LIMIT, ip))) return withCors(slowDown());
+      return handlePublicProfile(env, publicProfileRoute[1], op).catch((e) => withCors(json({ error: String(e) }, 500)));
+    }
+    if (url.pathname.startsWith('/p/') && (request.method === 'GET' || request.method === 'HEAD')) {
+      return new Response(profileGonePage(), { status: 404, headers: PAGE_HEADERS });
     }
     const timerRoute = url.pathname.match(/^\/timer\/([A-Za-z0-9_-]{8,64})\/([a-z-]+)$/);
     if (timerRoute) {
