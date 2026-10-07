@@ -663,6 +663,7 @@ class _TimerDetailViewState extends State<TimerDetailView> {
   static const _orderStatus = {
     'queued': 'waiting',
     'active': 'in progress',
+    'reviewing': 'being checked',
     'completed': 'done',
     'failed': 'failed',
     'expired': 'ran out of time',

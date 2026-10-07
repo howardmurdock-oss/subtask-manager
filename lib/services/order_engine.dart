@@ -590,6 +590,9 @@ class OrderEngine extends ChangeNotifier {
     final index = _activeOrders.indexWhere((o) => o.id == activeOrderId);
     if (index == -1) return;
     final active = _activeOrders[index];
+    // Already settled - a late approval after it was approved for them, say:
+    // its tokens are not paid twice.
+    if (active.status == OrderStatus.completed || active.status == OrderStatus.failed) return;
 
     final reward = active.order.rewardTokens;
     final now = DateTime.now();
@@ -651,6 +654,7 @@ class OrderEngine extends ChangeNotifier {
     final index = _activeOrders.indexWhere((o) => o.id == activeOrderId);
     if (index == -1) return;
     final active = _activeOrders[index];
+    if (active.status == OrderStatus.completed || active.status == OrderStatus.failed) return;
 
     final penalty = active.order.penaltyTokens;
     final now = DateTime.now();

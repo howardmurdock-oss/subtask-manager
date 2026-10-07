@@ -9,6 +9,7 @@ import '../core/notifications/notification_service.dart';
 import '../core/security/proof_crypto.dart';
 import '../models/active_order.dart';
 import '../models/chastity_timer.dart';
+import '../models/order_item.dart';
 import 'chastity_timer_service.dart';
 import 'order_engine.dart';
 
@@ -26,16 +27,28 @@ enum PublicProofDestination {
 
 /// A public order's link to its timer, kept until its result is reported.
 class _Delivery {
-  _Delivery({required this.timerId, required this.no, this.issuerKey, required this.proofTo, this.reported = false});
+  _Delivery({
+    required this.timerId,
+    required this.no,
+    this.issuerKey,
+    required this.proofTo,
+    this.reported = false,
+    this.submitted = false,
+  });
 
   final String timerId;
   final int no;
   final String? issuerKey;
   final PublicProofTo proofTo;
+
+  /// Settled: its result is with the Worker, and nothing more will come.
   bool reported;
 
+  /// Done with proof, which waits for its recipient to approve or reject.
+  bool submitted;
+
   Map<String, dynamic> toJson() =>
-      {'timerId': timerId, 'no': no, 'issuerKey': issuerKey, 'proofTo': proofTo.name, 'reported': reported};
+      {'timerId': timerId, 'no': no, 'issuerKey': issuerKey, 'proofTo': proofTo.name, 'reported': reported, 'submitted': submitted};
 
   factory _Delivery.fromJson(Map<String, dynamic> j) => _Delivery(
         timerId: j['timerId'] as String,
@@ -43,6 +56,7 @@ class _Delivery {
         issuerKey: j['issuerKey'] as String?,
         proofTo: j['proofTo'] == 'issuer' ? PublicProofTo.issuer : PublicProofTo.director,
         reported: j['reported'] == true,
+        submitted: j['submitted'] == true,
       );
 }
 
@@ -131,11 +145,21 @@ class PublicOrderBridge {
     if (d == null) return 'not-active';
     _inFlight.add(order.id);
     try {
-      final proof = d.proofTo == PublicProofTo.issuer && d.issuerKey != null
-          ? _encryptProof(d.issuerKey!, imageBase64: imageBase64, note: note)
-          : null;
-      final error = await timers.reportPublicOrder(d.timerId, d.no, completed: true, proof: proof);
+      final toSender = d.proofTo == PublicProofTo.issuer && d.issuerKey != null;
+      final proof = toSender ? _encryptProof(d.issuerKey!, imageBase64: imageBase64, note: note) : null;
+      // A photo for its sender is theirs to approve: it waits, and its
+      // tokens with it, until they do - or the time to decide runs out.
+      final checked = toSender && order.order.verificationType == VerificationType.photoProof;
+      final error = checked
+          ? await timers.submitPublicOrder(d.timerId, d.no, proof: proof)
+          : await timers.reportPublicOrder(d.timerId, d.no, completed: true, proof: proof);
       if (error != null && error != 'not-active') return error;
+      if (checked && error == null) {
+        d.submitted = true;
+        await _save();
+        engine.submitOrCompleteOrder(order.id, proofNote: note, proofImageBase64: imageBase64);
+        return null;
+      }
       d.reported = true;
       await _save();
       engine.completeOrder(order.id, proofNote: note);
@@ -194,7 +218,14 @@ class PublicOrderBridge {
       final d = _deliveries[id];
       if (d == null || d.reported) continue;
       final order = engine.activeOrders.where((o) => o.id == id).firstOrNull;
-      if (f.status == 'expired') {
+      if (d.submitted && (f.status == 'completed' || f.status == 'failed')) {
+        // The verdict on its proof - or approval for want of one.
+        d.reported = true;
+        if (order != null && f.status == 'completed') engine.completeOrder(id);
+        if (order != null && f.status == 'failed') {
+          engine.failOrder(id, reason: d.proofTo == PublicProofTo.issuer ? 'Rejected by whoever sent it' : 'Rejected');
+        }
+      } else if (f.status == 'expired') {
         d.reported = true;
         if (order != null && order.status != OrderStatus.completed && order.status != OrderStatus.failed) {
           engine.failOrder(id, reason: 'Ran out of time');
@@ -243,13 +274,31 @@ class PublicOrderBridge {
         case OrderStatus.failed:
           _report(e.key, e.value, completed: false);
         case OrderStatus.underReview:
-          // Proof for the director waits for their review; any other kind
-          // is sent on, and the order completed here.
+          if (e.value.submitted) break;
+          // Proof for the director: the Worker holds it as being checked, so
+          // it does not run out of time while they look. Any other kind is
+          // sent on, and the order completed here.
           final to = destinationOf(order)?.to;
-          if (to != PublicProofDestination.director) _report(e.key, e.value, completed: true, withProof: order);
+          if (to == PublicProofDestination.director) {
+            _markSubmitted(e.key, e.value);
+          } else {
+            _report(e.key, e.value, completed: true, withProof: order);
+          }
         default:
           break;
       }
+    }
+  }
+
+  Future<void> _markSubmitted(String id, _Delivery d) async {
+    _inFlight.add(id);
+    try {
+      final error = await timers.submitPublicOrder(d.timerId, d.no);
+      if (error != null && error != 'not-active') return;
+      d.submitted = true;
+      await _save();
+    } finally {
+      _inFlight.remove(id);
     }
   }
 

@@ -526,4 +526,53 @@ await check('a timer without public orders takes none, and the page says so', as
   assert.equal(r.body.error, 'orders-off');
 });
 
+await check('photo proof is approved or rejected by whoever receives it', async () => {
+  const sha = async (t: string) =>
+    [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const issuerKey = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.publicKey))));
+  const make = async (proofTo: string) => (await call('/timer', {
+    body: { managedBy: 'player', config: { baseSeconds: 10 * H, public: { enabled: true }, publicOrders: {
+      enabled: true, proofTo, perVisitorDaily: 5,
+      orders: [{ id: 'check', title: 'Cage check', verification: 'photoProof', durationType: 'deadlineCountdown', deadlineMinutes: 5 }],
+    } } },
+  })).body;
+  const send = async (t: any, ip: string, receipt: string) =>
+    (await call(`/t/${t.publicId}/order`, { body: { orderId: 'check', issuerKey, receiptHash: await sha(receipt) }, ip })).body.no as number;
+  const mine = async (t: any) => (await call(`/timer/${t.id}/view`, { key: t.playerKey })).body.orders;
+  const result = (t: any, no: number, body: object) => call(`/timer/${t.id}/order-result`, { key: t.playerKey, body: { no, ...body } });
+  const feed = async (t: any) => (await call(`/t/${t.publicId}/state`)).body.orders.feed;
+  const review = (t: any, no: number, receipt: string, verdict: string) =>
+    call(`/t/${t.publicId}/review`, { body: { no, receipt, verdict } });
+
+  // To the sender: they decide.
+  const t = await make('issuer');
+  const a = await send(t, '10.9.0.1', 'r-a');
+  assert.equal((await result(t, a, { result: 'submitted', proof: 'PHOTO' })).status, 200);
+  assert.equal((await feed(t))[0].status, 'reviewing');
+  assert.ok((await feed(t))[0].reviewDue > Date.now());
+  assert.equal((await result(t, a, { result: 'completed' })).body.error, 'awaiting-sender', 'not the player\'s to decide');
+  assert.equal((await review(t, a, 'wrong', 'approve')).status, 409, 'only with its receipt');
+  assert.equal((await call(`/t/${t.publicId}/proof`, { body: { no: a, receipt: 'r-a' } })).body.proof, 'PHOTO', 'viewable while being checked');
+  assert.equal((await review(t, a, 'r-a', 'approve')).status, 200);
+  assert.equal((await feed(t))[0].status, 'completed');
+  assert.equal((await review(t, a, 'r-a', 'reject')).status, 409, 'decided once');
+
+  // Rejected: failed. And the queue moves on meanwhile.
+  const b = await send(t, '10.9.0.2', 'r-b');
+  await result(t, b, { result: 'submitted', proof: 'PHOTO2' });
+  const c = await send(t, '10.9.0.3', 'r-c');
+  assert.equal((await mine(t)).active.no, c, 'delivered while the last one is checked');
+  await review(t, b, 'r-b', 'reject');
+  assert.equal((await feed(t)).find((f: any) => f.no === b).status, 'failed');
+
+  // To the director: the player reports their verdict, after any delay.
+  const d = await make('director');
+  const n = await send(d, '10.9.0.4', 'r-d');
+  await result(d, n, { result: 'submitted' });
+  assert.equal((await feed(d))[0].status, 'reviewing');
+  assert.equal((await result(d, n, { result: 'completed' })).status, 200);
+  assert.equal((await feed(d))[0].status, 'completed');
+});
+
 console.log(`\n${passed} passed`);

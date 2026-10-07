@@ -43,6 +43,7 @@ class TimerNotice {
 
       if (msg.payload['check'] == 'public') return await _announcePublic(prefs, timerId);
       if (msg.payload['check'] == 'order') return await _announceOrder(prefs, timerId);
+      if (msg.payload['check'] == 'review') return await _announceVerdict(prefs, timerId, msg.payload['no']);
 
       final summary = msg.payload['summary'] as String?;
       if (summary == null || summary.isEmpty) return false;
@@ -122,6 +123,28 @@ class TimerNotice {
     final active = ChastityTimerView.fromJson(response.body).orders?.active;
     if (active == null) return false;
     await PublicOrderBridge.announce(timerId, active.no, active.def);
+    return true;
+  }
+
+  /// The verdict on a public order's proof, as the Worker has it.
+  static Future<bool> _announceVerdict(SharedPreferences prefs, String timerId, Object? no) async {
+    final record = _recordOf(prefs, timerId);
+    if (record == null || record.role != TimerRole.player || no is! num) return false;
+    final response = await ChastityTimerService.fetchView(timerId, record.key);
+    if (!response.ok) return false;
+    final feed = ChastityTimerView.fromJson(response.body).orders?.feed ?? const [];
+    final entry = feed.where((f) => f.no == no.toInt()).firstOrNull;
+    if (entry == null || (entry.status != 'completed' && entry.status != 'failed')) return false;
+    final key = 'review-$timerId-${entry.no}';
+    final done = List<String>.from(prefs.getStringList(PublicOrderBridge.announcedKey) ?? const <String>[]);
+    if (done.contains(key)) return false;
+    await prefs.setStringList(PublicOrderBridge.announcedKey, [...done, key]);
+    await NotificationService.showGenericNotification(
+      title: entry.status == 'completed' ? 'Proof approved' : 'Proof rejected',
+      body: entry.status == 'completed'
+          ? (entry.auto ? '${entry.title}: nobody checked it in time, so it counts as done.' : '${entry.title}: approved.')
+          : '${entry.title}: rejected. It counts as failed.',
+    );
     return true;
   }
 

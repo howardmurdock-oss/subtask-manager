@@ -683,20 +683,24 @@ class PublicOrderActive {
 
 /// One line of the feed: what was ordered, and how it went.
 class PublicOrderFeedEntry {
-  const PublicOrderFeedEntry({required this.no, required this.title, required this.status, required this.at});
+  const PublicOrderFeedEntry({required this.no, required this.title, required this.status, required this.at, this.auto = false});
 
   final int no;
   final String title;
 
-  /// queued, active, completed, failed, expired, skipped or cancelled.
+  /// queued, active, reviewing, completed, failed, expired, skipped or cancelled.
   final String status;
   final DateTime at;
+
+  /// Approved because nobody checked its proof in time.
+  final bool auto;
 
   factory PublicOrderFeedEntry.fromJson(Map<String, dynamic> json) => PublicOrderFeedEntry(
         no: (json['no'] as num).toInt(),
         title: json['title'] as String? ?? '',
         status: json['status'] as String? ?? '',
         at: DateTime.fromMillisecondsSinceEpoch((json['at'] as num?)?.toInt() ?? 0),
+        auto: json['auto'] == true,
       );
 }
 

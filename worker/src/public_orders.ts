@@ -109,6 +109,14 @@ export function sanitizePublicOrders(raw: any): PublicOrdersConfig {
 
 /** How long the player has, from delivery: the order's own deadline, or a
  * day for orders with none, so the queue never stalls for good. */
+/** How long whoever receives the proof has to approve or reject it: twice
+ * the order's own time, or an hour for orders with none. Past that it is
+ * approved for them - the player did their part. */
+export function reviewWindowMs(def: PublicOrderDef): number {
+  const timed = (def.durationType === 'deadlineCountdown' || def.durationType === 'actionWithDeadline') && def.deadlineMinutes > 0;
+  return 2 * (timed ? def.deadlineMinutes : 30) * 60 * 1000;
+}
+
 export function orderLimitMs(def: PublicOrderDef): number {
   if ((def.durationType === 'deadlineCountdown' || def.durationType === 'actionWithDeadline') && def.deadlineMinutes > 0) {
     return def.deadlineMinutes * 60 * 1000 + DUE_GRACE_MS;
@@ -127,7 +135,8 @@ export function validIssuerKey(v: unknown): string | null {
   }
 }
 
-export type OrderStatus = 'queued' | 'active' | 'completed' | 'failed' | 'expired' | 'skipped' | 'cancelled';
+/** 'reviewing': done, proof sent, waiting for its recipient to approve. */
+export type OrderStatus = 'queued' | 'active' | 'reviewing' | 'completed' | 'failed' | 'expired' | 'skipped' | 'cancelled';
 
 export interface OrderRow {
   no: number;
@@ -139,6 +148,8 @@ export interface OrderRow {
   doneAt: number | null;
   issuerKey: string | null;
   hasProof: boolean;
+  /** While being checked: when it is approved if nobody decides. */
+  reviewDue: number | null;
 }
 
 /** One line of the page's feed: what was ordered, and how it went. */
@@ -149,6 +160,9 @@ export interface FeedEntry {
   at: number;
   doneAt: number | null;
   hasProof: boolean;
+  reviewDue: number | null;
+  /** Approved because nobody checked it in time. */
+  auto: boolean;
 }
 
 /** The queue, in a timer's own storage. */
@@ -172,6 +186,14 @@ export class OrderQueue {
          proof TEXT,
          proof_expires INTEGER)`,
     );
+    // Added with proof review; tables from before lack them.
+    for (const column of ['review_due INTEGER', 'auto INTEGER']) {
+      try {
+        sql.exec(`ALTER TABLE public_orders ADD COLUMN ${column}`);
+      } catch {
+        // Already there.
+      }
+    }
   }
 
   private row(r: Record<string, SqlStorageValue>): OrderRow {
@@ -185,7 +207,59 @@ export class OrderQueue {
       doneAt: (r.done_at as number | null) ?? null,
       issuerKey: (r.issuer_key as string | null) ?? null,
       hasProof: r.proof != null,
+      reviewDue: (r.review_due as number | null) ?? null,
     };
+  }
+
+  private byNo(no: number): OrderRow | null {
+    const r = this.sql.exec(`SELECT * FROM public_orders WHERE no = ?`, no).toArray()[0];
+    return r ? this.row(r) : null;
+  }
+
+  /** The player has done it and sent proof: it waits for whoever receives
+   * the proof to approve or reject it. The next order can be delivered. */
+  submit(no: number, proof: string | null, now: number): boolean {
+    const active = this.active();
+    if (!active || active.no !== no) return false;
+    const reviewDue = now + reviewWindowMs(active.def);
+    this.sql.exec(
+      `UPDATE public_orders SET status = 'reviewing', review_due = ?, proof = ?, proof_expires = ? WHERE no = ?`,
+      reviewDue, proof, proof ? Math.max(reviewDue, now + PROOF_TTL_MS) : null, no,
+    );
+    return true;
+  }
+
+  /** Whether order [no] waits on its sender's verdict - not the player's. */
+  awaitsSender(no: number): boolean {
+    const row = this.byNo(no);
+    return row?.status === 'reviewing' && row.issuerKey != null;
+  }
+
+  /** The sender's verdict on the proof, with their order's receipt. */
+  review(no: number, receiptHash: string, approve: boolean, now: number): boolean {
+    const r = this.sql.exec(`SELECT status, receipt_hash FROM public_orders WHERE no = ?`, no).toArray()[0];
+    if (!r || r.status !== 'reviewing' || r.receipt_hash !== receiptHash) return false;
+    this.sql.exec(
+      `UPDATE public_orders SET status = ?, done_at = ?, review_due = NULL WHERE no = ?`,
+      approve ? 'completed' : 'failed', now, no,
+    );
+    return true;
+  }
+
+  /** Proof nobody checked in time is approved. Returns which. */
+  autoApprove(now: number): number[] {
+    const due = this.sql
+      .exec(`SELECT no FROM public_orders WHERE status = 'reviewing' AND review_due < ?`, now)
+      .toArray()
+      .map((r) => r.no as number);
+    if (due.length) {
+      this.sql.exec(
+        `UPDATE public_orders SET status = 'completed', auto = 1, done_at = review_due, review_due = NULL
+          WHERE status = 'reviewing' AND review_due < ?`,
+        now,
+      );
+    }
+    return due;
   }
 
   /** Waiting or in progress. */
@@ -241,13 +315,17 @@ export class OrderQueue {
     return this.active();
   }
 
-  /** The player's result for the active order. */
+  /** The player's result: for the order in progress, or - with the
+   * director's verdict - one being checked. Proof already kept stays. */
   finish(no: number, result: 'completed' | 'failed', proof: string | null, now: number): boolean {
-    const active = this.active();
-    if (!active || active.no !== no) return false;
+    const row = this.byNo(no);
+    if (!row || (row.status !== 'active' && row.status !== 'reviewing')) return false;
     this.sql.exec(
-      `UPDATE public_orders SET status = ?, done_at = ?, proof = ?, proof_expires = ? WHERE no = ?`,
-      result, now, proof, proof ? now + PROOF_TTL_MS : null, no,
+      `UPDATE public_orders SET status = ?, done_at = ?, review_due = NULL,
+         proof = COALESCE(?, proof),
+         proof_expires = CASE WHEN COALESCE(?, proof) IS NULL THEN NULL ELSE MAX(COALESCE(proof_expires, 0), ?) END
+       WHERE no = ?`,
+      result, now, proof, proof, now + PROOF_TTL_MS, no,
     );
     return true;
   }
@@ -261,7 +339,11 @@ export class OrderQueue {
 
   feed(limit = 20): FeedEntry[] {
     return this.sql
-      .exec(`SELECT no, def, at, status, done_at, proof IS NOT NULL AS has_proof FROM public_orders ORDER BY no DESC LIMIT ?`, limit)
+      .exec(
+        `SELECT no, def, at, status, done_at, review_due, auto, proof IS NOT NULL AS has_proof
+           FROM public_orders ORDER BY no DESC LIMIT ?`,
+        limit,
+      )
       .toArray()
       .map((r) => ({
         no: r.no as number,
@@ -270,6 +352,8 @@ export class OrderQueue {
         at: r.at as number,
         doneAt: (r.done_at as number | null) ?? null,
         hasProof: Boolean(r.has_proof),
+        reviewDue: (r.review_due as number | null) ?? null,
+        auto: Boolean(r.auto),
       }));
   }
 
@@ -291,8 +375,10 @@ export class OrderQueue {
    * proof due for deletion. */
   nextWake(): number {
     const due = this.sql.exec(`SELECT MIN(due_at) AS t FROM public_orders WHERE status = 'active'`).one().t as number | null;
+    const review = this.sql.exec(`SELECT MIN(review_due) AS t FROM public_orders WHERE status = 'reviewing'`).one()
+      .t as number | null;
     const proof = this.sql.exec(`SELECT MIN(proof_expires) AS t FROM public_orders WHERE proof_expires IS NOT NULL`).one()
       .t as number | null;
-    return Math.min(due ?? Infinity, proof ?? Infinity);
+    return Math.min(due ?? Infinity, review ?? Infinity, proof ?? Infinity);
   }
 }

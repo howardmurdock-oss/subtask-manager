@@ -194,11 +194,47 @@ void main() {
       expect(bridge.destinationOf(order)?.to, PublicProofDestination.issuer);
       expect(await bridge.submit(order, imageBase64: base64.encode([0xff, 0xd8, 0xff, 1, 2, 3])), isNull);
       final sent = reports().single;
-      expect(sent['result'], 'completed');
+      expect(sent['result'], 'submitted', reason: 'a photo for its sender waits for them to approve it');
       final envelope = jsonDecode(sent['proof'] as String);
       expect(envelope['mime'], 'image/jpeg');
       expect(envelope['epk'], isNotNull);
+      final before = engine.stats.tokens;
+      expect(engine.activeOrders.firstWhere((o) => o.id == 'public-t1-1').status, OrderStatus.underReview);
+      expect(engine.stats.tokens, before, reason: 'no tokens until it is approved');
+
+      // They approve it: done, and its tokens paid.
+      orders = {...orders, 'active': null, 'feed': [{'no': 1, 'title': 'Plank', 'status': 'completed', 'at': now}]};
+      await timers.refresh('t1');
+      await pumpEventQueue();
       expect(engine.activeOrders.firstWhere((o) => o.id == 'public-t1-1').status, OrderStatus.completed);
+      expect(engine.stats.tokens, before + 5);
+    });
+
+    test('a photo its sender rejects counts as failed', () async {
+      final params = ECDomainParameters('secp256r1');
+      final pair = (ECKeyGenerator()
+            ..init(ParametersWithRandom(ECKeyGeneratorParameters(params),
+                FortunaRandom()..seed(KeyParameter(Uint8List.fromList(List.filled(32, 3)))))))
+          .generateKeyPair();
+      orders = {
+        ...orders,
+        'proofTo': 'issuer',
+        'active': {
+          'no': 1,
+          'def': def(verification: 'photoProof'),
+          'deliveredAt': now,
+          'issuerKey': base64.encode((pair.publicKey as ECPublicKey).Q!.getEncoded(false)),
+        },
+      };
+      await timers.addShared(id: 't1', role: TimerRole.player, key: 'P');
+      await pumpEventQueue();
+      await bridge.submit(delivered()!, imageBase64: base64.encode([0xff, 0xd8, 0xff, 9]));
+      orders = {...orders, 'active': null, 'feed': [{'no': 1, 'title': 'Plank', 'status': 'failed', 'at': now}]};
+      await timers.refresh('t1');
+      await pumpEventQueue();
+      final order = engine.activeOrders.firstWhere((o) => o.id == 'public-t1-1');
+      expect(order.status, OrderStatus.failed);
+      expect(order.directorNote, 'Rejected by whoever sent it');
     });
 
     test('proof for the director waits for their review', () async {
@@ -209,7 +245,27 @@ void main() {
       expect(bridge.destinationOf(order)?.directorName, 'Sir');
       engine.submitOrCompleteOrder(order.id, proofImageBase64: 'abc');
       await pumpEventQueue();
-      expect(reports(), isEmpty, reason: 'not until the director has looked');
+      expect(reports().map((r) => r['result']), ['submitted'],
+          reason: 'held as being checked, so it does not run out of time while they look');
+
+      // The director approves: done, and the Worker told.
+      engine.approveProof(order.id);
+      await pumpEventQueue();
+      expect(reports().map((r) => r['result']), ['submitted', 'completed']);
+    });
+
+    test('approved for want of a check: a late approval does not pay twice', () async {
+      await timers.addShared(id: 't1', role: TimerRole.player, key: 'P', partnerCode: 'DIR123', partnerName: 'Sir');
+      await pumpEventQueue();
+      final before = engine.stats.tokens;
+      engine.submitOrCompleteOrder(delivered()!.id, proofImageBase64: 'abc');
+      await pumpEventQueue();
+      orders = {...orders, 'active': null, 'feed': [{'no': 1, 'title': 'Plank', 'status': 'completed', 'at': now, 'auto': true}]};
+      await timers.refresh('t1');
+      await pumpEventQueue();
+      expect(engine.stats.tokens, before + 5);
+      engine.approveProof('public-t1-1');
+      expect(engine.stats.tokens, before + 5, reason: 'already settled');
     });
 
     test('a skip: told to the Worker, and gone without a penalty', () async {

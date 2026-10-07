@@ -643,6 +643,11 @@ class ChastityTimerService extends ChangeNotifier {
   Future<String?> reportPublicOrder(String id, int no, {required bool completed, String? proof}) =>
       _act(id, 'order-result', {'no': no, 'result': completed ? 'completed' : 'failed', if (proof != null) 'proof': proof});
 
+  /// Done, with proof to be checked by whoever receives it - approved or
+  /// rejected by them, or approved for them if they take too long.
+  Future<String?> submitPublicOrder(String id, int no, {String? proof}) =>
+      _act(id, 'order-result', {'no': no, 'result': 'submitted', if (proof != null) 'proof': proof});
+
   /// Skips public order [no]: no penalty, and a pause before the next.
   Future<String?> skipPublicOrder(String id, int no) => _act(id, 'order-skip', {'no': no});
 

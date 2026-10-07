@@ -588,9 +588,11 @@ class PlayerDashboardView extends StatelessWidget {
             Navigator.pop(ctx);
             snack(error == 'not-active'
                 ? 'It had already run out of time.'
-                : dest.to == PublicProofDestination.issuer
-                    ? 'Done. Your proof is on its way to whoever sent it.'
-                    : 'Done.');
+                : dest.to == PublicProofDestination.issuer && needsPhoto
+                    ? 'Sent. It counts once whoever sent it approves the photo - or if they leave it too long.'
+                    : dest.to == PublicProofDestination.issuer
+                        ? 'Done. Your proof is on its way to whoever sent it.'
+                        : 'Done.');
           }
 
           Future<void> skip() async {

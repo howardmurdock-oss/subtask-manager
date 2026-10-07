@@ -124,6 +124,8 @@ export class ChastityTimer {
 
   /** Moves public orders on, and wakes the player for one now delivered. */
   private async advanceOrders(meta: Meta, now: number): Promise<void> {
+    // Proof nobody checked in time is approved, and the player told.
+    for (const no of this.orders.autoApprove(now)) await this.announce(meta, 'review', no);
     const delivered = this.orders.advance(this.running(meta, now), meta.ordersPausedUntil ?? null, now);
     if (delivered) await this.announce(meta, 'order');
   }
@@ -251,14 +253,14 @@ export class ChastityTimer {
 
   /** Wakes the player's app to look at the timer. It carries nothing but the
    * timer's id: what was added, and by whom, the app fetches itself. */
-  private async announce(meta: Meta, check: 'public' | 'order' = 'public'): Promise<void> {
+  private async announce(meta: Meta, check: 'public' | 'order' | 'review' = 'public', no?: number): Promise<void> {
     if (!meta.playerTopic) return;
     const message = {
       id: `timer-${crypto.randomUUID()}`,
       type: 'timerChanged',
       senderId: 'timer-service',
       timestamp: new Date().toISOString(),
-      payload: { timerId: meta.id, check },
+      payload: { timerId: meta.id, check, ...(no != null ? { no } : {}) },
     };
     try {
       await deliverToTopic(this.env, meta.playerTopic, JSON.stringify(message));
@@ -364,6 +366,20 @@ export class ChastityTimer {
       return reply({ no, view: this.publicView(meta, now) });
     }
 
+    // The sender's verdict on the proof: only with their order's receipt.
+    if (op === 'public-review') {
+      if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
+      await this.advanceOrders(meta, now);
+      const receiptHash = typeof body.receipt === 'string' && body.receipt.length <= 200 ? await sha256Hex(body.receipt) : '';
+      const no = Number(body.no);
+      if (!this.orders.review(no, receiptHash, body.verdict === 'approve', now)) {
+        return reply({ error: 'not-reviewing', view: this.publicView(meta, now) }, 409);
+      }
+      await this.announce(meta, 'review', no);
+      await this.scheduleCleanup(meta);
+      return reply(this.publicView(meta, now));
+    }
+
     // The sender collecting their proof: only with their order's receipt.
     if (op === 'public-proof') {
       if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
@@ -427,15 +443,25 @@ export class ChastityTimer {
         // The player's own report: done, with any proof, or failed.
         if (role !== 'player') return reply({ error: 'not-allowed' }, 403);
         await this.advanceOrders(meta, now);
-        const result = body.result === 'completed' ? 'completed' : body.result === 'failed' ? 'failed' : null;
+        const result =
+          body.result === 'completed' || body.result === 'failed' || body.result === 'submitted' ? body.result : null;
         if (!result) return reply({ error: 'bad-result' }, 400);
+        const no = Number(body.no);
         const active = this.orders.active();
         // Proof is kept only for a sender who can open it, already encrypted.
         const proof =
-          result === 'completed' && active?.issuerKey && typeof body.proof === 'string' && body.proof.length <= PROOF_MAX_CHARS
+          result !== 'failed' && active?.no === no && active.issuerKey && typeof body.proof === 'string' && body.proof.length <= PROOF_MAX_CHARS
             ? body.proof
             : null;
-        if (!this.orders.finish(Number(body.no), result, proof, now)) return reply({ error: 'not-active' }, 409);
+        if (result === 'submitted') {
+          // Done, with proof to be checked: approved or rejected by whoever
+          // receives it - or approved for them, if they take too long.
+          if (!this.orders.submit(no, proof, now)) return reply({ error: 'not-active' }, 409);
+        } else {
+          // Proof waiting on its sender is theirs to decide, not the player's.
+          if (this.orders.awaitsSender(no)) return reply({ error: 'awaiting-sender' }, 409);
+          if (!this.orders.finish(no, result, proof, now)) return reply({ error: 'not-active' }, 409);
+        }
         await this.advanceOrders(meta, now);
         await this.scheduleCleanup(meta);
         return reply({ ...about(), ...viewFor(this.state(meta), role, now) });

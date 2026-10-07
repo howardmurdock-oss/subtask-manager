@@ -345,7 +345,8 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
   const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
   const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  const statusText = { queued: ['waiting', ''], active: ['in progress', ''], completed: ['done \u2713', 'ok'], failed: ['failed', 'bad'],
+  const statusText = { queued: ['waiting', ''], active: ['in progress', ''], reviewing: ['being checked', ''],
+    completed: ['done \u2713', 'ok'], failed: ['failed', 'bad'],
     expired: ['ran out of time', 'bad'], skipped: ['skipped', ''], cancelled: ['cancelled', ''] };
   const orderReasons = {
     'visitor-cap': "You've sent all the orders you can today. Come back tomorrow.",
@@ -423,12 +424,13 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
       const [label, tone] = statusText[f.status] || [f.status, ''];
       const right = document.createElement('span');
       right.className = 'st ' + tone;
-      right.textContent = label;
+      // Approved because nobody checked it in time.
+      right.textContent = f.status === 'completed' && f.auto ? 'done \u2713 (not checked)' : label;
       li.append(left);
       if (f.hasProof && ours.has(f.no)) {
         const see = document.createElement('button');
-        see.textContent = 'See proof';
-        see.onclick = () => showProof(ours.get(f.no));
+        see.textContent = f.status === 'reviewing' ? 'Check proof' : 'See proof';
+        see.onclick = () => showProof(ours.get(f.no), f);
         li.append(see);
       } else {
         li.append(right);
@@ -473,13 +475,51 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     render();
   }
 
+  // Approve and Reject, while the proof waits to be checked.
+  function verdict(m, f) {
+    if (!f || f.status !== 'reviewing') return [];
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.marginTop = '14px';
+    const no = Object.assign(document.createElement('button'), { className: 'plain', textContent: 'Reject' });
+    const yes = Object.assign(document.createElement('button'), { textContent: 'Approve' });
+    no.onclick = () => decide(m, false);
+    yes.onclick = () => decide(m, true);
+    row.append(no, yes);
+    const left = f.reviewDue ? Math.max(0, Math.round((f.reviewDue - (Date.now() + offset)) / 60000)) : null;
+    const note = Object.assign(document.createElement('p'), {
+      textContent: 'Does it show the order was done?' + (left != null ? ' If you do not decide within ' + left + ' min, it is approved.' : ''),
+    });
+    note.style.margin = '14px 0 0';
+    return [note, row];
+  }
+
   function showSheet(...nodes) {
     $('shownBody').replaceChildren(...nodes);
     $('shown').hidden = false;
   }
   $('shownClose').onclick = () => { $('shown').hidden = true; $('shownBody').replaceChildren(); };
 
-  async function showProof(m) {
+  // The sender's verdict on their order's proof.
+  async function decide(m, approve) {
+    try {
+      const r = await fetch(ordersBase() + '/review', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ no: m.no, receipt: m.receipt, verdict: approve ? 'approve' : 'reject' }),
+      });
+      const res = await r.json();
+      const v = r.ok ? res : res.view;
+      if (v) { view = isProfile ? { ...v, publicId: view.publicId } : v; offset = v.now - Date.now(); }
+      $('msg').textContent = r.ok
+        ? (approve ? 'Approved. They get the tokens for it.' : "Rejected. It counts as failed.")
+        : 'Too late to decide - it has already been settled.';
+    } catch { $('msg').textContent = "That didn't go through. Check your connection."; }
+    $('shown').hidden = true;
+    ordersShown = '';
+    render();
+  }
+
+  async function showProof(m, f) {
     if (!(await adultCheck())) return;
     const text = (t) => Object.assign(document.createElement('p'), { textContent: t });
     try {
@@ -503,9 +543,9 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
         const img = document.createElement('img');
         img.alt = 'Proof';
         img.src = URL.createObjectURL(new Blob([plain], { type: env.mime }));
-        showSheet(title, img, text('Only this browser can open it, and only until a day after it was sent.'));
+        showSheet(title, img, ...verdict(m, f), text('Only this browser can open it, and only until a day after it was sent.'));
       } else {
-        showSheet(title, text(new TextDecoder().decode(plain)));
+        showSheet(title, text(new TextDecoder().decode(plain)), ...verdict(m, f));
       }
     } catch { showSheet(text("Couldn't open this proof.")); }
   }

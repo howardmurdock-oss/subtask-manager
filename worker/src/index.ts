@@ -1168,6 +1168,16 @@ async function handlePublicTimer(request: Request, env: Env, publicId: string, o
     }));
   }
 
+  if (op === 'review' && request.method === 'POST') {
+    const body: any = await request.json().catch(() => ({}));
+    return withCors(await callTimer(env, row.timer_id, 'public-review', {
+      publicId,
+      no: body.no,
+      receipt: body.receipt,
+      verdict: body.verdict === 'approve' ? 'approve' : 'reject',
+    }));
+  }
+
   if (op === 'proof' && request.method === 'POST') {
     // The receipt goes in the body, never the address: an address ends up
     // in logs and histories.
@@ -1467,13 +1477,16 @@ export default {
       if (!(await withinLimit(env.TIMER_OP_LIMIT, timerRoute[1]))) return slowDown();
       return handleTimerOp(request, env, timerRoute[1], timerRoute[2]).catch((e) => json({ error: String(e) }, 500));
     }
-    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote|order|proof|embed|badge\.svg|badge\.png|preview\.png))?\/?$/);
+    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote|order|proof|review|embed|badge\.svg|badge\.png|preview\.png))?\/?$/);
     if (publicRoute) {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
       // The page's own reads and votes, per visitor. Not the page, images or
       // widget: other sites fetch those through one shared address.
       const op = publicRoute[2];
-      if ((op === 'state' || op === 'vote' || op === 'order' || op === 'proof') && !(await withinLimit(env.TIMER_PUBLIC_LIMIT, ip))) {
+      if (
+        (op === 'state' || op === 'vote' || op === 'order' || op === 'proof' || op === 'review') &&
+        !(await withinLimit(env.TIMER_PUBLIC_LIMIT, ip))
+      ) {
         return withCors(slowDown());
       }
       return handlePublicTimer(request, env, publicRoute[1], publicRoute[2] ?? '')
