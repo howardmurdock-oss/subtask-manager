@@ -17,8 +17,10 @@ import 'services/debug_settings.dart';
 import 'views/home_screen.dart';
 import 'views/disguise/panic_decoy_view.dart';
 import 'views/security/pin_lock_screen.dart';
+import 'services/app_links.dart';
+import 'services/public_visitor_service.dart';
 
-void main() async {
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final themeProvider = ThemeProvider();
@@ -50,6 +52,12 @@ void main() async {
   // After init, so partners are told this copy's features under the right
   // pairing code.
   syncService.startFeatureExchange();
+
+  // subtaskmanager:// links ("Open in the app"), and this app as a visitor to
+  // other people's public timers.
+  await AppLinks.instance.init(args);
+  final publicVisitor = PublicVisitorService();
+  await publicVisitor.load();
 
   // Register for push once the pairing code is loaded, so the Worker learns
   // which topic this device answers to. The topic is the same hashed code the
@@ -86,6 +94,7 @@ void main() async {
         ChangeNotifierProvider.value(value: questService),
         ChangeNotifierProvider.value(value: scheduleService),
         ChangeNotifierProvider.value(value: syncService),
+        ChangeNotifierProvider.value(value: publicVisitor),
       ],
       child: const OrdersApp(),
     ),

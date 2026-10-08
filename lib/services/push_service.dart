@@ -11,6 +11,7 @@ import '../core/security/encryption_helper.dart';
 import '../models/sync_message.dart';
 import 'schedule_coordinator.dart';
 import 'schedule_service.dart';
+import 'visitor_notice.dart';
 
 /// Firebase Cloud Messaging transport.
 ///
@@ -531,6 +532,9 @@ class PushService {
             messageText: message.payload['text'] as String? ?? 'New message',
           );
           break;
+        case SyncMessageType.timerChanged:
+          await VisitorNotice.announce(message);
+          return;
         default:
           // Everything else is applied silently when the app next opens; only
           // arrivals a user would want to know about immediately warrant a

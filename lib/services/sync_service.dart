@@ -25,6 +25,8 @@ import 'worker_socket_service.dart';
 import 'chat_service.dart';
 import 'quest_service.dart';
 import 'patreon_sponsorship.dart';
+import 'public_visitor_service.dart';
+import 'visitor_notice.dart';
 
 enum ConnectionRole { none, player, director }
 enum ConnectionStatus { disconnected, listening, connecting, connected }
@@ -1907,6 +1909,8 @@ class SyncService extends ChangeNotifier {
   }
 
   void attachServices(PartnerService partnerService, ChatService chatService, {QuestService? questService}) {
+    // Where this device listens, for orders sent and timers watched from it.
+    PublicVisitorService.ownTopic = () => _pairingCode.isEmpty ? null : _getHashedTopic(_pairingCode);
     _partnerService = partnerService;
     _chatService = chatService;
     if (questService != null) {
@@ -3674,6 +3678,10 @@ class SyncService extends ChangeNotifier {
 
       case SyncMessageType.featureHello:
         await _onFeatureHello(msg);
+        break;
+
+      case SyncMessageType.timerChanged:
+        if (VisitorNotice.isFor(msg)) await VisitorNotice.announce(msg);
         break;
 
       default:

@@ -25,6 +25,9 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  links_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "subtask/links",
+      &flutter::StandardMethodCodec::GetInstance());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -65,6 +68,16 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+    case WM_COPYDATA: {
+      // A link opened while the app is running, from a second start.
+      const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(lparam);
+      if (data && data->dwData == kOpenLinkMessage && links_) {
+        std::string link(static_cast<const char*>(data->lpData), data->cbData);
+        links_->InvokeMethod("open", std::make_unique<flutter::EncodableValue>(link));
+        return TRUE;
+      }
+      break;
+    }
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

@@ -13,6 +13,7 @@ import '../scheduling/schedule_order_dialog.dart';
 import '../../services/quest_service.dart';
 import '../../models/quest_item.dart';
 import '../../widgets/base64_image.dart';
+import '../chastity_timer/timer_teaser_card.dart';
 
 class DirectorDashboardView extends StatelessWidget {
   const DirectorDashboardView({super.key});
@@ -1001,6 +1002,9 @@ class DirectorDashboardView extends StatelessWidget {
           ),
           const SizedBox(height: 24),
         ],
+
+        const ChastityTimerTeaserCard(),
+        const SizedBox(height: 24),
 
         // Active Submissive Quest Protocol Section
         if (submissiveQuest != null && !submissiveQuest.isCompleted) ...[

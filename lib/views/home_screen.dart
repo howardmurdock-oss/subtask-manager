@@ -21,6 +21,9 @@ import '../services/windows_updater.dart';
 import 'pairing/pairing_view.dart';
 import 'settings/settings_view.dart';
 import 'quests/quests_hub_view.dart';
+import '../services/app_links.dart';
+import '../services/public_visitor_service.dart';
+import 'chastity_timer/public_timer_view.dart';
 
 enum AppRole { player, director }
 
@@ -40,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   AppUpdate? _update;
   bool _isRequestDialogShowing = false;
   StreamSubscription<ActiveOrder>? _orderSubscription;
+  StreamSubscription<Uri>? _linkSubscription;
   Timer? _updateTimer;
 
   /// A download from an update that never finished installing.
@@ -69,6 +73,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _checkForUpdate(force: true);
       _checkUnfinishedUpdate();
 
+      // "Open in the app" links: now, and while the app runs.
+      _linkSubscription = AppLinks.instance.links.listen(_openLink);
+      final pending = AppLinks.instance.takePending();
+      if (pending != null) _openLink(pending);
+
       // And again while it stays open. A desktop copy can sit running for
       // days, and would otherwise never ask a second time.
       _updateTimer = Timer.periodic(
@@ -83,7 +92,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _updateTimer?.cancel();
     _orderSubscription?.cancel();
+    _linkSubscription?.cancel();
     super.dispose();
+  }
+
+  /// A subtaskmanager:// link: a public timer or player page to show, or
+  /// the browser's check handing back.
+  Future<void> _openLink(Uri uri) async {
+    if (!mounted) return;
+    if (uri.host == 'verified') {
+      final ok = await Provider.of<PublicVisitorService>(context, listen: false).checkVerified();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ok
+            ? "You're verified. You can vote and send orders from the app now."
+            : "The check hasn't come through yet. Try again in a moment."),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
+    final page = AppLinks.publicPageOf(uri);
+    if (page == null) return;
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => PublicTimerView(kind: page.kind, id: page.id)));
   }
 
   Future<void> _loadSavedRole() async {

@@ -33,6 +33,10 @@ enum SyncMessageType {
   /// Which features this copy of the app has. A copy that never sends one -
   /// anything before 1.0.2 - is taken to have none of them.
   featureHello,
+
+  /// From the Worker: something changed on a public timer - here, one this
+  /// app sent an order to or watches.
+  timerChanged,
 }
 
 class SyncMessage {

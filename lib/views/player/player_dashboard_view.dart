@@ -18,6 +18,7 @@ import '../../models/quest_item.dart';
 import '../quests/player_quest_view.dart';
 import '../../services/debug_settings.dart';
 import '../../widgets/base64_image.dart';
+import '../chastity_timer/timer_teaser_card.dart';
 
 class PlayerDashboardView extends StatelessWidget {
   const PlayerDashboardView({super.key});
@@ -887,6 +888,9 @@ class PlayerDashboardView extends StatelessWidget {
             ),
           ),
         ),
+        const SizedBox(height: 12),
+
+        const ChastityTimerTeaserCard(),
         const SizedBox(height: 12),
 
         // Action Trigger Buttons
