@@ -18,6 +18,7 @@
 import { OrderQueue, PROOF_MAX_CHARS, validIssuerKey } from './public_orders.ts';
 import { deliverToTopic, type Env } from './index.ts';
 import {
+  votesLeft,
   refuse,
   resolve,
   sanitizeConfig,
@@ -180,8 +181,20 @@ export class ChastityTimer {
     };
   }
 
-  private publicView(meta: Meta, now: number) {
-    return { ...viewFor(this.state(meta), 'public', now), orders: this.ordersPublic(meta, now) };
+  /** What the page shows - and, for the visitor asking, what they have
+   * left today. */
+  private publicView(meta: Meta, now: number, visitor?: unknown) {
+    const state = this.state(meta);
+    const view = { ...viewFor(state, 'public', now), orders: this.ordersPublic(meta, now) };
+    if (typeof visitor !== 'string' || !visitor) return view;
+    const cfg = meta.config.publicOrders;
+    return {
+      ...view,
+      you: {
+        votesLeft: votesLeft(state, visitor, now),
+        ordersLeft: cfg?.enabled ? Math.max(0, cfg.perVisitorDaily - this.orders.sentToday(visitor, now)) : 0,
+      },
+    };
   }
 
   private meta(): Meta | null {
@@ -373,7 +386,7 @@ export class ChastityTimer {
     if (op === 'public-view') {
       if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
       await this.advanceOrders(meta, now);
-      return reply(this.publicView(meta, now));
+      return reply(this.publicView(meta, now, body.visitor));
     }
     // For a player's profile page (never routed from outside): the public
     // view, only if this timer may be shown there - its link is on, and a
@@ -384,7 +397,7 @@ export class ChastityTimer {
         return reply({ error: 'not shown' }, 404);
       }
       await this.advanceOrders(meta, now);
-      return reply(this.publicView(meta, now));
+      return reply(this.publicView(meta, now, body.visitor));
     }
 
     // A visitor's order, from the approved list.
@@ -392,7 +405,7 @@ export class ChastityTimer {
       if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
       await this.advanceOrders(meta, now);
       const cfg = meta.config.publicOrders;
-      const refuseOrder = (error: string) => reply({ error, view: this.publicView(meta, now) }, 409);
+      const refuseOrder = (error: string) => reply({ error, view: this.publicView(meta, now, body.visitor) }, 409);
       if (!cfg?.enabled || !meta.config.public.enabled) return refuseOrder('orders-off');
       if (!this.running(meta, now)) return refuseOrder('not-running');
       if ((meta.ordersPausedUntil ?? 0) > now) return refuseOrder('paused');
@@ -411,7 +424,7 @@ export class ChastityTimer {
       const no = this.orders.add(def, visitor, issuerKey, receiptHash, now, issuerTopic);
       await this.advanceOrders(meta, now);
       await this.scheduleCleanup(meta);
-      return reply({ no, view: this.publicView(meta, now) });
+      return reply({ no, view: this.publicView(meta, now, body.visitor) });
     }
 
     // The sender's verdict on the proof: only with their order's receipt.
@@ -421,11 +434,11 @@ export class ChastityTimer {
       const receiptHash = typeof body.receipt === 'string' && body.receipt.length <= 200 ? await sha256Hex(body.receipt) : '';
       const no = Number(body.no);
       if (!this.orders.review(no, receiptHash, body.verdict === 'approve', now)) {
-        return reply({ error: 'not-reviewing', view: this.publicView(meta, now) }, 409);
+        return reply({ error: 'not-reviewing', view: this.publicView(meta, now, body.visitor) }, 409);
       }
       await this.announce(meta, 'review', no);
       await this.scheduleCleanup(meta);
-      return reply(this.publicView(meta, now));
+      return reply(this.publicView(meta, now, body.visitor));
     }
 
     // An app watching the timer from its public page: told when it ends.
@@ -461,7 +474,7 @@ export class ChastityTimer {
       );
       if (delta > 0) await this.notePublicAdd(meta, delta, now);
       await this.scheduleCleanup(meta);
-      return reply(this.publicView(meta, now));
+      return reply(this.publicView(meta, now, body.visitor));
     }
 
     const role = await this.roleOf(meta, request.headers.get('X-Timer-Key'));

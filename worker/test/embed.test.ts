@@ -49,7 +49,9 @@ test('the timer page and the ended page carry link-preview tags', async () => {
   const { publicPage, expiredPage } = await import('../src/public_page.ts');
   const page = publicPage('abc123XYZ', null, { title: 'Chastity Timer · 2d 4h left', description: 'Vote.', state: 'locked' });
   assert.match(page, /<meta property="og:title" content="Chastity Timer · 2d 4h left">/);
-  assert.match(page, /<meta property="og:image" content="https:\/\/subtaskmanager\.com\/t\/abc123XYZ\/preview\.png">/);
+  // The state is in the picture's address, so a chat app that kept the last
+  // picture fetches the new one.
+  assert.match(page, /<meta property="og:image" content="https:\/\/subtaskmanager\.com\/t\/abc123XYZ\/preview\.png\?s=(locked|unlocked)">/);
   assert.match(page, /twitter:card" content="summary_large_image"/);
   const ended = expiredPage();
   assert.match(ended, /og:title" content="Chastity Timer · Timer ended"/);

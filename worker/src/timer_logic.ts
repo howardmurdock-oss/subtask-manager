@@ -185,6 +185,22 @@ export function resolve(state: TimerState, now: number): Resolved {
 // Checking a change before it is stored
 // ---------------------------------------------------------------------------
 
+/**
+ * How many more votes [visitor] may cast today: their own allowance, or the
+ * timer's daily cap for the public, whichever runs out first.
+ */
+export function votesLeft(state: TimerState, visitor: string, now: number): number {
+  const { config } = state;
+  if (!config.public.enabled) return 0;
+  const history = resolve(state, now).history;
+  const step = config.public.stepSeconds;
+  const mine = config.public.perVisitorDailySeconds -
+    usedInDay(history, now, (e) => e.actor === 'public' && e.visitor === visitor);
+  const cap = config.public.dailyCapSeconds;
+  const everyone = cap == null ? Infinity : cap - usedInDay(history, now, (e) => e.actor === 'public');
+  return Math.max(0, Math.floor(Math.min(mine, everyone) / step));
+}
+
 /** Seconds of change [matches] made in the 24h before [now]. */
 function usedInDay(history: TimerEvent[], now: number, matches: (e: TimerEvent) => boolean): number {
   return history

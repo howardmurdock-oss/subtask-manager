@@ -1113,12 +1113,23 @@ function badgeResponse(view: PublicView | null, whenNone: 'ended' | 'idle' = 'en
  * this link and today, so nothing identifying is stored.
  */
 async function visitorOf(request: Request, env: Env, publicId: string, turnstileToken: unknown): Promise<string | null> {
-  const day = new Date().toISOString().slice(0, 10);
   const device = await deviceOf(env.DB, request, sha256Hex);
-  if (device) return (await sha256Hex(`device:${device}:${publicId}:${day}`)).slice(0, 16);
+  if (device) return visitorId(`device:${device}`, publicId);
   const ip = request.headers.get('CF-Connecting-IP');
   if (!(await verifyTurnstile(env, turnstileToken, ip))) return null;
-  return (await sha256Hex(`${ip ?? 'unknown'}:${publicId}:${day}`)).slice(0, 16);
+  return visitorId(ip ?? 'unknown', publicId);
+}
+
+/** The same visitor, for showing them what they have left - no check, as
+ * it only reads. */
+async function visitorLooking(request: Request, env: Env, publicId: string): Promise<string> {
+  const device = await deviceOf(env.DB, request, sha256Hex);
+  return visitorId(device ? `device:${device}` : request.headers.get('CF-Connecting-IP') ?? 'unknown', publicId);
+}
+
+async function visitorId(who: string, publicId: string): Promise<string> {
+  const day = new Date().toISOString().slice(0, 10);
+  return (await sha256Hex(`${who}:${publicId}:${day}`)).slice(0, 16);
 }
 
 async function handlePublicTimer(request: Request, env: Env, publicId: string, op: string): Promise<Response> {
@@ -1162,7 +1173,8 @@ async function handlePublicTimer(request: Request, env: Env, publicId: string, o
   if (!row) return withCors(json({ error: 'no such timer' }, 404));
 
   if (op === 'state' && request.method === 'GET') {
-    return withCors(await callTimer(env, row.timer_id, 'public-view', { publicId }));
+    const visitor = await visitorLooking(request, env, publicId);
+    return withCors(await callTimer(env, row.timer_id, 'public-view', { publicId, visitor }));
   }
 
   if (op === 'order' && request.method === 'POST') {
@@ -1290,7 +1302,7 @@ async function handleProfileOp(request: Request, env: Env, profileId: string, op
   return json({ error: 'not found' }, 404);
 }
 
-async function handlePublicProfile(env: Env, publicId: string, op: string): Promise<Response> {
+async function handlePublicProfile(request: Request, env: Env, publicId: string, op: string): Promise<Response> {
   const row = await profileByPublicId(env.DB, publicId);
   if (!row) {
     if (op === 'embed') return new Response(endedEmbedPage(), { headers: EMBED_HEADERS });
@@ -1301,7 +1313,9 @@ async function handlePublicProfile(env: Env, publicId: string, op: string): Prom
   }
   await ensureTimerLinksTable(env);
   const state = await profileState(env.DB, row, async (timerId, timerPublicId) => {
-    const r = await callTimer(env, timerId, 'profile-view', { publicId: timerPublicId });
+    // Only the page's own state needs who is looking.
+    const visitor = op === 'state' ? await visitorLooking(request, env, timerPublicId) : undefined;
+    const r = await callTimer(env, timerId, 'profile-view', { publicId: timerPublicId, visitor });
     return r.ok ? ((await r.json()) as PublicView) : null;
   });
   const url = `https://subtaskmanager.com/p/${publicId}`;
@@ -1504,7 +1518,7 @@ export default {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
       const op = publicProfileRoute[2] ?? '';
       if (op === 'state' && !(await withinLimit(env.TIMER_PUBLIC_LIMIT, ip))) return withCors(slowDown());
-      return handlePublicProfile(env, publicProfileRoute[1], op).catch((e) => withCors(json({ error: String(e) }, 500)));
+      return handlePublicProfile(request, env, publicProfileRoute[1], op).catch((e) => withCors(json({ error: String(e) }, 500)));
     }
     if (url.pathname.startsWith('/p/') && (request.method === 'GET' || request.method === 'HEAD')) {
       return new Response(profileGonePage(), { status: 404, headers: PAGE_HEADERS });

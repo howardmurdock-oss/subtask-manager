@@ -207,6 +207,7 @@ class _PublicTimerViewState extends State<PublicTimerView> with WidgetsBindingOb
         extra = 'Locked for ${_span(now.difference(start))} so far';
       }
     }
+    final votes = page.votesLeft;
     final canVote = t != null && t['acceptingVotes'] == true && t['openEnded'] != true;
     final step = Duration(seconds: (t?['stepSeconds'] as num?)?.toInt() ?? 600);
     return Card(
@@ -223,7 +224,7 @@ class _PublicTimerViewState extends State<PublicTimerView> with WidgetsBindingOb
               Expanded(
                 child: FilledButton(
                   style: FilledButton.styleFrom(backgroundColor: Colors.pinkAccent, foregroundColor: Colors.black),
-                  onPressed: _busy || t['atMaximum'] == true
+                  onPressed: _busy || t['atMaximum'] == true || votes == 0
                       ? null
                       : () => _act(() => _visitor.vote(page.timerId!, 1), 'Time added. Thanks for voting.'),
                   child: Text('Add ${_span(step)}'),
@@ -234,12 +235,23 @@ class _PublicTimerViewState extends State<PublicTimerView> with WidgetsBindingOb
                 Expanded(
                   child: FilledButton(
                     style: FilledButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black),
-                    onPressed: _busy ? null : () => _act(() => _visitor.vote(page.timerId!, -1), 'Time removed. Thanks for voting.'),
+                    onPressed: _busy || votes == 0
+                        ? null
+                        : () => _act(() => _visitor.vote(page.timerId!, -1), 'Time removed. Thanks for voting.'),
                     child: Text('Remove ${_span(step)}'),
                   ),
                 ),
               ],
             ]),
+            if (votes != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                votes == 0
+                    ? 'No votes left for you today. Come back tomorrow.'
+                    : 'You have $votes vote${votes == 1 ? '' : 's'} left today.',
+                style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
+              ),
+            ],
           ],
         ]),
       ),
@@ -270,14 +282,16 @@ class _PublicTimerViewState extends State<PublicTimerView> with WidgetsBindingOb
       Text('SEND AN ORDER', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: theme.colorScheme.primary)),
       const SizedBox(height: 4),
       Text(
-        orders['accepting'] == true
-            ? (toSender
+        orders['accepting'] == true && page.ordersLeft == 0
+            ? "You've sent all the orders you can today. Come back tomorrow."
+            : orders['accepting'] == true
+            ? (page.ordersLeft != null ? 'You can send ${page.ordersLeft} more today. ' : '') + (toSender
                 ? 'They carry it out in their app. If it needs a photo, it comes to you here, to approve or reject.'
                 : 'They carry it out in their app. Photo proof goes to whoever manages the timer.')
             : (_reasons[orders['reason']] ?? 'Not taking orders right now.'),
         style: muted,
       ),
-      if (orders['accepting'] == true)
+      if (orders['accepting'] == true && page.ordersLeft != 0)
         for (final def in list)
           Card(
             child: ListTile(

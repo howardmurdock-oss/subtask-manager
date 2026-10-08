@@ -50,7 +50,7 @@ export function publicPage(
         url,
         title: preview.title,
         description: preview.description,
-        image: `${url}/preview.png`,
+        image: `${url}/preview.png?s=${preview.state}`,
         tone: preview.state === 'locked' ? '#f472b6' : '#34d399',
       })
     : '';
@@ -68,9 +68,25 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   :root { --bg:#0e0f14; --card:#171922; --line:#262a36; --text:#eef0f6; --muted:#9aa0b4; --accent:#22d3ee; --add:#f472b6; --remove:#34d399; }
   @media (prefers-color-scheme: light) { :root { --bg:#f5f6fa; --card:#fff; --line:#e3e5ee; --text:#161823; --muted:#5d6275; } }
   * { box-sizing: border-box; }
-  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px;
+  body { margin:0; min-height:100vh; display:flex; padding:16px; box-sizing:border-box;
          background:var(--bg); color:var(--text); font:16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  main { width:100%; max-width:420px; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:28px 22px; text-align:center; }
+  /* Centred, but never cut off at the top when taller than the window. */
+  main { margin:auto; width:100%; max-width:420px; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:28px 22px; text-align:center; }
+  .left { margin-top:10px; font-size:13px; color:var(--muted); min-height:18px; }
+  .cols { display:block; }
+  /* A wide screen, with orders to show: the timer on the left, the orders on
+     the right, as a grid of cards. */
+  @media (min-width: 980px) {
+    main.wide { max-width:1120px; padding:28px; }
+    main.wide .cols { display:grid; grid-template-columns:400px 1fr; grid-template-rows:auto 1fr; column-gap:32px; align-items:start; }
+    main.wide .col-timer { grid-column:1; grid-row:1; }
+    main.wide .col-lists { grid-column:1; grid-row:2; }
+    main.wide .orders { grid-column:2; grid-row:1 / span 2; margin-top:0; padding-top:0; border-top:0; padding-left:32px; border-left:1px solid var(--line); }
+    main.wide #orderList { display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:12px; }
+    main.wide #orderList .order { margin-top:0; display:flex; flex-direction:column; }
+    main.wide #orderList .order button { margin-top:auto; flex:none; }
+    main.wide #orderList .order .meta { margin-bottom:10px; }
+  }
   .label { font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); }
   h1 { font-size:20px; margin:6px 0 18px; }
   .time { font-variant-numeric: tabular-nums; font-size:clamp(34px, 11vw, 52px); font-weight:800; letter-spacing:.02em; margin:4px 0; }
@@ -87,10 +103,11 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   .made { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); font-size:13px; color:var(--muted); }
   .made a { color:var(--accent); font-weight:700; text-decoration:none; }
   .made a:hover { text-decoration:underline; }
-  .openapp { display:block; margin-top:18px; padding:13px 10px; border-radius:14px; border:1px solid var(--accent);
-             color:var(--accent); font-weight:700; text-decoration:none; }
+  .openapp { display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap; margin:-6px 0 20px;
+             padding:10px 12px; border-radius:14px; border:1px solid var(--accent); color:var(--accent);
+             font-weight:700; text-decoration:none; font-size:15px; }
   .openapp:hover { background:rgba(34,211,238,.1); }
-  .openapp small { display:block; font-weight:400; color:var(--muted); margin-top:2px; }
+  .openapp small { font-weight:400; color:var(--muted); font-size:12px; }
   .list { margin-top:20px; padding-top:14px; border-top:1px solid var(--line); text-align:left; }
   .list .label { font-size:11px; margin-bottom:6px; }
   .list ul { list-style:none; margin:0; padding:0; }
@@ -124,7 +141,13 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
 </style>
 </head>
 <body>
-<main>
+<main id="page">
+  <!-- The same timer in the app: vote and order there, get proof there, and
+       be told when it ends. Without the app, this goes to the download. -->
+  <a class="openapp" id="openApp" href="https://www.subtaskmanager.com/?from=open-in-app#downloads">Open in the app
+    <small>vote, send orders and get told when it ends</small></a>
+  <div class="cols">
+  <section class="col-timer">
   <div class="label">Chastity Timer</div>
   <h1 id="headline">Someone is locked up</h1>
   <div class="time" id="time">&nbsp;</div>
@@ -134,23 +157,25 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     <button class="add" id="add" disabled>Add time</button>
     <button class="remove" id="remove" disabled hidden>Remove time</button>
   </div>
+  <div class="left" id="votesLeft"></div>
   <div id="cf"></div>
   <div class="msg" id="msg" role="status"></div>
   <div class="foot" id="votefoot">Each vote counts once toward a daily limit set by the person who's locked.</div>
-  <div class="orders" id="orders" hidden>
+  </section>
+  <section class="orders" id="orders" hidden>
     <div class="label">Send an order</div>
     <div class="note" id="ordersNote"></div>
     <div id="orderList"></div>
     <div class="label" style="margin-top:18px">Orders so far</div>
     <ul class="feed" id="feedList"></ul>
     <div class="note" id="feedEmpty">None yet.</div>
-  </div>
+  </section>
+  <!-- After the orders on a phone; under the timer on a wide screen. -->
+  <section class="col-lists">
   <div class="list" id="also" hidden><div class="label">Also running</div><ul id="alsoList"></ul></div>
   <div class="list" id="past" hidden><div class="label">Past timers</div><ul id="pastList"></ul></div>
-  <!-- The same timer in the app: vote and order there, get proof there, and
-       be told when it ends. Without the app, this goes to the download. -->
-  <a class="openapp" id="openApp" href="https://www.subtaskmanager.com/?from=open-in-app#downloads">Open in the app
-    <small>Vote and send orders from the app, and get told when it ends</small></a>
+  </section>
+  </div>
   <!-- Back to the website: a link that goes wide brings people to the app.
        Tagged so those visits can be told apart from others. -->
   <div class="made">Made with <a href="https://subtaskmanager.com/?from=timer">(sub)Task Manager</a> · <a href="https://subtaskmanager.com/?from=timer">Get the app</a></div>
@@ -277,7 +302,13 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     $('add').textContent = 'Add ' + step;
     $('remove').textContent = 'Remove ' + step;
     $('remove').hidden = !view.allowRemove;
-    const canVote = view.acceptingVotes && (!siteKey || token);
+    // What this visitor has left today.
+    const you = view.you || null;
+    const votes = you && view.acceptingVotes && !view.openEnded ? you.votesLeft : null;
+    $('votesLeft').textContent = votes == null ? ''
+      : votes === 0 ? 'No votes left for you today. Come back tomorrow.'
+      : 'You have ' + votes + ' vote' + (votes === 1 ? '' : 's') + ' left today.';
+    const canVote = view.acceptingVotes && (!siteKey || token) && votes !== 0;
     $('add').disabled = !canVote || view.atMaximum;
     $('remove').disabled = !canVote;
     // Said outright: a greyed-out button alone looks broken.
@@ -395,19 +426,25 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   function renderOrders() {
     const o = view && view.orders;
     $('orders').hidden = !(o && o.enabled);
+    // Two columns on a wide screen - only when there are orders for one.
+    $('page').classList.toggle('wide', !!(o && o.enabled));
     if (!o || !o.enabled) return;
+    const ordersLeft = view.you ? view.you.ordersLeft : null;
     const key = JSON.stringify(o) + (token ? 1 : 0) + mine().length;
     if (key === ordersShown) return;
     ordersShown = key;
     const notes = { 'paused': orderReasons.paused, 'full': orderReasons.full, 'not-running': orderReasons['not-running'] };
-    $('ordersNote').textContent = o.accepting
+    $('ordersNote').textContent = o.accepting && ordersLeft === 0
+      ? "You've sent all the orders you can today. Come back tomorrow."
+      : o.accepting
       ? 'Pick one to send. They carry it out in the app, and how it went shows here.' +
+        (ordersLeft != null ? ' You can send ' + ordersLeft + ' more today.' : '') +
         (o.proofTo === 'issuer'
           ? ' If it needs a photo, the photo comes to you - in this browser only, for a day.'
           : " Photo proof goes to the person who manages this timer, not to you.") +
         (o.waiting ? ' ' + o.waiting + ' waiting ahead of yours.' : '')
       : notes[o.reason] || '';
-    $('orderList').replaceChildren(...(o.accepting ? o.list : []).map((def) => {
+    $('orderList').replaceChildren(...(o.accepting && ordersLeft !== 0 ? o.list : []).map((def) => {
       const card = document.createElement('div');
       card.className = 'order';
       const h = document.createElement('h3'); h.textContent = def.title;

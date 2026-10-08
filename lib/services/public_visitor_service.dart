@@ -41,6 +41,10 @@ class PublicPage {
 
   String? get name => kind == 'p' ? state['name'] as String? : null;
 
+  /// What this app has left today: votes and orders.
+  int? get votesLeft => (timer?['you'] as Map?)?['votesLeft'] as int?;
+  int? get ordersLeft => (timer?['you'] as Map?)?['ordersLeft'] as int?;
+
   Map<String, dynamic>? get orders {
     final o = timer?['orders'];
     return o is Map && o['enabled'] == true ? Map<String, dynamic>.from(o) : null;
@@ -203,7 +207,8 @@ class PublicVisitorService extends ChangeNotifier {
   // ---- Pages ------------------------------------------------------------------------
 
   Future<PublicPage?> fetch(String kind, String id) async {
-    final response = await _call('GET', Uri.parse('$siteBase/$kind/$id/state'));
+    // As this device, so the page says what it has left today.
+    final response = await _call('GET', Uri.parse('$siteBase/$kind/$id/state'), headers: _deviceHeaders);
     return response.ok ? PublicPage(kind: kind, id: id, state: response.body) : null;
   }
 
