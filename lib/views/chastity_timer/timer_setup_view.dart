@@ -12,6 +12,7 @@ import '../../services/sync_service.dart';
 import 'timer_detail_view.dart';
 import 'timer_format.dart';
 import 'public_orders_editor.dart';
+import '../../services/timer_presets.dart';
 
 /// Setting up a timer. A director sets one up for a player, and manages it;
 /// a player can set up their own, optionally with a director who may change
@@ -95,6 +96,191 @@ class _TimerSetupViewState extends State<TimerSetupView> {
     _noticeController.dispose();
     _rewardController.dispose();
     super.dispose();
+  }
+
+  // ---- Saved settings -------------------------------------------------------
+
+  /// The screen's settings, to save. Not the combination's digits, nor who
+  /// the timer is for.
+  Map<String, dynamic> _settings() => {
+        'base': _base.inSeconds,
+        'hidden': _hidden,
+        'openEnded': _openEnded,
+        'ceilingOn': _ceilingOn,
+        'ceiling': _ceiling.inSeconds,
+        'directorCanAdd': _directorCanAdd,
+        'directorCanRemove': _directorCanRemove,
+        'directorUnlimited': _directorUnlimited,
+        'directorCap': _directorCap.inSeconds,
+        'randomOn': _randomOn,
+        'randomEvery': _randomEvery.inSeconds,
+        'randomRemoveUpTo': _randomRemoveUpTo.inSeconds,
+        'randomAddUpTo': _randomAddUpTo.inSeconds,
+        'publicOn': _publicOn,
+        'publicOrders': _publicOrders.toJson(),
+        'publicStep': _publicStep.inSeconds,
+        'publicRemove': _publicRemove,
+        'publicPerVisitor': _publicPerVisitor.inSeconds,
+        'publicUnlimited': _publicUnlimited,
+        'publicCap': _publicCap.inSeconds,
+        'publicShowTime': _publicShowTime,
+        'publicShareWithPlayer': _publicShareWithPlayer,
+        'comboOn': _comboOn,
+        'comboLength': _comboLength,
+        'comboGenerate': _comboGenerate,
+        'notifyOn': _notifyOn,
+        'notice': _noticeController.text,
+        'rewardOn': _rewardOn,
+        'reward': _rewardController.text,
+      };
+
+  /// Puts saved settings back on the screen. Anything missing - saved by an
+  /// older copy - keeps what the screen has.
+  void _apply(Map<String, dynamic> s) {
+    Duration d(String k, Duration now) => s[k] is num ? Duration(seconds: (s[k] as num).toInt()) : now;
+    bool b(String k, bool now) => s[k] is bool ? s[k] as bool : now;
+    setState(() {
+      _base = d('base', _base);
+      _hidden = b('hidden', _hidden);
+      _openEnded = b('openEnded', _openEnded);
+      _ceilingOn = b('ceilingOn', _ceilingOn);
+      _ceiling = d('ceiling', _ceiling);
+      _directorCanAdd = b('directorCanAdd', _directorCanAdd);
+      _directorCanRemove = b('directorCanRemove', _directorCanRemove);
+      _directorUnlimited = b('directorUnlimited', _directorUnlimited);
+      _directorCap = d('directorCap', _directorCap);
+      _randomOn = b('randomOn', _randomOn);
+      _randomEvery = d('randomEvery', _randomEvery);
+      _randomRemoveUpTo = d('randomRemoveUpTo', _randomRemoveUpTo);
+      _randomAddUpTo = d('randomAddUpTo', _randomAddUpTo);
+      _publicOn = b('publicOn', _publicOn);
+      if (s['publicOrders'] is Map) {
+        _publicOrders = PublicOrdersSettings.fromJson(Map<String, dynamic>.from(s['publicOrders'] as Map));
+      }
+      _publicStep = d('publicStep', _publicStep);
+      _publicRemove = b('publicRemove', _publicRemove);
+      _publicPerVisitor = d('publicPerVisitor', _publicPerVisitor);
+      _publicUnlimited = b('publicUnlimited', _publicUnlimited);
+      _publicCap = d('publicCap', _publicCap);
+      _publicShowTime = b('publicShowTime', _publicShowTime);
+      _publicShareWithPlayer = b('publicShareWithPlayer', _publicShareWithPlayer);
+      _comboOn = b('comboOn', _comboOn);
+      if (s['comboLength'] is num) _comboLength = (s['comboLength'] as num).toInt().clamp(3, 8);
+      _comboGenerate = b('comboGenerate', _comboGenerate);
+      // A fresh combination each time: the digits are never saved.
+      _regenerate();
+      _comboController.clear();
+      _notifyOn = b('notifyOn', _notifyOn);
+      if (s['notice'] is String) _noticeController.text = s['notice'] as String;
+      _rewardOn = b('rewardOn', _rewardOn);
+      if (s['reward'] is String) _rewardController.text = s['reward'] as String;
+    });
+  }
+
+  Future<void> _showPresets() async {
+    final presets = await TimerPresets.all(role: widget.role);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            children: [
+              const Text('Saved settings', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              const Text(
+                "Everything on this page except who it's for and the combination's digits - "
+                'a fresh combination is made, or entered, each time.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              if (presets.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('Nothing saved yet.'),
+                ),
+              for (final p in presets)
+                Card(
+                  child: ListTile(
+                    title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(_describe(p.settings)),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _apply(p.settings);
+                      _snack('Loaded "${p.name}". Check who it\'s for, then start it.');
+                    },
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline_rounded),
+                      tooltip: 'Delete',
+                      onPressed: () async {
+                        await TimerPresets.delete(p.id);
+                        setSheet(() => presets.remove(p));
+                      },
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                icon: const Icon(Icons.bookmark_add_rounded),
+                label: const Text('Save these settings'),
+                onPressed: () async {
+                  final name = await _askName();
+                  if (name == null) return;
+                  await TimerPresets.save(name, widget.role, _settings());
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  _snack('Saved as "$name".');
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _askName() {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save these settings'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 40,
+          decoration: const InputDecoration(labelText: 'Name', hintText: 'e.g. Weekend lock'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isNotEmpty) Navigator.pop(ctx, name);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// "1 day · hidden · public link · 3 orders" - enough to tell them apart.
+  static String _describe(Map<String, dynamic> s) {
+    final base = Duration(seconds: (s['base'] as num?)?.toInt() ?? 0);
+    final orders = s['publicOrders'] is Map ? (s['publicOrders']['orders'] as List?)?.length ?? 0 : 0;
+    return [
+      s['openEnded'] == true ? 'no end time' : formatSpan(base),
+      if (s['hidden'] == true && s['openEnded'] != true) 'hidden',
+      if (s['randomOn'] == true && s['openEnded'] != true) 'random changes',
+      if (s['publicOn'] == true) 'public link',
+      if (s['publicOn'] == true && s['publicOrders'] is Map && s['publicOrders']['enabled'] == true) '$orders orders',
+      if (s['comboOn'] == true) 'combination',
+      if (s['rewardOn'] == true) 'reward',
+    ].join(' · ');
   }
 
   void _regenerate() {
@@ -217,7 +403,16 @@ class _TimerSetupViewState extends State<TimerSetupView> {
     final partnerChosen = _partner != null;
 
     return Scaffold(
-      appBar: AppBar(title: Text(_isDirector ? 'New timer' : 'My timer')),
+      appBar: AppBar(
+        title: Text(_isDirector ? 'New timer' : 'My timer'),
+        actions: [
+          TextButton.icon(
+            icon: const Icon(Icons.bookmarks_rounded, size: 18),
+            label: const Text('Saved settings'),
+            onPressed: _saving ? null : _showPresets,
+          ),
+        ],
+      ),
       body: ListView(
         // Room for the system navigation bar: Android draws the app behind
         // it, and the last lines of this page sat underneath.
