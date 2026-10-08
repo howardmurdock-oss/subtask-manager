@@ -5,7 +5,26 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/public_visitor_service.dart';
-import 'timer_format.dart';
+
+/// "2d 04:15:09": a live countdown.
+String _clock(Duration d) {
+  final s = d.isNegative ? 0 : d.inSeconds;
+  String two(int n) => n.toString().padLeft(2, '0');
+  final clock = '${two(s % 86400 ~/ 3600)}:${two(s % 3600 ~/ 60)}:${two(s % 60)}';
+  return s >= 86400 ? '${s ~/ 86400}d $clock' : clock;
+}
+
+/// "3 days 4 hours", "45 minutes".
+String _span(Duration d) {
+  final total = d.inMinutes.abs();
+  if (total == 0) return '${d.inSeconds.abs()} seconds';
+  final days = total ~/ 1440, hours = total % 1440 ~/ 60, minutes = total % 60;
+  return [
+    if (days > 0) '$days ${days == 1 ? 'day' : 'days'}',
+    if (hours > 0) '$hours ${hours == 1 ? 'hour' : 'hours'}',
+    if (minutes > 0) '$minutes ${minutes == 1 ? 'minute' : 'minutes'}',
+  ].join(' ');
+}
 
 /// Someone else's public timer - or player page - in the app: the countdown,
 /// voting, sending orders, and the proof for this app's own orders.
@@ -174,18 +193,18 @@ class _PublicTimerViewState extends State<PublicTimerView> with WidgetsBindingOb
         big = 'Unlocked';
         small = 'This timer is over';
         final closed = at('closedAt');
-        if (closed != null) extra = 'Ran for ${formatSpan(closed.difference(start))}';
+        if (closed != null) extra = 'Ran for ${_span(closed.difference(start))}';
       } else if (t['openEnded'] == true) {
-        big = formatCountdown(now.difference(start));
+        big = _clock(now.difference(start));
         small = 'locked so far · no end time';
       } else if (end == null) {
         big = '??:??:??';
         small = 'The time left is hidden';
-        extra = 'Locked for ${formatSpan(now.difference(start))} so far';
+        extra = 'Locked for ${_span(now.difference(start))} so far';
       } else {
-        big = formatCountdown(end.difference(now));
+        big = _clock(end.difference(now));
         small = 'left on the timer';
-        extra = 'Locked for ${formatSpan(now.difference(start))} so far';
+        extra = 'Locked for ${_span(now.difference(start))} so far';
       }
     }
     final canVote = t != null && t['acceptingVotes'] == true && t['openEnded'] != true;
@@ -207,7 +226,7 @@ class _PublicTimerViewState extends State<PublicTimerView> with WidgetsBindingOb
                   onPressed: _busy || t['atMaximum'] == true
                       ? null
                       : () => _act(() => _visitor.vote(page.timerId!, 1), 'Time added. Thanks for voting.'),
-                  child: Text('Add ${formatSpan(step)}'),
+                  child: Text('Add ${_span(step)}'),
                 ),
               ),
               if (t['allowRemove'] == true) ...[
@@ -216,7 +235,7 @@ class _PublicTimerViewState extends State<PublicTimerView> with WidgetsBindingOb
                   child: FilledButton(
                     style: FilledButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black),
                     onPressed: _busy ? null : () => _act(() => _visitor.vote(page.timerId!, -1), 'Time removed. Thanks for voting.'),
-                    child: Text('Remove ${formatSpan(step)}'),
+                    child: Text('Remove ${_span(step)}'),
                   ),
                 ),
               ],

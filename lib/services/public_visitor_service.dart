@@ -10,8 +10,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/security/proof_crypto.dart';
-import 'chastity_timer_service.dart';
 import 'push_service.dart';
+
+/// A reply from the Worker: its status and JSON body.
+class VisitorResponse {
+  const VisitorResponse(this.status, this.body);
+
+  final int status;
+  final Map<String, dynamic> body;
+
+  bool get ok => status >= 200 && status < 300;
+  String? get error => body['error'] as String?;
+}
 
 /// A public timer or player page, as anyone may see it.
 class PublicPage {
@@ -82,16 +92,21 @@ class WatchedPage {
 /// secret only it holds. After that it proves itself with the secret.
 class PublicVisitorService extends ChangeNotifier {
   static const String prefsKey = 'public_visitor_v1';
+
+  /// Where this device listens for messages (its relay topic). Set by the
+  /// sync service; sent with orders and watches so this app is told how
+  /// they go.
+  static String? Function()? ownTopic;
   static const String siteBase = 'https://subtaskmanager.com';
 
   /// Swapped out in tests.
   @visibleForTesting
-  static Future<TimerApiResponse> Function(String method, Uri url, {Map<String, String>? headers, Object? body})
+  static Future<VisitorResponse> Function(String method, Uri url, {Map<String, String>? headers, Object? body})
       request = _overHttps;
 
   /// A timer's public page as anyone sees it - for code that runs without
   /// this service, such as a notice handled in the background.
-  static Future<TimerApiResponse> fetchTimerState(String publicId) =>
+  static Future<VisitorResponse> fetchTimerState(String publicId) =>
       request('GET', Uri.parse('$siteBase/t/$publicId/state'));
 
   String? _deviceId;
@@ -161,7 +176,7 @@ class PublicVisitorService extends ChangeNotifier {
   /// page in the browser, which hands back to the app when it is passed.
   Future<String?> startVerification() async {
     _secret ??= _random(32);
-    final topic = ChastityTimerService.ownTopic?.call() ?? _random(16);
+    final topic = ownTopic?.call() ?? _random(16);
     final response = await _call('POST', Uri.parse('${PushService.workerBaseUrl}/device/start'), body: {
       'codeHash': sha256.convert(utf8.encode(topic)).toString(),
       'secretHash': sha256.convert(utf8.encode(_secret!)).toString(),
@@ -212,7 +227,7 @@ class PublicVisitorService extends ChangeNotifier {
       'orderId': def['id'],
       'receiptHash': sha256.convert(utf8.encode(receipt)).toString(),
       if (proofToSender) 'issuerKey': _publicKey,
-      if (ChastityTimerService.ownTopic?.call() != null) 'issuerTopic': ChastityTimerService.ownTopic!.call(),
+      if (ownTopic?.call() != null) 'issuerTopic': ownTopic!.call(),
     });
     final error = _outcome(response);
     if (error == null) {
@@ -261,7 +276,7 @@ class PublicVisitorService extends ChangeNotifier {
     await _save();
     notifyListeners();
     final timerId = page.timerId;
-    final topic = ChastityTimerService.ownTopic?.call();
+    final topic = ownTopic?.call();
     if (timerId == null || topic == null || !_verified) return null;
     final response = await _call('POST', Uri.parse('$siteBase/t/$timerId/watch'),
         headers: _deviceHeaders, body: {'topic': topic, 'on': on});
@@ -271,7 +286,7 @@ class PublicVisitorService extends ChangeNotifier {
   // ---- Plumbing -----------------------------------------------------------------------
 
   /// An error code, with 'verify' for "needs the one-time check first".
-  String? _outcome(TimerApiResponse response) {
+  String? _outcome(VisitorResponse response) {
     if (response.ok) return null;
     final error = response.error ?? 'offline';
     if (error == 'turnstile' || error == 'not-verified') {
@@ -283,12 +298,12 @@ class PublicVisitorService extends ChangeNotifier {
     return error;
   }
 
-  Future<TimerApiResponse> _call(String method, Uri url, {Map<String, String>? headers, Object? body}) async {
+  Future<VisitorResponse> _call(String method, Uri url, {Map<String, String>? headers, Object? body}) async {
     try {
       return await request(method, url, headers: headers, body: body);
     } catch (e) {
       if (kDebugMode) print('PublicVisitorService: $method $url failed: $e');
-      return const TimerApiResponse(0, {'error': 'offline'});
+      return const VisitorResponse(0, {'error': 'offline'});
     }
   }
 
@@ -297,7 +312,7 @@ class PublicVisitorService extends ChangeNotifier {
     return List.generate(bytes, (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
   }
 
-  static Future<TimerApiResponse> _overHttps(String method, Uri url, {Map<String, String>? headers, Object? body}) async {
+  static Future<VisitorResponse> _overHttps(String method, Uri url, {Map<String, String>? headers, Object? body}) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
     try {
       final req = await client.openUrl(method, url).timeout(const Duration(seconds: 10));
@@ -313,7 +328,7 @@ class PublicVisitorService extends ChangeNotifier {
       } catch (_) {
         decoded = {};
       }
-      return TimerApiResponse(res.statusCode, decoded);
+      return VisitorResponse(res.statusCode, decoded);
     } finally {
       client.close(force: true);
     }

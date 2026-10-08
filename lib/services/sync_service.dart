@@ -28,6 +28,8 @@ import 'chastity_timer_service.dart';
 import 'timer_notice.dart';
 import 'patreon_sponsorship.dart';
 import '../models/chastity_timer.dart';
+import 'public_visitor_service.dart';
+import 'visitor_notice.dart';
 
 enum ConnectionRole { none, player, director }
 enum ConnectionStatus { disconnected, listening, connecting, connected }
@@ -1815,6 +1817,7 @@ class SyncService extends ChangeNotifier {
   void attachTimerService(ChastityTimerService timerService) {
     _timerService = timerService;
     ChastityTimerService.ownTopic = () => _pairingCode.isEmpty ? null : _getHashedTopic(_pairingCode);
+    PublicVisitorService.ownTopic = ChastityTimerService.ownTopic;
     timerService.onReward = (view, tokens) {
       _engine.adjustTokens(tokens, 'Completed a chastity timer');
       // The director's dashboard shows the balance it was last sent.
@@ -2034,8 +2037,8 @@ class SyncService extends ChangeNotifier {
   Future<void> _onTimerChanged(SyncMessage msg) async {
     // About someone else's public timer this app sent an order to or
     // watches: it holds no key to it, so the notice reads its public page.
-    if (msg.senderId == 'timer-service' && msg.payload['publicId'] is String) {
-      await TimerNotice.announce(msg);
+    if (VisitorNotice.isFor(msg)) {
+      await VisitorNotice.announce(msg);
       return;
     }
     final timers = _timerService;

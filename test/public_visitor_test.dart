@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:orders_app/core/security/proof_crypto.dart';
 import 'package:orders_app/services/app_links.dart';
-import 'package:orders_app/services/chastity_timer_service.dart';
 import 'package:orders_app/services/public_visitor_service.dart';
 
 /// This app as a visitor to other people's public timers.
@@ -45,31 +44,31 @@ void main() {
       calls = [];
       serverVerified = false;
       proofFor = null;
-      ChastityTimerService.ownTopic = () => 'orders_relay_0123456789abcdef01234567';
+      PublicVisitorService.ownTopic = () => 'orders_relay_0123456789abcdef01234567';
       PublicVisitorService.request = (method, url, {headers, body}) async {
         calls.add((method: method, path: url.path, headers: headers, body: body));
         final device = headers?['X-Device-Id'] == 'dev1' && headers?['X-Device-Secret'] != null;
         switch (url.path) {
           case '/device/start':
-            return const TimerApiResponse(200, {'deviceId': 'dev1'});
+            return const VisitorResponse(200, {'deviceId': 'dev1'});
           case '/device/status':
-            return TimerApiResponse(200, {'verified': device && serverVerified});
+            return VisitorResponse(200, {'verified': device && serverVerified});
         }
         if (url.path.endsWith('/order') || url.path.endsWith('/vote')) {
-          if (!(device && serverVerified)) return const TimerApiResponse(403, {'error': 'turnstile'});
-          return const TimerApiResponse(200, {'no': 7});
+          if (!(device && serverVerified)) return const VisitorResponse(403, {'error': 'turnstile'});
+          return const VisitorResponse(200, {'no': 7});
         }
         if (url.path.endsWith('/proof')) {
-          return proofFor == null ? const TimerApiResponse(404, {'error': 'no proof'}) : TimerApiResponse(200, {'proof': proofFor});
+          return proofFor == null ? const VisitorResponse(404, {'error': 'no proof'}) : VisitorResponse(200, {'proof': proofFor});
         }
-        if (url.path.endsWith('/watch')) return const TimerApiResponse(200, {'watching': true});
-        return const TimerApiResponse(404, {});
+        if (url.path.endsWith('/watch')) return const VisitorResponse(200, {'watching': true});
+        return const VisitorResponse(404, {});
       };
       visitor = PublicVisitorService();
       await visitor.load();
     });
 
-    tearDown(() => ChastityTimerService.ownTopic = null);
+    tearDown(() => PublicVisitorService.ownTopic = null);
 
     test('the first vote asks for the one-time check; after it, no more', () async {
       expect(await visitor.vote('abcdefghijkl', 1), 'verify');
