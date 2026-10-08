@@ -81,6 +81,10 @@ interface Meta {
   orderSkips?: { day: number; used: number };
   /** No public orders are taken or delivered until then: after a skip. */
   ordersPausedUntil?: number | null;
+  /** Apps watching this timer from its public page, told when it ends. */
+  watchers?: string[];
+  /** Whether they have been told. */
+  watchersTold?: boolean;
 }
 
 export async function sha256Hex(text: string): Promise<string> {
@@ -125,7 +129,10 @@ export class ChastityTimer {
   /** Moves public orders on, and wakes the player for one now delivered. */
   private async advanceOrders(meta: Meta, now: number): Promise<void> {
     // Proof nobody checked in time is approved, and the player told.
-    for (const no of this.orders.autoApprove(now)) await this.announce(meta, 'review', no);
+    for (const no of this.orders.autoApprove(now)) {
+      await this.announce(meta, 'review', no);
+      await this.tellIssuer(meta, no);
+    }
     const delivered = this.orders.advance(this.running(meta, now), meta.ordersPausedUntil ?? null, now);
     if (delivered) await this.announce(meta, 'order');
   }
@@ -230,8 +237,15 @@ export class ChastityTimer {
     // with orders waiting.
     const pause = meta.ordersPausedUntil && this.orders.queuedCount() > 0 ? meta.ordersPausedUntil : Infinity;
     const orders = Math.min(this.orders.nextWake(), pause);
+    // Watchers are told when it ends: woken then, if it has an end.
+    const watched = meta.watchers?.length && !meta.watchersTold && status === 'running' && Number.isFinite(endAt) ? endAt : Infinity;
     await this.ctx.storage.setAlarm(
-      Math.min(from + RETAIN_AFTER_CLOSE_MS, Math.max(notice, Date.now()), Math.max(orders, Date.now())),
+      Math.min(
+        from + RETAIN_AFTER_CLOSE_MS,
+        Math.max(notice, Date.now()),
+        Math.max(orders, Date.now()),
+        Math.max(watched, Date.now()),
+      ),
     );
   }
 
@@ -253,6 +267,37 @@ export class ChastityTimer {
 
   /** Wakes the player's app to look at the timer. It carries nothing but the
    * timer's id: what was added, and by whom, the app fetches itself. */
+  /** Tells an app that sent an order or watches this timer - it has no key,
+   * so the message names the public link, for it to look itself. */
+  private async tellApp(meta: Meta, topic: string, check: 'issued' | 'ended', no?: number): Promise<void> {
+    if (!meta.publicId) return;
+    const message = {
+      id: `timer-${crypto.randomUUID()}`,
+      type: 'timerChanged',
+      senderId: 'timer-service',
+      timestamp: new Date().toISOString(),
+      payload: { publicId: meta.publicId, check, ...(no != null ? { no } : {}) },
+    };
+    try {
+      await deliverToTopic(this.env, topic, JSON.stringify(message));
+    } catch {
+      // Best effort.
+    }
+  }
+
+  private async tellIssuer(meta: Meta, no: number): Promise<void> {
+    const topic = this.orders.issuerTopicOf(no);
+    if (topic) await this.tellApp(meta, topic, 'issued', no);
+  }
+
+  /** Once it is over, its watchers are told - once. */
+  private async tellWatchers(meta: Meta, now: number): Promise<void> {
+    if (!meta.watchers?.length || meta.watchersTold || this.running(meta, now)) return;
+    meta.watchersTold = true;
+    this.saveMeta(meta);
+    for (const topic of meta.watchers) await this.tellApp(meta, topic, 'ended');
+  }
+
   private async announce(meta: Meta, check: 'public' | 'order' | 'review' = 'public', no?: number): Promise<void> {
     if (!meta.playerTopic) return;
     const message = {
@@ -279,6 +324,7 @@ export class ChastityTimer {
     }
     this.orders.purgeProofs(Date.now());
     await this.advanceOrders(meta, Date.now());
+    await this.tellWatchers(meta, Date.now());
     const { status, endAt } = resolve(this.state(meta), Date.now());
     const closedAt = status === 'released' ? meta.releasedAt! : endAt;
     if (status === 'running' || Date.now() < closedAt + RETAIN_AFTER_CLOSE_MS) {
@@ -360,7 +406,9 @@ export class ChastityTimer {
       // Proof for the sender needs their key; without one it goes nowhere.
       const issuerKey = cfg.proofTo === 'issuer' ? validIssuerKey(body.issuerKey) : null;
       if (cfg.proofTo === 'issuer' && def.verification === 'photoProof' && !issuerKey) return reply({ error: 'bad-key' }, 400);
-      const no = this.orders.add(def, visitor, issuerKey, receiptHash, now);
+      const issuerTopic =
+        typeof body.issuerTopic === 'string' && /^orders_relay_[0-9a-f]{24}$/.test(body.issuerTopic) ? body.issuerTopic : null;
+      const no = this.orders.add(def, visitor, issuerKey, receiptHash, now, issuerTopic);
       await this.advanceOrders(meta, now);
       await this.scheduleCleanup(meta);
       return reply({ no, view: this.publicView(meta, now) });
@@ -378,6 +426,20 @@ export class ChastityTimer {
       await this.announce(meta, 'review', no);
       await this.scheduleCleanup(meta);
       return reply(this.publicView(meta, now));
+    }
+
+    // An app watching the timer from its public page: told when it ends.
+    if (op === 'public-watch') {
+      if (!meta.publicId || meta.publicId !== body.publicId) return reply({ error: 'no such timer' }, 404);
+      const topic = typeof body.topic === 'string' && /^orders_relay_[0-9a-f]{24}$/.test(body.topic) ? body.topic : null;
+      if (!topic) return reply({ error: 'bad-topic' }, 400);
+      const watchers = new Set(meta.watchers ?? []);
+      if (body.on === false) watchers.delete(topic);
+      else if (watchers.size < 500) watchers.add(topic);
+      meta.watchers = [...watchers];
+      this.saveMeta(meta);
+      await this.scheduleCleanup(meta);
+      return reply({ watching: watchers.has(topic) });
     }
 
     // The sender collecting their proof: only with their order's receipt.
@@ -457,10 +519,12 @@ export class ChastityTimer {
           // Done, with proof to be checked: approved or rejected by whoever
           // receives it - or approved for them, if they take too long.
           if (!this.orders.submit(no, proof, now)) return reply({ error: 'not-active' }, 409);
+          await this.tellIssuer(meta, no);
         } else {
           // Proof waiting on its sender is theirs to decide, not the player's.
           if (this.orders.awaitsSender(no)) return reply({ error: 'awaiting-sender' }, 409);
           if (!this.orders.finish(no, result, proof, now)) return reply({ error: 'not-active' }, 409);
+          await this.tellIssuer(meta, no);
         }
         await this.advanceOrders(meta, now);
         await this.scheduleCleanup(meta);
@@ -472,6 +536,7 @@ export class ChastityTimer {
         await this.advanceOrders(meta, now);
         if (this.skipsLeft(meta, now) <= 0) return reply({ error: 'no-skips' }, 409);
         if (!this.orders.skip(Number(body.no), now)) return reply({ error: 'not-active' }, 409);
+        await this.tellIssuer(meta, Number(body.no));
         const day = Math.floor(now / 86_400_000);
         meta.orderSkips = { day, used: (meta.orderSkips?.day === day ? meta.orderSkips.used : 0) + 1 };
         // A breather: nothing new is taken or delivered for a while.
@@ -570,6 +635,7 @@ export class ChastityTimer {
         meta.releasedAt = now;
         meta.releasedBy = role;
         this.saveMeta(meta);
+        await this.tellWatchers(meta, now);
         await this.scheduleCleanup(meta);
         return reply({ ...about(), ...viewFor(this.state(meta), role, now) });
       }

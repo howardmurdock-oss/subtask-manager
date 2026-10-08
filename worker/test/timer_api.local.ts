@@ -12,7 +12,11 @@ if (!/^http:\/\/(127\.0\.0\.1|localhost)/.test(BASE)) throw new Error('local Wor
 
 const H = 3600;
 let passed = 0;
+// Each check from its own address, so the per-visitor limits are about it
+// alone, not the whole run.
+let visitorIp = '10.0.0.1';
 const check = async (name: string, fn: () => Promise<void>) => {
+  visitorIp = `10.1.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
   await fn();
   passed++;
   console.log(`ok - ${name}`);
@@ -25,7 +29,7 @@ async function call(path: string, init: { method?: string; key?: string; body?: 
     method: init.method ?? (init.body ? 'POST' : 'GET'),
     headers: {
       'content-type': 'application/json',
-      'CF-Connecting-IP': init.ip ?? (path !== '/timer' ? '10.0.0.1' : `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`),
+      'CF-Connecting-IP': init.ip ?? (path !== '/timer' ? visitorIp : `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`),
       ...(init.key ? { 'X-Timer-Key': init.key } : {}),
     },
     body: init.body ? JSON.stringify(init.body) : undefined,
@@ -573,6 +577,38 @@ await check('photo proof is approved or rejected by whoever receives it', async 
   assert.equal((await feed(d))[0].status, 'reviewing');
   assert.equal((await result(d, n, { result: 'completed' })).status, 200);
   assert.equal((await feed(d))[0].status, 'completed');
+});
+
+await check('an app install is verified once, then votes as itself and may watch', async () => {
+  const sha = async (t: string) =>
+    [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const secret = 'device-secret-1';
+  const started = await call('/device/start', { body: { codeHash: await sha('my-topic'), secretHash: await sha(secret) } });
+  assert.equal(started.status, 200);
+  const id = started.body.deviceId;
+  const as = (path: string, init: { method?: string; body?: unknown; secret?: string } = {}) =>
+    fetch(BASE + path, {
+      method: init.method ?? (init.body ? 'POST' : 'GET'),
+      headers: { 'content-type': 'application/json', 'CF-Connecting-IP': '10.77.0.1', 'X-Device-Id': id, 'X-Device-Secret': init.secret ?? secret },
+      body: init.body ? JSON.stringify(init.body) : undefined,
+    }).then(async (r) => ({ status: r.status, body: await r.json() as any }));
+
+  assert.equal((await as('/device/status')).body.verified, false, 'not until the check passes');
+  assert.equal((await as('/device/status', { secret: 'wrong' })).status, 404);
+  const t = (await call('/timer', { body: { managedBy: 'player', config: { baseSeconds: H, public: { enabled: true } } } })).body;
+  assert.equal((await as(`/t/${t.publicId}/watch`, { body: { topic: 'orders_relay_0123456789abcdef01234567' } })).status, 403, 'unverified');
+
+  // The check page confirms it.
+  assert.equal((await call('/app/verify/confirm', { body: { id } })).status, 200);
+  assert.equal((await call('/app/verify/confirm', { body: { id } })).status, 404, 'once');
+  assert.equal((await as('/device/status')).body.verified, true);
+  assert.equal((await call('/app/verify')).status, 200, 'the check page is served');
+
+  assert.equal((await as(`/t/${t.publicId}/vote`, { body: { direction: 1 } })).status, 200);
+  const watched = await as(`/t/${t.publicId}/watch`, { body: { topic: 'orders_relay_0123456789abcdef01234567' } });
+  assert.equal(watched.body.watching, true);
+  // Told when it ends - nothing listens here, but ending must still work.
+  assert.equal((await call(`/timer/${t.id}/release`, { key: t.playerKey, body: {} })).status, 200);
 });
 
 console.log(`\n${passed} passed`);

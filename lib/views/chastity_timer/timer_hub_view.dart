@@ -8,6 +8,7 @@ import 'timer_format.dart';
 import 'timer_setup_view.dart';
 import 'timer_invite.dart';
 import 'timer_profile_view.dart';
+import 'public_timer_view.dart';
 
 /// Every timer this device can reach on one side, running first, and the
 /// way to start a new one.
@@ -117,6 +118,15 @@ class _TimerHubViewState extends State<TimerHubView> {
                   ],
                 ),
               ),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.notifications_active_rounded, color: Colors.amber),
+                title: const Text('Watching', style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: const Text("Other people's public timers you keep an eye on."),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WatchingView())),
+              ),
+            ),
             if (widget.role == TimerRole.player)
               Card(
                 child: ListTile(

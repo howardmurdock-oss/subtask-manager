@@ -87,6 +87,10 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   .made { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); font-size:13px; color:var(--muted); }
   .made a { color:var(--accent); font-weight:700; text-decoration:none; }
   .made a:hover { text-decoration:underline; }
+  .openapp { display:block; margin-top:18px; padding:13px 10px; border-radius:14px; border:1px solid var(--accent);
+             color:var(--accent); font-weight:700; text-decoration:none; }
+  .openapp:hover { background:rgba(34,211,238,.1); }
+  .openapp small { display:block; font-weight:400; color:var(--muted); margin-top:2px; }
   .list { margin-top:20px; padding-top:14px; border-top:1px solid var(--line); text-align:left; }
   .list .label { font-size:11px; margin-bottom:6px; }
   .list ul { list-style:none; margin:0; padding:0; }
@@ -143,6 +147,10 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   </div>
   <div class="list" id="also" hidden><div class="label">Also running</div><ul id="alsoList"></ul></div>
   <div class="list" id="past" hidden><div class="label">Past timers</div><ul id="pastList"></ul></div>
+  <!-- The same timer in the app: vote and order there, get proof there, and
+       be told when it ends. Without the app, this goes to the download. -->
+  <a class="openapp" id="openApp" href="https://www.subtaskmanager.com/?from=open-in-app#downloads">Open in the app
+    <small>Vote and send orders from the app, and get told when it ends</small></a>
   <!-- Back to the website: a link that goes wide brings people to the app.
        Tagged so those visits can be told apart from others. -->
   <div class="made">Made with <a href="https://subtaskmanager.com/?from=timer">(sub)Task Manager</a> · <a href="https://subtaskmanager.com/?from=timer">Get the app</a></div>
@@ -549,6 +557,25 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
       }
     } catch { showSheet(text("Couldn't open this proof.")); }
   }
+
+  // Open in the app: its link opens it if it is installed. If the page is
+  // still in front a moment later, it is not - so on to the download.
+  (() => {
+    const link = $('openApp');
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) { link.hidden = true; return; }
+    const download = link.href;
+    const path = location.pathname.endsWith('/') ? location.pathname.slice(0, -1) : location.pathname;
+    link.href = 'subtaskmanager:/' + path;
+    link.onclick = (e) => {
+      e.preventDefault();
+      let left = false;
+      const away = () => { left = true; };
+      window.addEventListener('blur', away, { once: true });
+      document.addEventListener('visibilitychange', away, { once: true });
+      location.href = link.href;
+      setTimeout(() => { if (!left && !document.hidden) location.href = download; }, 1500);
+    };
+  })();
 
   $('add').onclick = () => vote(1);
   $('remove').onclick = () => vote(-1);

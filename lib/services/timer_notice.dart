@@ -9,6 +9,7 @@ import '../models/sync_message.dart';
 import '../views/chastity_timer/timer_format.dart';
 import 'chastity_timer_service.dart';
 import 'public_order_bridge.dart';
+import 'public_visitor_service.dart';
 
 /// Tells a timer's person what changed on it - once, from whichever path a
 /// `timerChanged` message reaches first: the app, a push woken in the
@@ -37,6 +38,11 @@ class TimerNotice {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
       if (msg.id.isNotEmpty && !await _claim(prefs, msg.id)) return false;
+
+      // This app as a visitor: an order it sent, or a timer it watches.
+      final publicId = msg.payload['publicId'] as String?;
+      if (publicId != null && msg.payload['check'] == 'issued') return await _announceIssued(prefs, publicId, msg.payload['no']);
+      if (publicId != null && msg.payload['check'] == 'ended') return await _announceEnded(prefs, publicId);
 
       final timerId = msg.payload['timerId'] as String?;
       if (timerId == null) return false;
@@ -147,6 +153,43 @@ class TimerNotice {
     );
     return true;
   }
+
+  /// An order this app sent: its proof is ready to check, or it is settled.
+  /// Read from the timer's public page - nothing here proves anything else.
+  static Future<bool> _announceIssued(SharedPreferences prefs, String publicId, Object? no) async {
+    if (no is! num) return false;
+    final page = await PublicVisitorService.fetchTimerState(publicId);
+    if (!page.ok) return false;
+    final orders = page.body['orders'];
+    final feed = orders is Map ? (orders['feed'] as List? ?? const []) : const [];
+    final entry = feed.whereType<Map>().where((f) => f['no'] == no.toInt()).firstOrNull;
+    if (entry == null) return false;
+    final status = entry['status'] as String? ?? '';
+    final title = entry['title'] as String? ?? 'Your order';
+    final text = switch (status) {
+      'reviewing' => entry['hasProof'] == true ? 'Proof is ready - open the timer to approve or reject it.' : null,
+      'completed' => entry['auto'] == true ? 'Done - approved as it was not checked in time.' : 'Done.',
+      'failed' => 'Not done: it counts as failed.',
+      'skipped' => 'Skipped.',
+      'expired' => 'They ran out of time.',
+      _ => null,
+    };
+    if (text == null || !await _claimKey(prefs, 'issued-$publicId-${no.toInt()}-$status')) return false;
+    await NotificationService.showGenericNotification(title: 'Your order: $title', body: text);
+    return true;
+  }
+
+  /// A timer this app watches has ended.
+  static Future<bool> _announceEnded(SharedPreferences prefs, String publicId) async {
+    if (!await _claimKey(prefs, 'ended-$publicId')) return false;
+    await NotificationService.showGenericNotification(
+      title: 'A timer you watch has ended',
+      body: 'Open the app to see how it went.',
+    );
+    return true;
+  }
+
+  static Future<bool> _claimKey(SharedPreferences prefs, String key) => _claim(prefs, key);
 
   static TimerRecord? _recordOf(SharedPreferences prefs, String id) {
     final raw = prefs.getString(ChastityTimerService.recordsKey);

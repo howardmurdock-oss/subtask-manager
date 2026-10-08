@@ -2032,6 +2032,12 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> _onTimerChanged(SyncMessage msg) async {
+    // About someone else's public timer this app sent an order to or
+    // watches: it holds no key to it, so the notice reads its public page.
+    if (msg.senderId == 'timer-service' && msg.payload['publicId'] is String) {
+      await TimerNotice.announce(msg);
+      return;
+    }
     final timers = _timerService;
     final timerId = msg.payload['timerId'] as String?;
     if (timers == null || timerId == null || timers.recordOf(timerId) == null) return;

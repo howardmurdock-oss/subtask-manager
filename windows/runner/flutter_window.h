@@ -3,8 +3,13 @@
 
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
 
 #include <memory>
+
+// WM_COPYDATA tag for a subtaskmanager:// link from a second start.
+constexpr ULONG_PTR kOpenLinkMessage = 0x53544D31;  // 'STM1'
 
 #include "win32_window.h"
 
@@ -28,6 +33,9 @@ class FlutterWindow : public Win32Window {
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+
+  // Hands links opened while the app runs to the app.
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> links_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

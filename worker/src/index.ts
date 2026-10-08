@@ -23,6 +23,7 @@ import { ChastityTimer, randomToken, sha256Hex } from './timer.ts';
 import { expiredPage, profileGonePage, publicPage } from './public_page.ts';
 import { badgeSvg, embedPage, endedEmbedPage, previewText, type PublicView } from './embed.ts';
 import { pngResponse } from './preview_images.ts';
+import { confirmDevice, deviceOf, startDevice, verifyPage } from './device.ts';
 import {
   addProfileTimer,
   cleanName,
@@ -1105,6 +1106,21 @@ function badgeResponse(view: PublicView | null, whenNone: 'ended' | 'idle' = 'en
   });
 }
 
+/**
+ * Who a vote or order is from, for the per-visitor limits - or null if they
+ * have not shown they are a person. A verified app is its device; a browser
+ * passes Cloudflare's check and is its address. Either way it is hashed, for
+ * this link and today, so nothing identifying is stored.
+ */
+async function visitorOf(request: Request, env: Env, publicId: string, turnstileToken: unknown): Promise<string | null> {
+  const day = new Date().toISOString().slice(0, 10);
+  const device = await deviceOf(env.DB, request, sha256Hex);
+  if (device) return (await sha256Hex(`device:${device}:${publicId}:${day}`)).slice(0, 16);
+  const ip = request.headers.get('CF-Connecting-IP');
+  if (!(await verifyTurnstile(env, turnstileToken, ip))) return null;
+  return (await sha256Hex(`${ip ?? 'unknown'}:${publicId}:${day}`)).slice(0, 16);
+}
+
 async function handlePublicTimer(request: Request, env: Env, publicId: string, op: string): Promise<Response> {
   await ensureTimerLinksTable(env);
   const row = await env.DB.prepare('SELECT timer_id FROM timer_links WHERE public_id = ?')
@@ -1151,21 +1167,24 @@ async function handlePublicTimer(request: Request, env: Env, publicId: string, o
 
   if (op === 'order' && request.method === 'POST') {
     const body: any = await request.json().catch(() => ({}));
-    const ip = request.headers.get('CF-Connecting-IP');
-    if (!(await verifyTurnstile(env, body.turnstileToken, ip))) {
-      return withCors(json({ error: 'turnstile' }, 403));
-    }
-    // The same visitor as for votes: their address, hashed, for this link
-    // and today - what the per-visitor allowance counts against.
-    const day = new Date().toISOString().slice(0, 10);
-    const visitor = (await sha256Hex(`${ip ?? 'unknown'}:${publicId}:${day}`)).slice(0, 16);
+    const visitor = await visitorOf(request, env, publicId, body.turnstileToken);
+    if (!visitor) return withCors(json({ error: 'turnstile' }, 403));
     return withCors(await callTimer(env, row.timer_id, 'public-order', {
       publicId,
       visitor,
       orderId: body.orderId,
       issuerKey: body.issuerKey,
       receiptHash: body.receiptHash,
+      issuerTopic: body.issuerTopic,
     }));
+  }
+
+  if (op === 'watch' && request.method === 'POST') {
+    // Only a verified app: a watch list is a list of addresses to message.
+    const device = await deviceOf(env.DB, request, sha256Hex);
+    if (!device) return withCors(json({ error: 'not-verified' }, 403));
+    const body: any = await request.json().catch(() => ({}));
+    return withCors(await callTimer(env, row.timer_id, 'public-watch', { publicId, topic: body.topic, on: body.on !== false }));
   }
 
   if (op === 'review' && request.method === 'POST') {
@@ -1187,14 +1206,8 @@ async function handlePublicTimer(request: Request, env: Env, publicId: string, o
 
   if (op === 'vote' && request.method === 'POST') {
     const body: any = await request.json().catch(() => ({}));
-    const ip = request.headers.get('CF-Connecting-IP');
-    if (!(await verifyTurnstile(env, body.turnstileToken, ip))) {
-      return withCors(json({ error: 'turnstile' }, 403));
-    }
-    // A visitor is their address, for this link, for today - hashed, so no
-    // address is stored. It is what the per-visitor cap counts against.
-    const day = new Date().toISOString().slice(0, 10);
-    const visitor = (await sha256Hex(`${ip ?? 'unknown'}:${publicId}:${day}`)).slice(0, 16);
+    const visitor = await visitorOf(request, env, publicId, body.turnstileToken);
+    if (!visitor) return withCors(json({ error: 'turnstile' }, 403));
     return withCors(await callTimer(env, row.timer_id, 'public-vote', {
       publicId,
       visitor,
@@ -1451,6 +1464,32 @@ export default {
       if (!(await withinLimit(env.TIMER_CREATE_LIMIT, ip))) return slowDown();
       return handleTimerCreate(request, env).catch((e) => json({ error: String(e) }, 500));
     }
+    // The app's one-time human check, and the page it shows it in.
+    if (request.method === 'POST' && url.pathname === '/device/start') {
+      if (!(await withinLimit(env.TIMER_CREATE_LIMIT, `device:${ip}`))) return slowDown();
+      const body: any = await request.json().catch(() => ({}));
+      const id = await startDevice(env.DB, body.codeHash, body.secretHash, () => randomToken(16));
+      return id ? json({ deviceId: id }) : json({ error: 'bad-request' }, 400);
+    }
+    if (request.method === 'GET' && url.pathname === '/device/status') {
+      // The app, asking with its secret whether its check has passed.
+      const verified = await deviceOf(env.DB, request, sha256Hex);
+      const known = verified ?? (await deviceOf(env.DB, request, sha256Hex, { verifiedOnly: false }));
+      return known ? json({ verified: Boolean(verified) }) : json({ error: 'unknown' }, 404);
+    }
+    if (request.method === 'POST' && url.pathname === '/app/verify/confirm') {
+      if (!(await withinLimit(env.TIMER_CREATE_LIMIT, `device:${ip}`))) return slowDown();
+      const body: any = await request.json().catch(() => ({}));
+      if (!(await verifyTurnstile(env, body.turnstileToken, request.headers.get('CF-Connecting-IP')))) {
+        return json({ error: 'turnstile' }, 403);
+      }
+      return (await confirmDevice(env.DB, body.id)) ? json({ ok: true }) : json({ error: 'not-found' }, 404);
+    }
+    if (request.method === 'GET' && url.pathname === '/app/verify') {
+      return new Response(verifyPage(env.TURNSTILE_SITE_KEY ?? null), {
+        headers: { ...PAGE_HEADERS, 'content-security-policy': "frame-ancestors 'none'" },
+      });
+    }
     if (request.method === 'POST' && url.pathname === '/profile') {
       if (!(await withinLimit(env.TIMER_CREATE_LIMIT, `profile:${ip}`))) return slowDown();
       return handleProfileCreate(request, env).catch((e) => json({ error: String(e) }, 500));
@@ -1477,14 +1516,14 @@ export default {
       if (!(await withinLimit(env.TIMER_OP_LIMIT, timerRoute[1]))) return slowDown();
       return handleTimerOp(request, env, timerRoute[1], timerRoute[2]).catch((e) => json({ error: String(e) }, 500));
     }
-    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote|order|proof|review|embed|badge\.svg|badge\.png|preview\.png))?\/?$/);
+    const publicRoute = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{6,32})(?:\/(state|vote|order|proof|review|watch|embed|badge\.svg|badge\.png|preview\.png))?\/?$/);
     if (publicRoute) {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
       // The page's own reads and votes, per visitor. Not the page, images or
       // widget: other sites fetch those through one shared address.
       const op = publicRoute[2];
       if (
-        (op === 'state' || op === 'vote' || op === 'order' || op === 'proof' || op === 'review') &&
+        (op === 'state' || op === 'vote' || op === 'order' || op === 'proof' || op === 'review' || op === 'watch') &&
         !(await withinLimit(env.TIMER_PUBLIC_LIMIT, ip))
       ) {
         return withCors(slowDown());

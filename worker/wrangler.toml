@@ -10,6 +10,9 @@ routes = [
   # A player's page: one link for all their timers.
   { pattern = "subtaskmanager.com/p/*", zone_name = "subtaskmanager.com" },
   { pattern = "www.subtaskmanager.com/p/*", zone_name = "subtaskmanager.com" },
+  # Pages the app shows: its one-time human check.
+  { pattern = "subtaskmanager.com/app/*", zone_name = "subtaskmanager.com" },
+  { pattern = "www.subtaskmanager.com/app/*", zone_name = "subtaskmanager.com" },
   # Website download buttons: counted, then sent on to the GitHub release.
   { pattern = "subtaskmanager.com/download/*", zone_name = "subtaskmanager.com" },
   { pattern = "www.subtaskmanager.com/download/*", zone_name = "subtaskmanager.com" },

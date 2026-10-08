@@ -16,7 +16,9 @@ namespace {
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
-constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
+// Its own name, not Flutter's default: a link opened while the app runs is
+// handed to the window with this class, and must not find another app's.
+constexpr const wchar_t kWindowClassName[] = L"SUBTASKMANAGER_WINDOW";
 
 /// Registry key for app theme preference.
 ///

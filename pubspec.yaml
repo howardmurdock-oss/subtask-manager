@@ -35,7 +35,6 @@ dependencies:
   # Already present transitively via `encrypt`; declared because the update
   # manifest's signature is verified with it directly.
   pointycastle: ^3.9.1
-
 dev_dependencies:
   flutter_test:
     sdk: flutter

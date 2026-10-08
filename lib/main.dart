@@ -19,8 +19,10 @@ import 'views/home_screen.dart';
 import 'views/disguise/panic_decoy_view.dart';
 import 'views/security/pin_lock_screen.dart';
 import 'services/public_order_bridge.dart';
+import 'services/app_links.dart';
+import 'services/public_visitor_service.dart';
 
-void main() async {
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final themeProvider = ThemeProvider();
@@ -59,6 +61,12 @@ void main() async {
   syncService.attachTimerService(timerService);
   timerService.refreshAll();
   timerService.startWatching();
+  // subtaskmanager:// links ("Open in the app"), and this app as a visitor to
+  // other people's public timers.
+  await AppLinks.instance.init(args);
+  final publicVisitor = PublicVisitorService();
+  await publicVisitor.load();
+
   // Orders the public sends from a timer's page, carried into the player's
   // list and their results back.
   publicOrderBridge = PublicOrderBridge(engine: orderEngine, timers: timerService)..start();
@@ -99,6 +107,7 @@ void main() async {
         ChangeNotifierProvider.value(value: scheduleService),
         ChangeNotifierProvider.value(value: syncService),
         ChangeNotifierProvider.value(value: timerService),
+        ChangeNotifierProvider.value(value: publicVisitor),
       ],
       child: const OrdersApp(),
     ),

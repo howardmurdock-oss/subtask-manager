@@ -15,8 +15,24 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 class MainActivity : FlutterActivity() {
+    private var links: MethodChannel? = null
+
+    /** A subtaskmanager:// link this activity was started with, until asked. */
+    private var initialLink: String? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        initialLink = linkIn(intent)
+        links = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "subtask/links").apply {
+            setMethodCallHandler { call, result ->
+                if (call.method == "initial") {
+                    result.success(initialLink)
+                    initialLink = null
+                } else {
+                    result.notImplemented()
+                }
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "subtask/power_state")
             .setMethodCallHandler { call, result ->
                 if (call.method == "get") result.success(powerState()) else result.notImplemented()
@@ -43,6 +59,15 @@ class MainActivity : FlutterActivity() {
                 }
             }
     }
+
+    /** A link opened while the app is running: handed straight on. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        linkIn(intent)?.let { links?.invokeMethod("open", it) }
+    }
+
+    private fun linkIn(intent: Intent?): String? =
+        intent?.data?.takeIf { it.scheme == "subtaskmanager" }?.toString()
 
     /**
      * Whether this app may ask to install packages. Granted per app by the

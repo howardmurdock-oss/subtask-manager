@@ -26,6 +26,9 @@ import 'pairing/pairing_view.dart';
 import 'settings/settings_view.dart';
 import 'quests/quests_hub_view.dart';
 import 'chastity_timer/timer_invite.dart';
+import '../services/app_links.dart';
+import '../services/public_visitor_service.dart';
+import 'chastity_timer/public_timer_view.dart';
 
 enum AppRole { player, director }
 
@@ -47,6 +50,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<ActiveOrder>? _orderSubscription;
   StreamSubscription<ChastityTimerView>? _timerFinishedSubscription;
   StreamSubscription<TimerInvite>? _timerInviteSubscription;
+  StreamSubscription<Uri>? _linkSubscription;
   final Set<String> _timerDialogsShown = {};
   Timer? _updateTimer;
 
@@ -82,6 +86,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _timerFinishedSubscription = timers.justFinished.listen((view) {
           if (mounted && view.role == TimerRole.player) _showTimerFinishedDialog(view);
         });
+        // "Open in the app" links: now, and while the app runs.
+        _linkSubscription = AppLinks.instance.links.listen(_openLink);
+        final pending = AppLinks.instance.takePending();
+        if (pending != null) _openLink(pending);
         _timerInviteSubscription = timers.inviteArrived.listen((invite) {
           if (mounted) showTimerInviteDialog(context, invite);
         });
@@ -111,12 +119,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _orderSubscription?.cancel();
     _timerFinishedSubscription?.cancel();
     _timerInviteSubscription?.cancel();
+    _linkSubscription?.cancel();
     super.dispose();
   }
 
   /// The player's timer is over: said on the spot, with the combination when
   /// there is one, rather than left for them to find. "Later" keeps it on the
   /// dashboard card until they look.
+  /// A subtaskmanager:// link: a public timer or player page to show, or
+  /// the browser's check handing back.
+  Future<void> _openLink(Uri uri) async {
+    if (!mounted) return;
+    if (uri.host == 'verified') {
+      final ok = await Provider.of<PublicVisitorService>(context, listen: false).checkVerified();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ok
+            ? "You're verified. You can vote and send orders from the app now."
+            : "The check hasn't come through yet. Try again in a moment."),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
+    final page = AppLinks.publicPageOf(uri);
+    if (page == null) return;
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => PublicTimerView(kind: page.kind, id: page.id)));
+  }
+
   Future<void> _showTimerFinishedDialog(ChastityTimerView view) async {
     if (!_timerDialogsShown.add(view.id)) return;
     final released = view.status == TimerStatus.released;

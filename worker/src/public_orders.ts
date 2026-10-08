@@ -187,7 +187,7 @@ export class OrderQueue {
          proof_expires INTEGER)`,
     );
     // Added with proof review; tables from before lack them.
-    for (const column of ['review_due INTEGER', 'auto INTEGER']) {
+    for (const column of ['review_due INTEGER', 'auto INTEGER', 'issuer_topic TEXT']) {
       try {
         sql.exec(`ALTER TABLE public_orders ADD COLUMN ${column}`);
       } catch {
@@ -246,6 +246,13 @@ export class OrderQueue {
     return true;
   }
 
+  /** Where to tell the sender of [no] how it is going: their app, if they
+   * sent it from one. */
+  issuerTopicOf(no: number): string | null {
+    const r = this.sql.exec(`SELECT issuer_topic FROM public_orders WHERE no = ?`, no).toArray()[0];
+    return (r?.issuer_topic as string | null) ?? null;
+  }
+
   /** Proof nobody checked in time is approved. Returns which. */
   autoApprove(now: number): number[] {
     const due = this.sql
@@ -277,10 +284,17 @@ export class OrderQueue {
       .one().n as number;
   }
 
-  add(def: PublicOrderDef, visitor: string, issuerKey: string | null, receiptHash: string, now: number): number {
+  add(
+    def: PublicOrderDef,
+    visitor: string,
+    issuerKey: string | null,
+    receiptHash: string,
+    now: number,
+    issuerTopic: string | null = null,
+  ): number {
     this.sql.exec(
-      `INSERT INTO public_orders (def, at, visitor, status, issuer_key, receipt_hash) VALUES (?, ?, ?, 'queued', ?, ?)`,
-      JSON.stringify(def), now, visitor, issuerKey, receiptHash,
+      `INSERT INTO public_orders (def, at, visitor, status, issuer_key, receipt_hash, issuer_topic) VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
+      JSON.stringify(def), now, visitor, issuerKey, receiptHash, issuerTopic,
     );
     return this.sql.exec(`SELECT last_insert_rowid() AS no`).one().no as number;
   }
