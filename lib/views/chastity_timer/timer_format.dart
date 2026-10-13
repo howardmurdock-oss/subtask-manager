@@ -1,30 +1,17 @@
 import '../../models/chastity_timer.dart';
 import '../../models/partner_contact.dart';
 
-/// The day the Chastity Timer reaches everyone, as shown to Patreon users
-/// whose partner does not have it yet: 1.1p goes to Patreon on October 1,
-/// 2026, the public 1.1.0 on October 14.
-final DateTime chastityTimerPublicDate = DateTime(2026, 10, 14);
-
 const String chastityTimerFeature = 'chastityTimer';
-
-String _when() {
-  final date = chastityTimerPublicDate;
-  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
-      'September', 'October', 'November', 'December'];
-  return 'on ${months[date.month - 1]} ${date.day}';
-}
 
 /// Shown to a director whose player's copy cannot receive a timer.
 String partnerCannotReceiveTimer(PartnerContact partner) =>
-    "${partner.displayName} can't use the Chastity Timer yet. It's in early access for "
-    'Patreon supporters and reaches everyone ${_when()}. Until then, they can get it now '
-    'by installing the Patreon build.';
+    "${partner.displayName} can't use the Chastity Timer yet. "
+    'They need to update to SubTask Manager 1.1.0 or newer.';
 
 /// Shown to a player whose director's copy cannot manage a timer.
 String partnerCannotManageTimer(PartnerContact partner) =>
-    "${partner.displayName} can't manage your timer yet. They'll get the Chastity Timer "
-    '${_when()}, or now with the Patreon build. Until then you can run it yourself.';
+    "${partner.displayName} can't manage your timer yet. "
+    'They need to update to SubTask Manager 1.1.0 or newer. Until then you can run it yourself.';
 
 /// "2d 04:15:09" style, for a live countdown.
 String formatCountdown(Duration d) {

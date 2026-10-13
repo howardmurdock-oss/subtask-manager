@@ -171,7 +171,7 @@ void main() {
     await pump(tester, const TimerSetupView(role: TimerRole.director));
 
     expect(find.textContaining("PC 1 can't use the Chastity Timer yet"), findsOneWidget);
-    expect(find.textContaining('Patreon build'), findsOneWidget);
+    expect(find.textContaining('SubTask Manager 1.1.0 or newer'), findsOneWidget);
     expect(find.textContaining('Will get their key'), findsOneWidget);
     final tile = tester.widget<RadioListTile<String?>>(find.widgetWithText(RadioListTile<String?>, 'PC 1'));
     expect(tile.enabled, isFalse);
