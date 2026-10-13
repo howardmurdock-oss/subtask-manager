@@ -103,11 +103,23 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   .made { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); font-size:13px; color:var(--muted); }
   .made a { color:var(--accent); font-weight:700; text-decoration:none; }
   .made a:hover { text-decoration:underline; }
-  .openapp { display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap; margin:-6px 0 20px;
+  .top-bar { display:flex; align-items:center; gap:10px; margin:-6px 0 20px; }
+  .top-bar .openapp { margin:0; flex:1; }
+  .openapp { display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap;
              padding:10px 12px; border-radius:14px; border:1px solid var(--accent); color:var(--accent);
              font-weight:700; text-decoration:none; font-size:15px; }
   .openapp:hover { background:rgba(34,211,238,.1); }
   .openapp small { font-weight:400; color:var(--muted); font-size:12px; }
+  .gear-btn { flex:none; width:44px; height:44px; border-radius:14px; border:1px solid var(--line);
+              background:var(--card); color:var(--text); font-size:20px; display:flex; align-items:center;
+              justify-content:center; cursor:pointer; padding:0; line-height:1; }
+  .gear-btn:hover { border-color:var(--accent); color:var(--accent); background:rgba(34,211,238,.08); }
+  .proof-alert { display:flex; align-items:center; gap:12px; background:rgba(245,158,11,.15); border:1px solid #f59e0b; border-radius:14px; padding:12px 14px; margin-bottom:14px; text-align:left; }
+  .proof-alert-icon { font-size:24px; flex:none; }
+  .proof-alert-content { flex:1; min-width:0; }
+  .proof-alert-title { font-size:14px; font-weight:700; color:#fbbf24; }
+  .proof-alert-sub { font-size:12px; color:var(--muted); margin-top:2px; }
+  .proof-alert-btn { flex:none; padding:8px 14px; font-size:13px; font-weight:700; background:#f59e0b; color:#0e0f14; border-radius:10px; border:0; cursor:pointer; }
   .list { margin-top:20px; padding-top:14px; border-top:1px solid var(--line); text-align:left; }
   .list .label { font-size:11px; margin-bottom:6px; }
   .list ul { list-style:none; margin:0; padding:0; }
@@ -129,6 +141,7 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   .feed .st { color:var(--muted); font-size:13px; white-space:nowrap; }
   .feed .st.ok { color:var(--remove); } .feed .st.bad { color:var(--add); }
   .feed button { flex:none; padding:6px 10px; font-size:12px; background:var(--accent); border-radius:10px; }
+  .feed button.review-pending { background:#f59e0b; color:#0e0f14; font-weight:700; }
   .mine { font-size:11px; font-weight:700; color:var(--accent); margin-left:6px; }
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,.75); display:flex; align-items:center; justify-content:center; padding:16px; z-index:10; }
   .sheet { width:100%; max-width:420px; max-height:90vh; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px; text-align:center; }
@@ -142,10 +155,13 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
 </head>
 <body>
 <main id="page">
-  <!-- The same timer in the app: vote and order there, get proof there, and
-       be told when it ends. Without the app, this goes to the download. -->
-  <a class="openapp" id="openApp" href="https://www.subtaskmanager.com/?from=open-in-app#downloads">Open in the app
-    <small>vote, send orders and get told when it ends</small></a>
+  <div class="top-bar">
+    <!-- The same timer in the app: vote and order there, get proof there, and
+         be told when it ends. Without the app, this goes to the download. -->
+    <a class="openapp" id="openApp" href="https://www.subtaskmanager.com/?from=open-in-app#downloads">Open in the app
+      <small>vote, send orders and get told when it ends</small></a>
+    <button id="settingsBtn" class="gear-btn" title="Settings" aria-label="Settings">⚙️</button>
+  </div>
   <div class="cols">
   <section class="col-timer">
   <div class="label">Chastity Timer</div>
@@ -163,6 +179,14 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   <div class="foot" id="votefoot">Each vote counts once toward a daily limit set by the person who's locked.</div>
   </section>
   <section class="orders" id="orders" hidden>
+    <div class="proof-alert" id="proofAlert" hidden>
+      <div class="proof-alert-icon">📸</div>
+      <div class="proof-alert-content">
+        <div class="proof-alert-title">Proof waiting for your review!</div>
+        <div class="proof-alert-sub" id="proofAlertSub"></div>
+      </div>
+      <button class="proof-alert-btn" id="proofAlertBtn">Check Proof</button>
+    </div>
     <div class="label">Send an order</div>
     <div class="note" id="ordersNote"></div>
     <div id="orderList"></div>
@@ -189,6 +213,27 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
 </div>
 <div class="overlay" id="shown" hidden>
   <div class="sheet"><div id="shownBody"></div><button class="plain" id="shownClose" style="margin-top:14px;width:100%">Close</button></div>
+</div>
+<div class="overlay" id="settingsSheet" hidden>
+  <div class="sheet">
+    <h2>Settings</h2>
+    <div style="text-align:left;margin:16px 0;">
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px;">Browser Notifications</div>
+      <p id="settingsNotifDesc" style="font-size:13px;margin:0 0 12px;color:var(--muted);"></p>
+      <button id="settingsNotifToggle" style="width:100%;margin-bottom:8px;"></button>
+    </div>
+    <button class="plain" id="settingsClose" style="width:100%;margin-top:10px;">Done</button>
+  </div>
+</div>
+<div class="overlay" id="notifyPrompt" hidden>
+  <div class="sheet">
+    <h2>Get notified?</h2>
+    <p>Would you like browser notifications when photo proof for your order is submitted?</p>
+    <div class="row">
+      <button class="plain" id="notifyPromptNo">Not now</button>
+      <button id="notifyPromptYes">Notify me</button>
+    </div>
+  </div>
 </div>
 <script>
 (() => {
@@ -378,6 +423,77 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
   };
   const MINE = 'stm-orders-v1', KEY = 'stm-proof-key-v1', ADULT = 'stm-adult-v1';
+  const NOTIFY_PREF = 'stm-notify-pref-v1', NOTIFIED_PROOFS = 'stm-notified-proofs-v1';
+
+  function openSettings() {
+    renderSettings();
+    $('settingsSheet').hidden = false;
+  }
+  function closeSettings() {
+    $('settingsSheet').hidden = true;
+  }
+  $('settingsBtn').onclick = openSettings;
+  $('settingsClose').onclick = closeSettings;
+
+  function renderSettings() {
+    const supported = 'Notification' in window;
+    const desc = $('settingsNotifDesc');
+    const btn = $('settingsNotifToggle');
+    if (!supported) {
+      desc.textContent = 'Browser notifications are not supported on this device or browser.';
+      btn.disabled = true;
+      btn.className = 'plain';
+      btn.textContent = 'Not supported';
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      desc.textContent = 'Notifications are blocked in your browser settings. To receive proof alerts, allow notifications for this site in your browser permissions.';
+      btn.disabled = true;
+      btn.className = 'plain';
+      btn.textContent = 'Blocked by browser';
+      return;
+    }
+    const pref = store.get(NOTIFY_PREF, null);
+    if (pref === 'granted' && Notification.permission === 'granted') {
+      desc.textContent = 'Notifications are enabled. You will be alerted when photo proof arrives.';
+      btn.disabled = false;
+      btn.className = 'plain';
+      btn.textContent = 'Turn off notifications';
+      btn.onclick = () => {
+        store.set(NOTIFY_PREF, 'declined');
+        renderSettings();
+      };
+    } else {
+      desc.textContent = 'Get a browser notification when photo proof is submitted so you can verify it in time.';
+      btn.disabled = false;
+      btn.className = '';
+      btn.textContent = 'Turn on notifications';
+      btn.onclick = async () => {
+        try {
+          const perm = await Notification.requestPermission();
+          store.set(NOTIFY_PREF, perm === 'granted' ? 'granted' : 'denied');
+        } catch {
+          store.set(NOTIFY_PREF, 'denied');
+        }
+        renderSettings();
+      };
+    }
+  }
+
+  function askNotificationPreference() {
+    return new Promise((resolve) => {
+      $('notifyPrompt').hidden = false;
+      $('notifyPromptYes').onclick = () => {
+        $('notifyPrompt').hidden = true;
+        resolve(true);
+      };
+      $('notifyPromptNo').onclick = () => {
+        $('notifyPrompt').hidden = true;
+        resolve(false);
+      };
+    });
+  }
+
   const timerId = () => (isProfile ? (view && view.publicId) : id);
   const ordersBase = () => (isProfile ? voteBase : base);
   const mine = () => store.get(MINE, []).filter((m) => Date.now() - m.at < 3 * 86400000);
@@ -461,6 +577,45 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
       return card;
     }));
     const ours = new Map(mine().filter((m) => m.pid === timerId()).map((m) => [m.no, m]));
+    const notified = new Set(store.get(NOTIFIED_PROOFS, []));
+    let proofWaiting = null;
+
+    for (const f of o.feed) {
+      if (ours.has(f.no) && f.status === 'reviewing' && f.hasProof) {
+        if (!proofWaiting) proofWaiting = f;
+        if (!notified.has(f.no)) {
+          notified.add(f.no);
+          store.set(NOTIFIED_PROOFS, [...notified]);
+          if (store.get(NOTIFY_PREF, null) === 'granted' && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+              const n = new Notification('Proof waiting for your review', {
+                body: 'Proof for "' + (f.title || 'your order') + '" has arrived. Tap to verify it.',
+                icon: '/favicon.ico',
+              });
+              n.onclick = () => {
+                window.focus();
+                showProof(ours.get(f.no), f);
+              };
+            } catch {}
+          }
+        }
+      }
+    }
+
+    const alertBox = $('proofAlert');
+    if (alertBox) {
+      if (proofWaiting) {
+        alertBox.hidden = false;
+        $('proofAlertSub').textContent = 'Order #' + proofWaiting.no + ' ("' + proofWaiting.title + '") is waiting for your verdict.';
+        $('proofAlertBtn').onclick = () => showProof(ours.get(proofWaiting.no), proofWaiting);
+      } else {
+        alertBox.hidden = true;
+      }
+    }
+
+    const hasPending = o.feed.some((f) => ours.has(f.no) && (f.status === 'active' || f.status === 'queued' || f.status === 'reviewing'));
+    setPollRate(hasPending ? 8000 : 30000);
+
     $('feedList').replaceChildren(...o.feed.map((f) => {
       const li = document.createElement('li');
       const left = document.createElement('span');
@@ -475,6 +630,7 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
       if (f.hasProof && ours.has(f.no)) {
         const see = document.createElement('button');
         see.textContent = f.status === 'reviewing' ? 'Check proof' : 'See proof';
+        if (f.status === 'reviewing') see.className = 'review-pending';
         see.onclick = () => showProof(ours.get(f.no), f);
         li.append(see);
       } else {
@@ -496,6 +652,19 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
 
   async function sendOrder(def, button) {
     if (!(await adultCheck())) return;
+    if ('Notification' in window && Notification.permission !== 'denied' && store.get(NOTIFY_PREF, null) === null) {
+      const wants = await askNotificationPreference();
+      if (wants) {
+        try {
+          const p = await Notification.requestPermission();
+          store.set(NOTIFY_PREF, p === 'granted' ? 'granted' : 'denied');
+        } catch {
+          store.set(NOTIFY_PREF, 'denied');
+        }
+      } else {
+        store.set(NOTIFY_PREF, 'declined');
+      }
+    }
     button.disabled = true;
     $('msg').textContent = '';
     try {
@@ -626,9 +795,17 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     }, 200);
   }
 
+  let currentPollInterval = 30000;
+  let pollTimer = setInterval(load, 30000);
+  function setPollRate(ms) {
+    if (ms === currentPollInterval && pollTimer) return;
+    currentPollInterval = ms;
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(load, ms);
+  }
+
   load();
   setInterval(render, 1000);
-  setInterval(load, 30000);
 })();
 </script>
 </body>

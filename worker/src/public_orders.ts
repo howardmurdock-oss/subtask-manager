@@ -110,11 +110,17 @@ export function sanitizePublicOrders(raw: any): PublicOrdersConfig {
 /** How long the player has, from delivery: the order's own deadline, or a
  * day for orders with none, so the queue never stalls for good. */
 /** How long whoever receives the proof has to approve or reject it: twice
- * the order's own time, or an hour for orders with none. Past that it is
+ * the order's own time, or 15 minutes, whichever is shorter. Past that it is
  * approved for them - the player did their part. */
 export function reviewWindowMs(def: PublicOrderDef): number {
-  const timed = (def.durationType === 'deadlineCountdown' || def.durationType === 'actionWithDeadline') && def.deadlineMinutes > 0;
-  return 2 * (timed ? def.deadlineMinutes : 30) * 60 * 1000;
+  const originalMinutes =
+    (def.durationType === 'deadlineCountdown' || def.durationType === 'actionWithDeadline') && def.deadlineMinutes > 0
+      ? def.deadlineMinutes
+      : def.durationType === 'actionTimer' && def.actionSeconds > 0
+        ? def.actionSeconds / 60
+        : 15;
+  const reviewMinutes = Math.min(2 * originalMinutes, 15);
+  return Math.round(reviewMinutes * 60 * 1000);
 }
 
 export function orderLimitMs(def: PublicOrderDef): number {

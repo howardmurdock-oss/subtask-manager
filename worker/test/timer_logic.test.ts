@@ -213,6 +213,10 @@ test('the public page links back to the website, tagged as coming from a timer',
   const page = publicPage('abcdef123', null);
   assert.match(page, /href="https:\/\/subtaskmanager\.com\/\?from=timer"/);
   assert.match(page, /Get the app/);
+  assert.match(page, /id="settingsBtn"/);
+  assert.match(page, /id="proofAlert"/);
+  assert.match(page, /id="settingsSheet"/);
+  assert.match(page, /id="notifyPrompt"/);
 });
 
 test('an ended or unknown link explains what was there and points to the app', async () => {
