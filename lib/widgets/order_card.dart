@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/active_order.dart';
 import '../models/order_item.dart';
+import '../models/cadence_config.dart';
+import '../services/cadence_engine.dart';
 import '../services/order_engine.dart';
+import '../views/cadence/cadence_studio_view.dart';
+import '../views/cadence/cadence_visualizer.dart';
 import 'countdown_ring.dart';
 
 class OrderCard extends StatelessWidget {
@@ -351,6 +355,9 @@ class OrderCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (order.cadenceConfig != null && order.cadenceConfig!.mode != CadenceMode.none) ...[
+                _OrderCadenceBox(activeOrder: activeOrder),
+              ],
             ],
 
             const SizedBox(height: 14),
@@ -434,3 +441,96 @@ class OrderCard extends StatelessWidget {
     );
   }
 }
+
+class _OrderCadenceBox extends StatefulWidget {
+  final ActiveOrder activeOrder;
+
+  const _OrderCadenceBox({required this.activeOrder});
+
+  @override
+  State<_OrderCadenceBox> createState() => _OrderCadenceBoxState();
+}
+
+class _OrderCadenceBoxState extends State<_OrderCadenceBox> {
+  CadenceEngine? _engine;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncEngine();
+  }
+
+  @override
+  void didUpdateWidget(covariant _OrderCadenceBox oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncEngine();
+  }
+
+  void _syncEngine() {
+    final cadence = widget.activeOrder.order.cadenceConfig;
+    if (cadence == null || cadence.mode == CadenceMode.none) {
+      _engine?.dispose();
+      _engine = null;
+      return;
+    }
+
+    _engine ??= CadenceEngine(
+      config: cadence,
+      totalDurationSeconds: widget.activeOrder.order.actionDurationSeconds,
+    );
+
+    if (widget.activeOrder.isActionTimerRunning) {
+      if (!_engine!.isRunning) {
+        _engine!.start(
+          newConfig: cadence,
+          durationSeconds: widget.activeOrder.order.actionDurationSeconds,
+        );
+      } else if (_engine!.isPaused) {
+        _engine!.resume();
+      }
+    } else if (_engine!.isRunning && !_engine!.isPaused) {
+      _engine!.pause();
+    }
+
+    if (widget.activeOrder.isActionTimerFinished) {
+      _engine!.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _engine?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final engine = _engine;
+    if (engine == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        children: [
+          CadenceVisualizer(engine: engine, compact: true),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              icon: const Icon(Icons.tune_rounded, size: 14),
+              label: const Text('Open Metronome Studio', style: TextStyle(fontSize: 11)),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => CadenceStudioView(
+                    initialConfig: widget.activeOrder.order.cadenceConfig,
+                    initialDuration: widget.activeOrder.order.actionDurationSeconds,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+

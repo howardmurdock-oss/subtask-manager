@@ -1,4 +1,5 @@
 import 'package:uuid/uuid.dart';
+import 'cadence_config.dart';
 
 enum DurationType {
   instant,            // Complete immediately / untimed
@@ -60,6 +61,7 @@ class OrderItem {
   final bool allowRandomDraw; // If false, excluded from random deck/pool draws (manual Director dispatch only)
   final List<String> tags;
   final List<String> requiredEquipment; // Equipment/items needed (e.g. ['Vibrator', 'Cage'])
+  final CadenceConfig? cadenceConfig; // Pacing metronome cadence for action timers
 
   OrderItem({
     String? id,
@@ -78,6 +80,7 @@ class OrderItem {
     this.allowRandomDraw = true,
     List<String>? tags,
     List<String>? requiredEquipment,
+    this.cadenceConfig,
   })  : id = id ?? const Uuid().v4(),
         tags = tags ?? [],
         requiredEquipment = requiredEquipment ?? [];
@@ -100,6 +103,7 @@ class OrderItem {
       'allowRandomDraw': allowRandomDraw,
       'tags': tags,
       'requiredEquipment': requiredEquipment,
+      if (cadenceConfig != null) 'cadenceConfig': cadenceConfig!.toJson(),
     };
   }
 
@@ -147,6 +151,9 @@ class OrderItem {
               .where((e) => e.isNotEmpty)
               .toList() ??
           [],
+      cadenceConfig: json['cadenceConfig'] != null
+          ? CadenceConfig.fromJson(json['cadenceConfig'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -220,6 +227,8 @@ class OrderItem {
     bool? allowRandomDraw,
     List<String>? tags,
     List<String>? requiredEquipment,
+    CadenceConfig? cadenceConfig,
+    bool clearCadenceConfig = false,
   }) {
     return OrderItem(
       id: id ?? this.id,
@@ -238,6 +247,7 @@ class OrderItem {
       allowRandomDraw: allowRandomDraw ?? this.allowRandomDraw,
       tags: tags ?? List.from(this.tags),
       requiredEquipment: requiredEquipment ?? List.from(this.requiredEquipment),
+      cadenceConfig: clearCadenceConfig ? null : (cadenceConfig ?? this.cadenceConfig),
     );
   }
 }

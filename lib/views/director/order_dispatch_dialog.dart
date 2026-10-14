@@ -1,11 +1,14 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/order_item.dart';
 import '../../models/order_pack.dart';
 import '../../models/partner_contact.dart';
+import '../../models/cadence_config.dart';
 import '../../services/order_engine.dart';
 import '../../services/sync_service.dart';
 import '../../services/partner_service.dart';
+import '../cadence/cadence_studio_view.dart';
 
 class OrderDispatchDialog extends StatefulWidget {
   final OrderItem? initialOrder;
@@ -79,6 +82,32 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
   int _penaltyTokens = 30;
   bool _allowRandomDraw = true;
 
+  // Cadence Metronome state
+  bool _enableCadence = false;
+  CadenceMode _cadenceMode = CadenceMode.fixed;
+  int _cadenceBpm = 60;
+  int _cadenceMinBpm = 30;
+  int _cadenceMaxBpm = 110;
+  int _cadenceWaveCount = 2;
+  int _cadenceRandomInterval = 15;
+  CadenceSoundTone _cadenceTone = CadenceSoundTone.woodblock;
+
+  CadenceConfig? _buildCadenceConfig() {
+    if (!_enableCadence || _cadenceMode == CadenceMode.none) return null;
+    return CadenceConfig(
+      mode: _cadenceMode,
+      bpm: _cadenceBpm,
+      minBpm: _cadenceMinBpm,
+      maxBpm: _cadenceMaxBpm,
+      waveCount: _cadenceWaveCount,
+      randomIntervalSeconds: _cadenceRandomInterval,
+      soundTone: _cadenceTone,
+      enableAudio: true,
+      enableHaptics: true,
+      enableVisual: true,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -124,6 +153,20 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
         _deadlineValue = order.durationMinutes > 0 ? order.durationMinutes : 15;
         _deadlineUnit = 'Minutes';
       }
+
+      if (order.cadenceConfig != null && order.cadenceConfig!.mode != CadenceMode.none) {
+        _enableCadence = true;
+        _cadenceMode = order.cadenceConfig!.mode;
+        _cadenceBpm = order.cadenceConfig!.bpm;
+        _cadenceMinBpm = order.cadenceConfig!.minBpm;
+        _cadenceMaxBpm = order.cadenceConfig!.maxBpm;
+        _cadenceWaveCount = order.cadenceConfig!.waveCount;
+        _cadenceRandomInterval = order.cadenceConfig!.randomIntervalSeconds;
+        _cadenceTone = order.cadenceConfig!.soundTone;
+      } else {
+        _enableCadence = false;
+        _cadenceMode = CadenceMode.fixed;
+      }
     } else {
       _titleController = TextEditingController();
       _descController = TextEditingController();
@@ -134,6 +177,8 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
       _actionUnit = 'Minutes';
       _deadlineValue = 15;
       _deadlineUnit = 'Minutes';
+      _enableCadence = false;
+      _cadenceMode = CadenceMode.fixed;
     }
   }
 
@@ -167,6 +212,20 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
       } else {
         _deadlineValue = order.durationMinutes > 0 ? order.durationMinutes : 15;
         _deadlineUnit = 'Minutes';
+      }
+
+      if (order.cadenceConfig != null && order.cadenceConfig!.mode != CadenceMode.none) {
+        _enableCadence = true;
+        _cadenceMode = order.cadenceConfig!.mode;
+        _cadenceBpm = order.cadenceConfig!.bpm;
+        _cadenceMinBpm = order.cadenceConfig!.minBpm;
+        _cadenceMaxBpm = order.cadenceConfig!.maxBpm;
+        _cadenceWaveCount = order.cadenceConfig!.waveCount;
+        _cadenceRandomInterval = order.cadenceConfig!.randomIntervalSeconds;
+        _cadenceTone = order.cadenceConfig!.soundTone;
+      } else {
+        _enableCadence = false;
+        _cadenceMode = CadenceMode.fixed;
       }
 
       _tabController.animateTo(1);
@@ -793,6 +852,138 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            Card(
+              margin: EdgeInsets.zero,
+              color: theme.colorScheme.surfaceVariant.withOpacity(0.15),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.speed_rounded, size: 18, color: theme.colorScheme.primary),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Pacing Metronome & Cadence',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                        const Spacer(),
+                        Switch(
+                          value: _enableCadence,
+                          onChanged: (val) => setState(() => _enableCadence = val),
+                        ),
+                      ],
+                    ),
+                    if (_enableCadence) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Paces the player with rhythmic audio ticks, visual pulses, and device vibrations during this routine.',
+                        style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withOpacity(0.7)),
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<CadenceMode>(
+                        value: _cadenceMode,
+                        decoration: const InputDecoration(labelText: 'Cadence Mode'),
+                        items: const [
+                          DropdownMenuItem(value: CadenceMode.fixed, child: Text('Fixed BPM (Steady tempo)')),
+                          DropdownMenuItem(value: CadenceMode.wave, child: Text('Wave (Rollercoaster swell)')),
+                          DropdownMenuItem(value: CadenceMode.peak, child: Text('Peak (Pyramid midpoint ramp)')),
+                          DropdownMenuItem(value: CadenceMode.ramp, child: Text('Ramp (Accelerando build)')),
+                          DropdownMenuItem(value: CadenceMode.random, child: Text('Random (Surprise jumps)')),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) setState(() => _cadenceMode = val);
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      if (_cadenceMode == CadenceMode.fixed) ...[
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text('Target: $_cadenceBpm BPM', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Slider(
+                                value: _cadenceBpm.toDouble().clamp(20, 240),
+                                min: 20,
+                                max: 240,
+                                onChanged: (val) => setState(() => _cadenceBpm = val.round()),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ] else ...[
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text('Min: $_cadenceMinBpm BPM', style: const TextStyle(fontSize: 12)),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Slider(
+                                value: _cadenceMinBpm.toDouble().clamp(15, 180),
+                                min: 15,
+                                max: 180,
+                                onChanged: (val) {
+                                  setState(() {
+                                    _cadenceMinBpm = val.round();
+                                    if (_cadenceMinBpm >= _cadenceMaxBpm) _cadenceMaxBpm = _cadenceMinBpm + 10;
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text('Max: $_cadenceMaxBpm BPM', style: const TextStyle(fontSize: 12)),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Slider(
+                                value: _cadenceMaxBpm.toDouble().clamp(25, 240),
+                                min: 25,
+                                max: 240,
+                                onChanged: (val) {
+                                  setState(() {
+                                    _cadenceMaxBpm = val.round();
+                                    if (_cadenceMaxBpm <= _cadenceMinBpm) _cadenceMinBpm = max(10, _cadenceMaxBpm - 10);
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          icon: const Icon(Icons.play_circle_outline_rounded, size: 16),
+                          label: const Text('Test / Preview in Metronome Studio', style: TextStyle(fontSize: 11)),
+                          onPressed: () {
+                            int sec = _actionValue;
+                            if (_actionUnit == 'Minutes') sec *= 60;
+                            if (_actionUnit == 'Hours') sec *= 3600;
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => CadenceStudioView(
+                                  initialConfig: _buildCadenceConfig(),
+                                  initialDuration: sec,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           ],
           if (_durationType == DurationType.deadlineCountdown || _durationType == DurationType.actionWithDeadline) ...[
             const SizedBox(height: 14),
@@ -968,6 +1159,7 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
                   category: _categoryController.text.trim().isEmpty
                       ? 'Director Directive'
                       : _categoryController.text.trim(),
+                  cadenceConfig: _buildCadenceConfig(),
                 );
 
                 _dispatchOrder(newOrder);
