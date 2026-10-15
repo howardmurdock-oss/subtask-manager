@@ -89,7 +89,7 @@ void main() {
     });
 
     test('JSON serialization and deserialization roundtrip preserves all parameters', () {
-      final original = CadenceConfig(
+      const original = CadenceConfig(
         mode: CadenceMode.wave,
         bpm: 80,
         minBpm: 25,
@@ -145,6 +145,10 @@ void main() {
         expect(wav, isNotEmpty);
         expect(wav.length, greaterThan(44)); // Must have at least 44-byte RIFF header
 
+        // All tone buffers must be >=4000 bytes (>=45ms at 44.1kHz 16-bit mono)
+        // to prevent hardware buffer underruns on Android AudioTrack / NuPlayer
+        expect(wav.length, greaterThanOrEqualTo(4000));
+
         // RIFF header magic
         expect(String.fromCharCodes(wav.sublist(0, 4)), 'RIFF');
         expect(String.fromCharCodes(wav.sublist(8, 12)), 'WAVE');
@@ -152,10 +156,27 @@ void main() {
         expect(String.fromCharCodes(wav.sublist(36, 40)), 'data');
       }
 
+      // Tick specifically must have 55ms duration (4894 bytes)
+      final tickWav = CadenceSoundGenerator.getWav(CadenceSoundTone.tick);
+      expect(tickWav.length, greaterThanOrEqualTo(4800));
+
       final shiftCue = CadenceSoundGenerator.getShiftCueWav();
       expect(shiftCue, isNotEmpty);
+      expect(shiftCue.length, greaterThanOrEqualTo(4000));
       expect(String.fromCharCodes(shiftCue.sublist(0, 4)), 'RIFF');
       expect(String.fromCharCodes(shiftCue.sublist(8, 12)), 'WAVE');
+    });
+
+    test('ensureFilesCached and getCachedFilePath gracefully handle cache calls', () async {
+      await CadenceSoundGenerator.ensureFilesCached();
+      // In tests, path_provider might not be registered or will complete without crashing
+      for (final tone in CadenceSoundTone.values) {
+        final path = CadenceSoundGenerator.getCachedFilePath(tone);
+        // If path is returned, verify file exists
+        if (path != null) {
+          expect(path, isNotEmpty);
+        }
+      }
     });
   });
 

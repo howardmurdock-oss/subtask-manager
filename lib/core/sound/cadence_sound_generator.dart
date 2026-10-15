@@ -1,13 +1,19 @@
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:path_provider/path_provider.dart';
 import '../../models/cadence_config.dart';
 
-/// Synthesizes zero-latency acoustic PCM WAV audio samples in memory for metronome clicks and cues.
+/// Synthesizes acoustic PCM WAV audio samples for metronome clicks and cues.
 class CadenceSoundGenerator {
   static const int sampleRate = 44100;
 
   static final Map<CadenceSoundTone, Uint8List> _cache = {};
   static Uint8List? _shiftCueCache;
+
+  static final Map<CadenceSoundTone, String> _filePathCache = {};
+  static String? _shiftCueFilePath;
+  static bool _filesInitialized = false;
 
   /// Retrieves or synthesizes the WAV audio bytes for [tone].
   static Uint8List getWav(CadenceSoundTone tone) {
@@ -18,6 +24,43 @@ class CadenceSoundGenerator {
   static Uint8List getShiftCueWav() {
     return _shiftCueCache ??= _generateShiftCue();
   }
+
+  /// Ensures synthesized WAV audio files are written to disk cache for zero-latency, buffer-safe playback.
+  static Future<void> ensureFilesCached() async {
+    if (_filesInitialized) return;
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final dir = Directory('${tempDir.path}/cadence_tones');
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+
+      for (final tone in CadenceSoundTone.values) {
+        final file = File('${dir.path}/${tone.name}.wav');
+        final bytes = getWav(tone);
+        if (!await file.exists() || await file.length() != bytes.length) {
+          await file.writeAsBytes(bytes, flush: true);
+        }
+        _filePathCache[tone] = file.path;
+      }
+
+      final cueFile = File('${dir.path}/shift_cue.wav');
+      final cueBytes = getShiftCueWav();
+      if (!await cueFile.exists() || await cueFile.length() != cueBytes.length) {
+        await cueFile.writeAsBytes(cueBytes, flush: true);
+      }
+      _shiftCueFilePath = cueFile.path;
+      _filesInitialized = true;
+    } catch (_) {
+      // In test or non-platform environments
+    }
+  }
+
+  /// Returns cached disk file path for [tone] if available.
+  static String? getCachedFilePath(CadenceSoundTone tone) => _filePathCache[tone];
+
+  /// Returns cached disk file path for shift cue if available.
+  static String? getCachedShiftCueFilePath() => _shiftCueFilePath;
 
   static Uint8List _generateTone(CadenceSoundTone tone) {
     switch (tone) {
@@ -34,66 +77,82 @@ class CadenceSoundGenerator {
     }
   }
 
-  /// Clean, woody percussion tap (950Hz + harmonic, 28ms)
+  /// Clean, woody percussion tap (920Hz + harmonic, 50ms)
   static Uint8List _generateWoodblock() {
-    const duration = 0.028;
+    const duration = 0.050;
     final numSamples = (sampleRate * duration).toInt();
     final samples = Float64List(numSamples);
 
     for (int i = 0; i < numSamples; i++) {
       final t = i / sampleRate;
       final attack = (t < 0.002) ? (t / 0.002) : 1.0;
-      final envelope = attack * exp(-180.0 * t);
-      final wave = 0.75 * sin(2 * pi * 950.0 * t) + 0.25 * sin(2 * pi * 1900.0 * t);
-      samples[i] = wave * envelope * 0.85;
+      final envelope = attack * exp(-120.0 * t);
+      final wave = 0.70 * sin(2 * pi * 920.0 * t) + 0.30 * sin(2 * pi * 1840.0 * t);
+      final fadeOut = (t > 0.045) ? 0.5 * (1.0 + cos(pi * (t - 0.045) / 0.005)) : 1.0;
+      samples[i] = wave * envelope * fadeOut * 0.90;
     }
     return _samplesToWavBytes(samples, sampleRate);
   }
 
-  /// Crisp, mechanical metronome click (2200Hz, 15ms)
+  /// Crisp, authentic mechanical metronome click (dual-stage: escapement strike + wooden case resonance, 55ms)
   static Uint8List _generateTick() {
-    const duration = 0.016;
+    const duration = 0.055;
     final numSamples = (sampleRate * duration).toInt();
     final samples = Float64List(numSamples);
 
     for (int i = 0; i < numSamples; i++) {
       final t = i / sampleRate;
-      final attack = (t < 0.001) ? (t / 0.001) : 1.0;
-      final envelope = attack * exp(-280.0 * t);
-      final wave = 0.8 * sin(2 * pi * 2200.0 * t) + 0.2 * sin(2 * pi * 4400.0 * t);
-      samples[i] = wave * envelope * 0.9;
+
+      // 1. Sharp mechanical escapement strike (high-frequency transient snap)
+      final attackSnap = (t < 0.0006) ? (t / 0.0006) : 1.0;
+      final envSnap = attackSnap * exp(-180.0 * t);
+      final snapWave = 0.65 * sin(2 * pi * 2400.0 * t) + 0.35 * sin(2 * pi * 3800.0 * t);
+
+      // 2. Resonant hollow wooden metronome casing (body resonance)
+      final attackBody = (t < 0.0015) ? (t / 0.0015) : 1.0;
+      final envBody = attackBody * exp(-95.0 * t);
+      final bodyWave = 0.60 * sin(2 * pi * 880.0 * t) +
+          0.30 * sin(2 * pi * 1320.0 * t) +
+          0.10 * sin(2 * pi * 440.0 * t);
+
+      // Smooth cosine fade out on the last 5ms to guarantee zero DC offset or pop
+      final fadeOut = (t > 0.050) ? 0.5 * (1.0 + cos(pi * (t - 0.050) / 0.005)) : 1.0;
+
+      samples[i] = (snapWave * envSnap * 0.55 + bodyWave * envBody * 0.45) * fadeOut * 0.95;
     }
     return _samplesToWavBytes(samples, sampleRate);
   }
 
-  /// Minimalist acoustic sine ding (880Hz A5, 35ms)
+  /// Minimalist acoustic sine ding (880Hz A5, 50ms)
   static Uint8List _generateBeep() {
-    const duration = 0.035;
+    const duration = 0.050;
     final numSamples = (sampleRate * duration).toInt();
     final samples = Float64List(numSamples);
 
     for (int i = 0; i < numSamples; i++) {
       final t = i / sampleRate;
-      final attack = (t < 0.004) ? (t / 0.004) : 1.0;
-      final envelope = attack * exp(-110.0 * t);
+      final attack = (t < 0.003) ? (t / 0.003) : 1.0;
+      final envelope = attack * exp(-70.0 * t);
       final wave = sin(2 * pi * 880.0 * t);
-      samples[i] = wave * envelope * 0.8;
+      final fadeOut = (t > 0.045) ? 0.5 * (1.0 + cos(pi * (t - 0.045) / 0.005)) : 1.0;
+      samples[i] = wave * envelope * fadeOut * 0.85;
     }
     return _samplesToWavBytes(samples, sampleRate);
   }
 
-  /// Deep, physical chest-pulse tone (95Hz, 45ms)
+  /// Deep, physical chest-pulse tone (95Hz, 60ms)
   static Uint8List _generateBass() {
-    const duration = 0.045;
+    const duration = 0.060;
     final numSamples = (sampleRate * duration).toInt();
     final samples = Float64List(numSamples);
 
     for (int i = 0; i < numSamples; i++) {
       final t = i / sampleRate;
       final attack = (t < 0.006) ? (t / 0.006) : 1.0;
-      final envelope = attack * exp(-80.0 * t);
-      final wave = sin(2 * pi * 95.0 * t) + 0.3 * sin(2 * pi * 190.0 * t);
-      samples[i] = wave * envelope * 0.95;
+      final envelope = attack * exp(-55.0 * t);
+      final wave = sin(2 * pi * 95.0 * t) + 0.35 * sin(2 * pi * 190.0 * t);
+      final fadeOut = (t > 0.055) ? 0.5 * (1.0 + cos(pi * (t - 0.055) / 0.005)) : 1.0;
+      samples[i] = wave * envelope * fadeOut * 0.95;
     }
     return _samplesToWavBytes(samples, sampleRate);
   }
@@ -107,14 +166,15 @@ class CadenceSoundGenerator {
     for (int i = 0; i < numSamples; i++) {
       final t = i / sampleRate;
       final attack = (t < 0.002) ? (t / 0.002) : 1.0;
-      final envelope = attack * exp(-50.0 * t);
-      final wave = 0.7 * sin(2 * pi * 1560.0 * t) + 0.3 * sin(2 * pi * 3120.0 * t);
-      samples[i] = wave * envelope * 0.75;
+      final envelope = attack * exp(-45.0 * t);
+      final wave = 0.70 * sin(2 * pi * 1560.0 * t) + 0.30 * sin(2 * pi * 3120.0 * t);
+      final fadeOut = (t > 0.060) ? 0.5 * (1.0 + cos(pi * (t - 0.060) / 0.005)) : 1.0;
+      samples[i] = wave * envelope * fadeOut * 0.80;
     }
     return _samplesToWavBytes(samples, sampleRate);
   }
 
-  /// Two-stage chirped blip indicating random tempo shift (50ms)
+  /// Two-stage chirped blip indicating random tempo shift (55ms)
   static Uint8List _generateShiftCue() {
     const duration = 0.055;
     final numSamples = (sampleRate * duration).toInt();
@@ -122,10 +182,11 @@ class CadenceSoundGenerator {
 
     for (int i = 0; i < numSamples; i++) {
       final t = i / sampleRate;
-      final freq = t < 0.025 ? 1200.0 : 1800.0;
-      final envelope = exp(-50.0 * (t % 0.025));
+      final freq = t < 0.027 ? 1200.0 : 1800.0;
+      final envelope = exp(-45.0 * (t % 0.027));
       final wave = sin(2 * pi * freq * t);
-      samples[i] = wave * envelope * 0.85;
+      final fadeOut = (t > 0.050) ? 0.5 * (1.0 + cos(pi * (t - 0.050) / 0.005)) : 1.0;
+      samples[i] = wave * envelope * fadeOut * 0.85;
     }
     return _samplesToWavBytes(samples, sampleRate);
   }

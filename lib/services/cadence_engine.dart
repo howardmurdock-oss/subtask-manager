@@ -117,6 +117,8 @@ class CadenceEngine extends ChangeNotifier {
     _beatTimer?.cancel();
     _beatTimer = null;
     _isPaused = true;
+    _playerA?.stop().catchError((_) {});
+    _playerB?.stop().catchError((_) {});
     notifyListeners();
   }
 
@@ -133,6 +135,8 @@ class CadenceEngine extends ChangeNotifier {
     _beatTimer = null;
     _isRunning = false;
     _isPaused = false;
+    _playerA?.stop().catchError((_) {});
+    _playerB?.stop().catchError((_) {});
     notifyListeners();
   }
 
@@ -162,8 +166,22 @@ class CadenceEngine extends ChangeNotifier {
 
   void _initAudioPlayers() {
     try {
-      _playerA ??= AudioPlayer();
-      _playerB ??= AudioPlayer();
+      final audioContext = AudioContextConfig(
+        focus: AudioContextConfigFocus.mixWithOthers,
+        respectSilence: false,
+      ).build();
+
+      if (_playerA == null) {
+        _playerA = AudioPlayer();
+        _playerA!.setAudioContext(audioContext).catchError((_) {});
+        _playerA!.setReleaseMode(ReleaseMode.stop).catchError((_) {});
+      }
+      if (_playerB == null) {
+        _playerB = AudioPlayer();
+        _playerB!.setAudioContext(audioContext).catchError((_) {});
+        _playerB!.setReleaseMode(ReleaseMode.stop).catchError((_) {});
+      }
+      CadenceSoundGenerator.ensureFilesCached();
     } catch (_) {}
   }
 
@@ -245,16 +263,25 @@ class CadenceEngine extends ChangeNotifier {
 
   void _playBeatAudio({bool isShift = false}) {
     try {
-      final wavBytes = isShift
-          ? CadenceSoundGenerator.getShiftCueWav()
-          : CadenceSoundGenerator.getWav(_config.soundTone);
-
       final player = _usePlayerA ? _playerA : _playerB;
       _usePlayerA = !_usePlayerA;
+      if (player == null) return;
 
-      player?.stop().then((_) {
-        player.play(BytesSource(wavBytes));
-      }).catchError((_) {});
+      final filePath = isShift
+          ? CadenceSoundGenerator.getCachedShiftCueFilePath()
+          : CadenceSoundGenerator.getCachedFilePath(_config.soundTone);
+
+      final Source source;
+      if (filePath != null) {
+        source = DeviceFileSource(filePath);
+      } else {
+        final wavBytes = isShift
+            ? CadenceSoundGenerator.getShiftCueWav()
+            : CadenceSoundGenerator.getWav(_config.soundTone);
+        source = BytesSource(wavBytes);
+      }
+
+      player.play(source).catchError((_) {});
     } catch (_) {}
   }
 
