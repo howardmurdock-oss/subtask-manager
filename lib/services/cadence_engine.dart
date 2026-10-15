@@ -272,9 +272,7 @@ class CadenceEngine extends ChangeNotifier {
       final player = _usePlayerA ? _playerA : _playerB;
       _usePlayerA = !_usePlayerA;
 
-      player?.stop().then((_) {
-        player.play(BytesSource(wavBytes));
-      }).catchError((_) {});
+      player?.play(BytesSource(wavBytes)).catchError((_) {});
     } catch (_) {}
   }
 

@@ -91,6 +91,17 @@ void main() {
       expect(service.manualIntensity, 16);
     });
 
+    test('Sync timing offset clamping preserves valid range [0..300]', () {
+      service.setSyncOffset(400);
+      expect(service.syncOffsetMs, 300);
+
+      service.setSyncOffset(-50);
+      expect(service.syncOffsetMs, 0);
+
+      service.setSyncOffset(75);
+      expect(service.syncOffsetMs, 75);
+    });
+
     test('Cadence tick is safely handled when disconnected without exceptions', () {
       const tick = CadenceTick(
         beatNumber: 1,

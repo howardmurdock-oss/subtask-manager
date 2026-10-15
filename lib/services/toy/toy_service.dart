@@ -29,9 +29,11 @@ class ToyService extends ChangeNotifier {
   StreamSubscription<List<int>>? _notifySubscription;
 
   // Pulse & safety timers
+  Timer? _delayTimer;
   Timer? _pulseTimer;
   DateTime? _lastCommandTime;
   int _lastSentSpeed = -1;
+  int _syncOffsetMs = 60;
 
   // Getters
   ToyConnectionState get state => _state;
@@ -41,6 +43,7 @@ class ToyService extends ChangeNotifier {
   List<DiscoveredToy> get discoveredToys => List.unmodifiable(_discoveredToys);
   ToyCadenceMode get cadenceMode => _cadenceMode;
   int get manualIntensity => _manualIntensity;
+  int get syncOffsetMs => _syncOffsetMs;
   String? get statusMessage => _statusMessage;
 
   /// Initializes the service and attempts to auto-reconnect to the last paired toy.
@@ -52,6 +55,7 @@ class ToyService extends ChangeNotifier {
         _cadenceMode = ToyCadenceMode.values[modeIndex];
       }
       _manualIntensity = prefs.getInt('setting_toy_manual_intensity') ?? 12;
+      _syncOffsetMs = prefs.getInt('setting_toy_sync_offset_ms') ?? 60;
 
       // Auto-reconnect if last device ID is saved
       final lastId = prefs.getString('setting_last_toy_id');
@@ -78,6 +82,14 @@ class ToyService extends ChangeNotifier {
     if (isConnected) {
       setVibrateSpeed(_manualIntensity);
     }
+    notifyListeners();
+  }
+
+  void setSyncOffset(int ms) {
+    _syncOffsetMs = ms.clamp(0, 300);
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setInt('setting_toy_sync_offset_ms', _syncOffsetMs);
+    }).catchError((_) {});
     notifyListeners();
   }
 
@@ -353,6 +365,8 @@ class ToyService extends ChangeNotifier {
 
   /// Immediately shuts down all vibration motors on the connected hardware.
   Future<void> stopVibration() async {
+    _delayTimer?.cancel();
+    _delayTimer = null;
     _pulseTimer?.cancel();
     _pulseTimer = null;
     _lastSentSpeed = 0;
@@ -373,6 +387,19 @@ class ToyService extends ChangeNotifier {
   void onCadenceTick(CadenceTick tick) {
     if (!isConnected) return;
 
+    if (_syncOffsetMs <= 0) {
+      _dispatchCadenceTick(tick);
+    } else {
+      _delayTimer?.cancel();
+      _delayTimer = Timer(Duration(milliseconds: _syncOffsetMs), () {
+        if (isConnected) {
+          _dispatchCadenceTick(tick);
+        }
+      });
+    }
+  }
+
+  void _dispatchCadenceTick(CadenceTick tick) {
     switch (_cadenceMode) {
       case ToyCadenceMode.pulseOnBeat:
         _handleBeatPulse(tick);

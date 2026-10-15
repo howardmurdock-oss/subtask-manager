@@ -503,6 +503,42 @@ class _ToyManagerSheetState extends State<ToyManagerSheet> {
                     _toyService.setManualIntensity(val.round());
                   },
                 ),
+                const Divider(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Timing Sync Offset',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      '+${_toyService.syncOffsetMs} ms',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Delays the pulse to compensate for Bluetooth vs audio buffer latency, ensuring pulses land in exact unison with the metronome beat.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                ),
+                Slider(
+                  value: _toyService.syncOffsetMs.toDouble().clamp(0.0, 200.0),
+                  min: 0,
+                  max: 200,
+                  divisions: 40,
+                  label: '+${_toyService.syncOffsetMs} ms',
+                  onChanged: (val) {
+                    _toyService.setSyncOffset(val.round());
+                  },
+                ),
               ],
             ),
           ),
