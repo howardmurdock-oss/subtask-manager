@@ -7,12 +7,14 @@ class CadenceVisualizer extends StatefulWidget {
   final CadenceEngine engine;
   final double size;
   final bool compact;
+  final VoidCallback? onTap;
 
   const CadenceVisualizer({
     super.key,
     required this.engine,
     this.size = 200,
     this.compact = false,
+    this.onTap,
   });
 
   @override
@@ -139,71 +141,89 @@ class _CadenceVisualizerState extends State<CadenceVisualizer> with SingleTicker
       return AnimatedBuilder(
         animation: _pulseController,
         builder: (context, child) {
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: modeColor.withOpacity(0.08 + _glowAnimation.value * 0.15),
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: widget.onTap,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: modeColor.withOpacity(0.3 + _glowAnimation.value * 0.4),
-                width: 1.5,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Transform.scale(
-                  scale: _scaleAnimation.value,
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: modeColor,
-                      boxShadow: [
-                        BoxShadow(
-                          color: modeColor.withOpacity(_glowAnimation.value),
-                          blurRadius: 10,
-                          spreadRadius: 2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: modeColor.withOpacity(0.08 + _glowAnimation.value * 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: modeColor.withOpacity(0.3 + _glowAnimation.value * 0.4),
+                    width: 1.5,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Transform.scale(
+                      scale: _scaleAnimation.value,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: modeColor,
+                          boxShadow: [
+                            BoxShadow(
+                              color: modeColor.withOpacity(_glowAnimation.value),
+                              blurRadius: 10,
+                              spreadRadius: 2,
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 10),
+                    Text(
+                      '${engine.currentBpm}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'BPM',
+                      style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                    ),
+                    const SizedBox(width: 10),
+                    _buildTrendIndicator(engine.trend, modeColor),
+                    const Spacer(),
+                    IconButton(
+                      icon: Icon(
+                        engine.config.enableAudio ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+                        size: 18,
+                      ),
+                      tooltip: engine.config.enableAudio ? 'Mute Sound' : 'Enable Sound',
+                      onPressed: () => engine.toggleAudio(!engine.config.enableAudio),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        engine.config.enableHaptics ? Icons.vibration_rounded : Icons.smartphone_rounded,
+                        size: 18,
+                      ),
+                      tooltip: engine.config.enableHaptics ? 'Disable Haptics' : 'Enable Haptics',
+                      onPressed: () => engine.toggleHaptics(!engine.config.enableHaptics),
+                    ),
+                    if (widget.onTap != null) ...[
+                      const SizedBox(width: 2),
+                      Tooltip(
+                        message: 'Expand Metronome',
+                        child: Icon(
+                          Icons.fullscreen_rounded,
+                          size: 22,
+                          color: modeColor.withOpacity(0.9),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-                const SizedBox(width: 10),
-                Text(
-                  '${engine.currentBpm}',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'BPM',
-                  style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withOpacity(0.6)),
-                ),
-                const SizedBox(width: 10),
-                _buildTrendIndicator(engine.trend, modeColor),
-                const Spacer(),
-                IconButton(
-                  icon: Icon(
-                    engine.config.enableAudio ? Icons.volume_up_rounded : Icons.volume_off_rounded,
-                    size: 18,
-                  ),
-                  tooltip: engine.config.enableAudio ? 'Mute Sound' : 'Enable Sound',
-                  onPressed: () => engine.toggleAudio(!engine.config.enableAudio),
-                ),
-                IconButton(
-                  icon: Icon(
-                    engine.config.enableHaptics ? Icons.vibration_rounded : Icons.smartphone_rounded,
-                    size: 18,
-                  ),
-                  tooltip: engine.config.enableHaptics ? 'Disable Haptics' : 'Enable Haptics',
-                  onPressed: () => engine.toggleHaptics(!engine.config.enableHaptics),
-                ),
-              ],
+              ),
             ),
           );
         },

@@ -5,7 +5,7 @@ import '../models/order_item.dart';
 import '../models/cadence_config.dart';
 import '../services/cadence_engine.dart';
 import '../services/order_engine.dart';
-import '../views/cadence/cadence_studio_view.dart';
+import '../views/cadence/metronome_fullscreen_view.dart';
 import '../views/cadence/cadence_visualizer.dart';
 import 'countdown_ring.dart';
 
@@ -510,25 +510,19 @@ class _OrderCadenceBoxState extends State<_OrderCadenceBox> {
 
     return Padding(
       padding: const EdgeInsets.only(top: 10),
-      child: Column(
-        children: [
-          CadenceVisualizer(engine: engine, compact: true),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              icon: const Icon(Icons.tune_rounded, size: 14),
-              label: const Text('Open Metronome Studio', style: TextStyle(fontSize: 11)),
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => CadenceStudioView(
-                    initialConfig: widget.activeOrder.order.cadenceConfig,
-                    initialDuration: widget.activeOrder.order.actionDurationSeconds,
-                  ),
-                ),
+      child: CadenceVisualizer(
+        engine: engine,
+        compact: true,
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => MetronomeFullScreenView(
+                engine: engine,
+                activeOrder: widget.activeOrder,
               ),
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
