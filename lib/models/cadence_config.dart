@@ -38,6 +38,7 @@ class CadenceConfig {
   final bool enableAudio;
   final bool enableHaptics;
   final bool enableVisual;
+  final bool enableToy;
 
   const CadenceConfig({
     this.mode = CadenceMode.fixed,
@@ -50,6 +51,7 @@ class CadenceConfig {
     this.enableAudio = true,
     this.enableHaptics = true,
     this.enableVisual = true,
+    this.enableToy = true,
   });
 
   /// Factory for a default fixed BPM cadence
@@ -132,6 +134,7 @@ class CadenceConfig {
     bool? enableAudio,
     bool? enableHaptics,
     bool? enableVisual,
+    bool? enableToy,
   }) {
     return CadenceConfig(
       mode: mode ?? this.mode,
@@ -144,6 +147,7 @@ class CadenceConfig {
       enableAudio: enableAudio ?? this.enableAudio,
       enableHaptics: enableHaptics ?? this.enableHaptics,
       enableVisual: enableVisual ?? this.enableVisual,
+      enableToy: enableToy ?? this.enableToy,
     );
   }
 
@@ -159,6 +163,7 @@ class CadenceConfig {
       'enableAudio': enableAudio,
       'enableHaptics': enableHaptics,
       'enableVisual': enableVisual,
+      'enableToy': enableToy,
     };
   }
 
@@ -180,6 +185,7 @@ class CadenceConfig {
       enableAudio: json['enableAudio'] as bool? ?? true,
       enableHaptics: json['enableHaptics'] as bool? ?? true,
       enableVisual: json['enableVisual'] as bool? ?? true,
+      enableToy: json['enableToy'] as bool? ?? true,
     );
   }
 
@@ -263,7 +269,8 @@ class CadenceConfig {
         other.soundTone == soundTone &&
         other.enableAudio == enableAudio &&
         other.enableHaptics == enableHaptics &&
-        other.enableVisual == enableVisual;
+        other.enableVisual == enableVisual &&
+        other.enableToy == enableToy;
   }
 
   @override
@@ -278,6 +285,7 @@ class CadenceConfig {
         enableAudio,
         enableHaptics,
         enableVisual,
+        enableToy,
       );
 }
 

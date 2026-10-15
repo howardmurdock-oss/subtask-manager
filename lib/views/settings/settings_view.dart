@@ -24,6 +24,7 @@ import '../../services/schedule_service.dart';
 import '../../services/quest_service.dart';
 import '../../services/patreon_channel.dart';
 import '../cadence/cadence_studio_view.dart';
+import '../toy/toy_manager_sheet.dart';
 import '../../core/security/patreon_access.dart';
 import '../../services/sync_service.dart';
 import '../../services/background_link_service.dart';
@@ -1533,6 +1534,21 @@ class _SettingsViewState extends State<SettingsView> {
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const CadenceStudioView()),
               ),
+            ),
+          ),
+
+          // Bluetooth Toy Control
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: ListTile(
+              leading: CircleAvatar(
+                backgroundColor: Colors.purpleAccent.withOpacity(0.15),
+                child: Icon(Icons.bluetooth_audio_rounded, color: Colors.purpleAccent[400]),
+              ),
+              title: const Text('Bluetooth Toy Control', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: const Text('Direct BLE synchronization for Lovense and novelties with the metronome engine.'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => ToyManagerSheet.show(context),
             ),
           ),
 

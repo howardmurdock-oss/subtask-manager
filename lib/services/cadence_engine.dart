@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../core/sound/cadence_sound_generator.dart';
 import '../models/cadence_config.dart';
+import 'toy/toy_service.dart';
 
 /// Information payload emitted on every beat tick of the Cadence engine.
 class CadenceTick {
@@ -119,6 +120,7 @@ class CadenceEngine extends ChangeNotifier {
     _isPaused = true;
     _playerA?.stop().catchError((_) {});
     _playerB?.stop().catchError((_) {});
+    ToyService.instance.stopVibration();
     notifyListeners();
   }
 
@@ -137,6 +139,7 @@ class CadenceEngine extends ChangeNotifier {
     _isPaused = false;
     _playerA?.stop().catchError((_) {});
     _playerB?.stop().catchError((_) {});
+    ToyService.instance.stopVibration();
     notifyListeners();
   }
 
@@ -156,6 +159,14 @@ class CadenceEngine extends ChangeNotifier {
 
   void toggleHaptics(bool enabled) {
     _config = _config.copyWith(enableHaptics: enabled);
+    notifyListeners();
+  }
+
+  void toggleToy(bool enabled) {
+    _config = _config.copyWith(enableToy: enabled);
+    if (!enabled) {
+      ToyService.instance.stopVibration();
+    }
     notifyListeners();
   }
 
@@ -233,6 +244,11 @@ class CadenceEngine extends ChangeNotifier {
       trend: _trend,
       isTempoShift: isShift,
     );
+
+    // Connected novelty hardware sync
+    if (_config.enableToy) {
+      ToyService.instance.onCadenceTick(tick);
+    }
 
     _tickController.add(tick);
     onTickCallback?.call(tick);

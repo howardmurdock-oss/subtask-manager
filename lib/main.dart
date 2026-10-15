@@ -21,6 +21,7 @@ import 'views/security/pin_lock_screen.dart';
 import 'services/public_order_bridge.dart';
 import 'services/app_links.dart';
 import 'services/public_visitor_service.dart';
+import 'services/toy/toy_service.dart';
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,6 +34,7 @@ void main(List<String> args) async {
 
   await SoundService.init();
   await NotificationService.init();
+  await ToyService.instance.init();
 
   final storageService = StorageService();
   final orderEngine = OrderEngine(storage: storageService);

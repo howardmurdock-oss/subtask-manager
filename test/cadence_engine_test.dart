@@ -100,6 +100,7 @@ void main() {
         enableAudio: false,
         enableHaptics: true,
         enableVisual: false,
+        enableToy: false,
       );
 
       final json = original.toJson();
@@ -115,6 +116,7 @@ void main() {
       expect(restored.enableAudio, isFalse);
       expect(restored.enableHaptics, isTrue);
       expect(restored.enableVisual, isFalse);
+      expect(restored.enableToy, isFalse);
     });
 
     test('OrderItem correctly serializes and deserializes attached CadenceConfig', () {

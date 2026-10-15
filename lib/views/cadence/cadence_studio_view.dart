@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/cadence_config.dart';
 import '../../services/cadence_engine.dart';
 import 'cadence_visualizer.dart';
+import '../toy/toy_manager_sheet.dart';
 
 /// Interactive Cadence & Pacing Metronome Studio (Test Tool)
 class CadenceStudioView extends StatefulWidget {
@@ -32,6 +33,7 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
   CadenceSoundTone _selectedTone = CadenceSoundTone.woodblock;
   bool _enableAudio = true;
   bool _enableHaptics = true;
+  bool _enableToy = true;
 
   @override
   void initState() {
@@ -46,6 +48,7 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
     _selectedTone = cfg.soundTone;
     _enableAudio = cfg.enableAudio;
     _enableHaptics = cfg.enableHaptics;
+    _enableToy = cfg.enableToy;
     _durationSeconds = widget.initialDuration ?? 60;
 
     _engine = CadenceEngine(
@@ -72,6 +75,7 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
       enableAudio: _enableAudio,
       enableHaptics: _enableHaptics,
       enableVisual: true,
+      enableToy: _enableToy,
     );
   }
 
@@ -88,6 +92,11 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
       appBar: AppBar(
         title: const Text('Metronome Studio'),
         actions: [
+          IconButton(
+            tooltip: 'Bluetooth Toy Sync',
+            icon: const Icon(Icons.bluetooth_audio_rounded),
+            onPressed: () => ToyManagerSheet.show(context),
+          ),
           IconButton(
             tooltip: _enableAudio ? 'Mute Sound' : 'Enable Sound',
             icon: Icon(_enableAudio ? Icons.volume_up_rounded : Icons.volume_off_rounded),
@@ -427,6 +436,22 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
                         value: _enableHaptics,
                         onChanged: (val) {
                           setState(() => _enableHaptics = val);
+                          _applyConfigToEngine();
+                        },
+                      ),
+                      const Divider(),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Bluetooth Toy Sync'),
+                        subtitle: const Text('Direct BLE pulse vibration sync for Lovense & toys.'),
+                        value: _enableToy,
+                        secondary: IconButton(
+                          icon: const Icon(Icons.bluetooth_searching_rounded),
+                          tooltip: 'Manage Devices',
+                          onPressed: () => ToyManagerSheet.show(context),
+                        ),
+                        onChanged: (val) {
+                          setState(() => _enableToy = val);
                           _applyConfigToEngine();
                         },
                       ),
