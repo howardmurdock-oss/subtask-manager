@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import 'core/theme/theme_provider.dart';
 import 'core/security/security_service.dart';
 import 'core/sound/sound_service.dart';
-import 'core/sound/cadence_sound_generator.dart';
 import 'core/notifications/notification_service.dart';
 import 'services/order_engine.dart';
 import 'services/sync_service.dart';
@@ -33,7 +32,6 @@ void main(List<String> args) async {
   await securityService.init();
 
   await SoundService.init();
-  CadenceSoundGenerator.ensureFilesCached();
   await NotificationService.init();
 
   final storageService = StorageService();

@@ -1,19 +1,13 @@
-import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
-import 'package:path_provider/path_provider.dart';
 import '../../models/cadence_config.dart';
 
-/// Synthesizes acoustic PCM WAV audio samples for metronome clicks and cues.
+/// Synthesizes acoustic PCM WAV audio samples in memory for metronome clicks and cues.
 class CadenceSoundGenerator {
   static const int sampleRate = 44100;
 
   static final Map<CadenceSoundTone, Uint8List> _cache = {};
   static Uint8List? _shiftCueCache;
-
-  static final Map<CadenceSoundTone, String> _filePathCache = {};
-  static String? _shiftCueFilePath;
-  static bool _filesInitialized = false;
 
   /// Retrieves or synthesizes the WAV audio bytes for [tone].
   static Uint8List getWav(CadenceSoundTone tone) {
@@ -24,43 +18,6 @@ class CadenceSoundGenerator {
   static Uint8List getShiftCueWav() {
     return _shiftCueCache ??= _generateShiftCue();
   }
-
-  /// Ensures synthesized WAV audio files are written to disk cache for zero-latency, buffer-safe playback.
-  static Future<void> ensureFilesCached() async {
-    if (_filesInitialized) return;
-    try {
-      final tempDir = await getTemporaryDirectory();
-      final dir = Directory('${tempDir.path}/cadence_tones');
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
-
-      for (final tone in CadenceSoundTone.values) {
-        final file = File('${dir.path}/${tone.name}.wav');
-        final bytes = getWav(tone);
-        if (!await file.exists() || await file.length() != bytes.length) {
-          await file.writeAsBytes(bytes, flush: true);
-        }
-        _filePathCache[tone] = file.path;
-      }
-
-      final cueFile = File('${dir.path}/shift_cue.wav');
-      final cueBytes = getShiftCueWav();
-      if (!await cueFile.exists() || await cueFile.length() != cueBytes.length) {
-        await cueFile.writeAsBytes(cueBytes, flush: true);
-      }
-      _shiftCueFilePath = cueFile.path;
-      _filesInitialized = true;
-    } catch (_) {
-      // In test or non-platform environments
-    }
-  }
-
-  /// Returns cached disk file path for [tone] if available.
-  static String? getCachedFilePath(CadenceSoundTone tone) => _filePathCache[tone];
-
-  /// Returns cached disk file path for shift cue if available.
-  static String? getCachedShiftCueFilePath() => _shiftCueFilePath;
 
   static Uint8List _generateTone(CadenceSoundTone tone) {
     switch (tone) {

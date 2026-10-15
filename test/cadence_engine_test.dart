@@ -166,18 +166,6 @@ void main() {
       expect(String.fromCharCodes(shiftCue.sublist(0, 4)), 'RIFF');
       expect(String.fromCharCodes(shiftCue.sublist(8, 12)), 'WAVE');
     });
-
-    test('ensureFilesCached and getCachedFilePath gracefully handle cache calls', () async {
-      await CadenceSoundGenerator.ensureFilesCached();
-      // In tests, path_provider might not be registered or will complete without crashing
-      for (final tone in CadenceSoundTone.values) {
-        final path = CadenceSoundGenerator.getCachedFilePath(tone);
-        // If path is returned, verify file exists
-        if (path != null) {
-          expect(path, isNotEmpty);
-        }
-      }
-    });
   });
 
   group('CadenceEngine Lifecycle & Execution Tests', () {
