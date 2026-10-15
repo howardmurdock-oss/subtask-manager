@@ -249,4 +249,53 @@ class CadenceConfig {
     if (nextBpm < currentBpm) return TempoTrend.decelerating;
     return TempoTrend.steady;
   }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is CadenceConfig &&
+        other.mode == mode &&
+        other.bpm == bpm &&
+        other.minBpm == minBpm &&
+        other.maxBpm == maxBpm &&
+        other.waveCount == waveCount &&
+        other.randomIntervalSeconds == randomIntervalSeconds &&
+        other.soundTone == soundTone &&
+        other.enableAudio == enableAudio &&
+        other.enableHaptics == enableHaptics &&
+        other.enableVisual == enableVisual;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        mode,
+        bpm,
+        minBpm,
+        maxBpm,
+        waveCount,
+        randomIntervalSeconds,
+        soundTone,
+        enableAudio,
+        enableHaptics,
+        enableVisual,
+      );
+}
+
+extension CadenceModeExtension on CadenceMode {
+  String get displayName {
+    switch (this) {
+      case CadenceMode.none:
+        return 'None';
+      case CadenceMode.fixed:
+        return 'Fixed BPM';
+      case CadenceMode.wave:
+        return 'Wave';
+      case CadenceMode.peak:
+        return 'Peak';
+      case CadenceMode.ramp:
+        return 'Ramp';
+      case CadenceMode.random:
+        return 'Random';
+    }
+  }
 }

@@ -594,6 +594,12 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
                   ),
                 if (!order.allowRandomDraw)
                   _buildInfoChip(Icons.casino_outlined, 'Manual Only', color: Colors.amberAccent),
+                if (order.cadenceConfig != null && order.cadenceConfig!.mode != CadenceMode.none)
+                  _buildInfoChip(
+                    Icons.speed_rounded,
+                    'Metronome: ${order.cadenceConfig!.mode.displayName}',
+                    color: Colors.cyanAccent,
+                  ),
               ],
             ),
             const SizedBox(height: 12),
@@ -866,7 +872,7 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
                         Icon(Icons.speed_rounded, size: 18, color: theme.colorScheme.primary),
                         const SizedBox(width: 8),
                         const Text(
-                          'Pacing Metronome & Cadence',
+                          'Metronome',
                           style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                         ),
                         const Spacer(),
@@ -885,13 +891,13 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
                       const SizedBox(height: 10),
                       DropdownButtonFormField<CadenceMode>(
                         value: _cadenceMode,
-                        decoration: const InputDecoration(labelText: 'Cadence Mode'),
-                        items: const [
-                          DropdownMenuItem(value: CadenceMode.fixed, child: Text('Fixed BPM (Steady tempo)')),
-                          DropdownMenuItem(value: CadenceMode.wave, child: Text('Wave (Rollercoaster swell)')),
-                          DropdownMenuItem(value: CadenceMode.peak, child: Text('Peak (Pyramid midpoint ramp)')),
-                          DropdownMenuItem(value: CadenceMode.ramp, child: Text('Ramp (Accelerando build)')),
-                          DropdownMenuItem(value: CadenceMode.random, child: Text('Random (Surprise jumps)')),
+                        decoration: const InputDecoration(labelText: 'Metronome Mode'),
+                        items: [
+                          DropdownMenuItem(value: CadenceMode.fixed, child: Text(CadenceMode.fixed.displayName)),
+                          DropdownMenuItem(value: CadenceMode.wave, child: Text(CadenceMode.wave.displayName)),
+                          DropdownMenuItem(value: CadenceMode.peak, child: Text(CadenceMode.peak.displayName)),
+                          DropdownMenuItem(value: CadenceMode.ramp, child: Text(CadenceMode.ramp.displayName)),
+                          DropdownMenuItem(value: CadenceMode.random, child: Text(CadenceMode.random.displayName)),
                         ],
                         onChanged: (val) {
                           if (val != null) setState(() => _cadenceMode = val);

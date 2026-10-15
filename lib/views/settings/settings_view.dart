@@ -1527,7 +1527,7 @@ class _SettingsViewState extends State<SettingsView> {
                 backgroundColor: Colors.tealAccent.withOpacity(0.15),
                 child: Icon(Icons.speed_rounded, color: Colors.tealAccent[400]),
               ),
-              title: const Text('Cadence & Pacing Metronome', style: TextStyle(fontWeight: FontWeight.bold)),
+              title: const Text('Metronome', style: TextStyle(fontWeight: FontWeight.bold)),
               subtitle: const Text('Fixed BPM, Wave, Peak, Ramp, and Random pacing curves with synthesized audio and haptics.'),
               trailing: const Icon(Icons.chevron_right_rounded),
               onTap: () => Navigator.of(context).push(

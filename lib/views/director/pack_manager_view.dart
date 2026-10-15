@@ -11,6 +11,7 @@ import '../../services/order_engine.dart';
 import '../../services/sync_service.dart';
 import '../../services/partner_service.dart';
 import '../../core/security/encryption_helper.dart';
+import '../../models/cadence_config.dart';
 import 'pack_studio_view.dart';
 import 'order_dispatch_dialog.dart';
 
@@ -549,6 +550,29 @@ class PackManagerView extends StatelessWidget {
                                                   ],
                                                 ),
                                               ),
+                                              if (order.cadenceConfig != null && order.cadenceConfig!.mode != CadenceMode.none)
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.amberAccent.withOpacity(0.15),
+                                                    borderRadius: BorderRadius.circular(4),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      const Icon(Icons.speed_rounded, size: 10, color: Colors.amberAccent),
+                                                      const SizedBox(width: 3),
+                                                      Text(
+                                                        'Metronome: ${order.cadenceConfig!.mode.displayName}',
+                                                        style: const TextStyle(
+                                                          fontSize: 9,
+                                                          fontWeight: FontWeight.bold,
+                                                          color: Colors.amberAccent,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
                                             ],
                                           ),
                                         ],

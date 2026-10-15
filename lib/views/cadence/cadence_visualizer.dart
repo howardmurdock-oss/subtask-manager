@@ -76,13 +76,13 @@ class _CadenceVisualizerState extends State<CadenceVisualizer> with SingleTicker
       case CadenceMode.fixed:
         return 'FIXED BPM';
       case CadenceMode.wave:
-        return 'WAVE CADENCE';
+        return 'WAVE';
       case CadenceMode.peak:
-        return 'PYRAMID PEAK';
+        return 'PEAK';
       case CadenceMode.ramp:
-        return 'ACCELERANDO RAMP';
+        return 'RAMP';
       case CadenceMode.random:
-        return 'RANDOM SHIFTS';
+        return 'RANDOM';
       case CadenceMode.none:
         return 'DISABLED';
     }

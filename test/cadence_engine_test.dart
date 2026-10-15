@@ -207,5 +207,49 @@ void main() {
 
       engine.dispose();
     });
+
+    test('CadenceMode displayName provides clean mode names without brackets', () {
+      expect(CadenceMode.fixed.displayName, 'Fixed BPM');
+      expect(CadenceMode.wave.displayName, 'Wave');
+      expect(CadenceMode.peak.displayName, 'Peak');
+      expect(CadenceMode.ramp.displayName, 'Ramp');
+      expect(CadenceMode.random.displayName, 'Random');
+      expect(CadenceMode.none.displayName, 'None');
+    });
+
+    test('CadenceConfig equality and hashCode work correctly', () {
+      const cfgA = CadenceConfig(mode: CadenceMode.wave, minBpm: 40, maxBpm: 100);
+      const cfgB = CadenceConfig(mode: CadenceMode.wave, minBpm: 40, maxBpm: 100);
+      const cfgC = CadenceConfig(mode: CadenceMode.wave, minBpm: 50, maxBpm: 100);
+
+      expect(cfgA, equals(cfgB));
+      expect(cfgA.hashCode, equals(cfgB.hashCode));
+      expect(cfgA, isNot(equals(cfgC)));
+    });
+
+    test('OrderItem and OrderPack preserve cadenceConfig across copyWith and serialization', () {
+      final orderWithCadence = OrderItem(
+        title: 'Paced Breathing Routine',
+        description: 'Breathe to the wave metronome',
+        durationType: DurationType.actionTimer,
+        actionDurationSeconds: 180,
+        cadenceConfig: const CadenceConfig(
+          mode: CadenceMode.wave,
+          minBpm: 20,
+          maxBpm: 60,
+          waveCount: 3,
+        ),
+      );
+
+      final json = orderWithCadence.toJson();
+      final roundtrip = OrderItem.fromJson(json);
+
+      expect(roundtrip.cadenceConfig, isNotNull);
+      expect(roundtrip.cadenceConfig!.mode, CadenceMode.wave);
+      expect(roundtrip.cadenceConfig!.minBpm, 20);
+      expect(roundtrip.cadenceConfig!.maxBpm, 60);
+      expect(roundtrip.cadenceConfig!.waveCount, 3);
+      expect(roundtrip.cadenceConfig, equals(orderWithCadence.cadenceConfig));
+    });
   });
 }

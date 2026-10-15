@@ -86,7 +86,7 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Cadence & Pacing Metronome'),
+        title: const Text('Metronome Studio'),
         actions: [
           IconButton(
             tooltip: _enableAudio ? 'Mute Sound' : 'Enable Sound',
@@ -184,7 +184,7 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
 
               // Mode Selection Section
               Text(
-                'CADENCE MODE',
+                'METRONOME MODE',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
@@ -253,7 +253,7 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
 
               // Parameters Section
               Text(
-                'CADENCE PARAMETERS',
+                'METRONOME PARAMETERS',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.bold,

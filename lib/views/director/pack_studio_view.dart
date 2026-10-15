@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/order_pack.dart';
 import '../../models/order_item.dart';
+import '../../models/cadence_config.dart';
 import '../../services/order_engine.dart';
 import '../../widgets/draggable_dialog.dart';
+import '../cadence/cadence_studio_view.dart';
 
 class PackStudioView extends StatefulWidget {
   final OrderPack? existingPack;
@@ -95,6 +97,16 @@ class _PackStudioViewState extends State<PackStudioView> {
     int penaltyTokens = existingOrder?.penaltyTokens ?? 20;
     bool allowRandomDraw = existingOrder?.allowRandomDraw ?? true;
 
+    bool enableCadence = existingOrder?.cadenceConfig != null &&
+        existingOrder!.cadenceConfig!.mode != CadenceMode.none;
+    CadenceMode cadenceMode = existingOrder?.cadenceConfig?.mode ?? CadenceMode.fixed;
+    int cadenceBpm = existingOrder?.cadenceConfig?.bpm ?? 60;
+    int cadenceMinBpm = existingOrder?.cadenceConfig?.minBpm ?? 30;
+    int cadenceMaxBpm = existingOrder?.cadenceConfig?.maxBpm ?? 110;
+    int cadenceWaveCount = existingOrder?.cadenceConfig?.waveCount ?? 2;
+    int cadenceRandomInterval = existingOrder?.cadenceConfig?.randomIntervalSeconds ?? 15;
+    CadenceSoundTone cadenceTone = existingOrder?.cadenceConfig?.soundTone ?? CadenceSoundTone.woodblock;
+
     DraggableDialog.show(
       context: context,
       title: existingOrder != null ? 'Edit Directive' : 'New Directive',
@@ -104,7 +116,8 @@ class _PackStudioViewState extends State<PackStudioView> {
           return titleCtrl.text.trim().isNotEmpty ||
               descCtrl.text.trim().isNotEmpty ||
               (catCtrl.text.trim().isNotEmpty && catCtrl.text.trim() != 'General') ||
-              equipmentCtrl.text.trim().isNotEmpty;
+              equipmentCtrl.text.trim().isNotEmpty ||
+              enableCadence;
         }
         if (titleCtrl.text.trim() != existingOrder.title.trim()) return true;
         if (descCtrl.text.trim() != existingOrder.description.trim()) return true;
@@ -116,6 +129,19 @@ class _PackStudioViewState extends State<PackStudioView> {
         if (rewardTokens != existingOrder.rewardTokens) return true;
         if (penaltyTokens != existingOrder.penaltyTokens) return true;
         if (allowRandomDraw != existingOrder.allowRandomDraw) return true;
+
+        final origCadence = existingOrder.cadenceConfig;
+        final origCadenceEnabled = origCadence != null && origCadence.mode != CadenceMode.none;
+        if (enableCadence != origCadenceEnabled) return true;
+        if (enableCadence) {
+          if (cadenceMode != (origCadence?.mode ?? CadenceMode.fixed)) return true;
+          if (cadenceMode == CadenceMode.fixed) {
+            if (cadenceBpm != (origCadence?.bpm ?? 60)) return true;
+          } else {
+            if (cadenceMinBpm != (origCadence?.minBpm ?? 30)) return true;
+            if (cadenceMaxBpm != (origCadence?.maxBpm ?? 110)) return true;
+          }
+        }
 
         int computedActionSecs = actionValue;
         if (actionUnit == 'Hours') computedActionSecs = actionValue * 3600;
@@ -230,6 +256,167 @@ class _PackStudioViewState extends State<PackStudioView> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 12),
+              Card(
+                margin: EdgeInsets.zero,
+                color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.15),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.speed_rounded, size: 18, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Metronome',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                          ),
+                          const Spacer(),
+                          Switch(
+                            value: enableCadence,
+                            onChanged: (val) => setModalState(() => enableCadence = val),
+                          ),
+                        ],
+                      ),
+                      if (enableCadence) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Paces the player with rhythmic audio ticks, visual pulses, and device vibrations during this routine.',
+                          style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
+                        ),
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<CadenceMode>(
+                          value: cadenceMode,
+                          decoration: const InputDecoration(labelText: 'Metronome Mode'),
+                          items: [
+                            DropdownMenuItem(value: CadenceMode.fixed, child: Text(CadenceMode.fixed.displayName)),
+                            DropdownMenuItem(value: CadenceMode.wave, child: Text(CadenceMode.wave.displayName)),
+                            DropdownMenuItem(value: CadenceMode.peak, child: Text(CadenceMode.peak.displayName)),
+                            DropdownMenuItem(value: CadenceMode.ramp, child: Text(CadenceMode.ramp.displayName)),
+                            DropdownMenuItem(value: CadenceMode.random, child: Text(CadenceMode.random.displayName)),
+                          ],
+                          onChanged: (val) {
+                            if (val != null) setModalState(() => cadenceMode = val);
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        if (cadenceMode == CadenceMode.fixed) ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text('Target: $cadenceBpm BPM', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                              ),
+                              Expanded(
+                                flex: 2,
+                                child: Slider(
+                                  value: cadenceBpm.toDouble().clamp(20, 240),
+                                  min: 20,
+                                  max: 240,
+                                  onChanged: (val) => setModalState(() => cadenceBpm = val.round()),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ] else ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text('Min: $cadenceMinBpm BPM', style: const TextStyle(fontSize: 12)),
+                              ),
+                              Expanded(
+                                flex: 2,
+                                child: Slider(
+                                  value: cadenceMinBpm.toDouble().clamp(15, 180),
+                                  min: 15,
+                                  max: 180,
+                                  onChanged: (val) {
+                                    setModalState(() {
+                                      cadenceMinBpm = val.round();
+                                      if (cadenceMinBpm >= cadenceMaxBpm) cadenceMaxBpm = cadenceMinBpm + 10;
+                                    });
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text('Max: $cadenceMaxBpm BPM', style: const TextStyle(fontSize: 12)),
+                              ),
+                              Expanded(
+                                flex: 2,
+                                child: Slider(
+                                  value: cadenceMaxBpm.toDouble().clamp(25, 240),
+                                  min: 25,
+                                  max: 240,
+                                  onChanged: (val) {
+                                    setModalState(() {
+                                      cadenceMaxBpm = val.round();
+                                      if (cadenceMaxBpm <= cadenceMinBpm) cadenceMinBpm = (cadenceMaxBpm - 10).clamp(10, 240);
+                                    });
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            icon: const Icon(Icons.play_circle_outline_rounded, size: 16),
+                            label: const Text('Test / Preview in Metronome Studio', style: TextStyle(fontSize: 11)),
+                            onPressed: () {
+                              int sec = actionValue;
+                              if (actionUnit == 'Minutes') sec *= 60;
+                              if (actionUnit == 'Hours') sec *= 3600;
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => CadenceStudioView(
+                                    initialConfig: CadenceConfig(
+                                      mode: cadenceMode,
+                                      bpm: cadenceBpm,
+                                      minBpm: cadenceMinBpm,
+                                      maxBpm: cadenceMaxBpm,
+                                      waveCount: cadenceWaveCount,
+                                      randomIntervalSeconds: cadenceRandomInterval,
+                                      soundTone: cadenceTone,
+                                    ),
+                                    initialDuration: sec,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ] else ...[
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded, size: 13, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4)),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Select "Action Routine Timer" above to enable the Metronome.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
             if (durationType == DurationType.deadlineCountdown || durationType == DurationType.actionWithDeadline) ...[
@@ -362,6 +549,20 @@ class _PackStudioViewState extends State<PackStudioView> {
                   if (deadlineUnit == 'Hours') computedDeadlineMins = deadlineValue * 60;
                   if (deadlineUnit == 'Seconds') computedDeadlineMins = (deadlineValue / 60).ceil().clamp(1, 999999);
 
+                  final cadence = (enableCadence &&
+                          (durationType == DurationType.actionTimer ||
+                              durationType == DurationType.actionWithDeadline))
+                      ? CadenceConfig(
+                          mode: cadenceMode,
+                          bpm: cadenceBpm,
+                          minBpm: cadenceMinBpm,
+                          maxBpm: cadenceMaxBpm,
+                          waveCount: cadenceWaveCount,
+                          randomIntervalSeconds: cadenceRandomInterval,
+                          soundTone: cadenceTone,
+                        )
+                      : null;
+
                   final order = OrderItem(
                     id: existingOrder?.id,
                     title: titleCtrl.text.trim(),
@@ -377,6 +578,7 @@ class _PackStudioViewState extends State<PackStudioView> {
                     penaltyTokens: penaltyTokens,
                     allowRandomDraw: allowRandomDraw,
                     requiredEquipment: eqList,
+                    cadenceConfig: cadence,
                   );
 
                   setState(() {
@@ -421,7 +623,8 @@ class _PackStudioViewState extends State<PackStudioView> {
           _orders[i].penaltyTokens != p.orders[i].penaltyTokens ||
           _orders[i].allowRandomDraw != p.orders[i].allowRandomDraw ||
           _orders[i].category != p.orders[i].category ||
-          _orders[i].requiredEquipment.join(',') != p.orders[i].requiredEquipment.join(',')) {
+          _orders[i].requiredEquipment.join(',') != p.orders[i].requiredEquipment.join(',') ||
+          _orders[i].cadenceConfig != p.orders[i].cadenceConfig) {
         return true;
       }
     }
@@ -614,6 +817,7 @@ class _PackStudioViewState extends State<PackStudioView> {
                   key: ValueKey(item.id),
                   margin: const EdgeInsets.symmetric(vertical: 4),
                   child: ListTile(
+                    onTap: () => _showAddEditOrderDialog(item, idx),
                     leading: ReorderableDragStartListener(
                       index: idx,
                       child: Container(
@@ -658,6 +862,29 @@ class _PackStudioViewState extends State<PackStudioView> {
                                 ],
                               ),
                             ),
+                            if (item.cadenceConfig != null && item.cadenceConfig!.mode != CadenceMode.none)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: Colors.amberAccent.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.speed_rounded, size: 10, color: Colors.amberAccent),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      'Metronome: ${item.cadenceConfig!.mode.displayName}',
+                                      style: const TextStyle(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.amberAccent,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                           ],
                         ),
                         if (item.requiredEquipment.isNotEmpty) ...[
