@@ -862,10 +862,11 @@ class _PackStudioViewState extends State<PackStudioView> {
             ),
           ],
         ),
-        body: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            _buildFieldLabel('Pack Title', context),
+        body: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+            children: [
+              _buildFieldLabel('Pack Title', context),
           TextField(
             controller: _titleController,
             decoration: const InputDecoration(
@@ -1063,6 +1064,7 @@ class _PackStudioViewState extends State<PackStudioView> {
             ),
         ],
       ),
+    ),
     ),
     );
   }

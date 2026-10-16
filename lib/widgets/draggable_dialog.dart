@@ -97,14 +97,14 @@ class _DraggableDialogState extends State<DraggableDialog> {
     final theme = Theme.of(context);
     final mediaQuery = MediaQuery.of(context);
     final bottomInset = mediaQuery.viewInsets.bottom;
-    final topPadding = mediaQuery.padding.top;
-    final bottomPadding = mediaQuery.padding.bottom;
+    final topPadding = max(mediaQuery.padding.top, mediaQuery.viewPadding.top);
+    final bottomPadding = max(mediaQuery.padding.bottom, mediaQuery.viewPadding.bottom);
 
-    // Available vertical space above the soft keyboard
+    // Available vertical space above the soft keyboard and within system bars
     final availableHeight = mediaQuery.size.height - bottomInset - topPadding - bottomPadding;
     final double maxAllowedHeight = widget.maxHeight != null
-        ? widget.maxHeight!.clamp(160.0, max(160.0, availableHeight * 0.95)).toDouble()
-        : max(160.0, availableHeight * 0.94).toDouble();
+        ? widget.maxHeight!.clamp(160.0, max(160.0, availableHeight * 0.90)).toDouble()
+        : max(160.0, availableHeight * 0.90).toDouble();
 
     final dialogWidth = mediaQuery.size.width < (widget.maxWidth + 24)
         ? (mediaQuery.size.width - 24).clamp(240.0, widget.maxWidth)

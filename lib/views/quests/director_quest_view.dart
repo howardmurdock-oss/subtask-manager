@@ -1400,9 +1400,10 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
           if (!questSvc.isUnlocked) _sponsorBanner(theme),
 
           // Header Card
@@ -1648,6 +1649,7 @@ class _DirectorQuestViewState extends State<DirectorQuestView> {
           )),
         ],
       ),
+    ),
     );
   }
 }

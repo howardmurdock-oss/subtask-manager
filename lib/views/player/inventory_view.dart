@@ -77,9 +77,10 @@ class InventoryView extends StatelessWidget {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
 
 
           Row(
@@ -168,6 +169,7 @@ class InventoryView extends StatelessWidget {
             }),
         ],
       ),
+    ),
     );
   }
 }

@@ -349,20 +349,21 @@ class PackManagerView extends StatelessWidget {
           ),
         ],
       ),
-      body: packs.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.folder_open_rounded, size: 64, color: theme.colorScheme.onSurface.withOpacity(0.3)),
-                  const SizedBox(height: 12),
-                  const Text('No Order Packs Installed'),
-                ],
-              ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: packs.length,
+      body: SafeArea(
+        child: packs.isEmpty
+            ? Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.folder_open_rounded, size: 64, color: theme.colorScheme.onSurface.withOpacity(0.3)),
+                    const SizedBox(height: 12),
+                    const Text('No Order Packs Installed'),
+                  ],
+                ),
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                itemCount: packs.length,
               itemBuilder: (context, index) {
                 final pack = packs[index];
                 return Card(
@@ -623,6 +624,7 @@ class PackManagerView extends StatelessWidget {
                 );
               },
             ),
+      ),
     );
   }
 }

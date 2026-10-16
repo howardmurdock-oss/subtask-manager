@@ -502,7 +502,7 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 24),
+                  padding: const EdgeInsets.fromLTRB(0, 0, 0, 36),
                   itemCount: packOrders.length,
                   itemBuilder: (context, index) {
                     final pack = packOrders[index].key;
@@ -689,7 +689,7 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
 
   Widget _buildCustomDirectiveTab(OrderEngine engine, ThemeData theme) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 36),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

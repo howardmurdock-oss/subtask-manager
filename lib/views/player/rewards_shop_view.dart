@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../services/order_engine.dart';
@@ -129,9 +129,10 @@ class _RewardsShopViewState extends State<RewardsShopView> {
       appBar: AppBar(
         title: const Text('Privilege & Reward Shop'),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
           // Wallet Balance Hero Card
           Card(
             child: Padding(
@@ -387,6 +388,7 @@ class _RewardsShopViewState extends State<RewardsShopView> {
           ],
         ],
       ),
+    ),
     );
   }
 }

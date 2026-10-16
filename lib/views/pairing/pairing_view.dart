@@ -84,9 +84,10 @@ class _PairingViewState extends State<PairingView> {
       appBar: AppBar(
         title: const Text('Remote Pairing & Network Sync'),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
           // Connection Status Hero Card
           Card(
             shape: RoundedRectangleBorder(
@@ -513,6 +514,7 @@ class _PairingViewState extends State<PairingView> {
           ],
         ],
       ),
+    ),
     );
   }
 }

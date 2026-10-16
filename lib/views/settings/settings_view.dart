@@ -781,9 +781,10 @@ class _SettingsViewState extends State<SettingsView> {
       appBar: AppBar(
         title: const Text('Preferences & Settings'),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
           // Personal Pairing Identity Section
           _buildPersonalIdentitySection(context, sync, theme),
 
@@ -1894,6 +1895,7 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ],
       ),
+    ),
     );
   }
 }

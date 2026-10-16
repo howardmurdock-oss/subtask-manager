@@ -226,9 +226,10 @@ class _PlayerQuestViewState extends State<PlayerQuestView> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
           // Hero Progress Card
           Card(
             elevation: 2,
@@ -548,6 +549,7 @@ class _PlayerQuestViewState extends State<PlayerQuestView> {
           }),
         ],
       ),
+    ),
     );
   }
 
@@ -558,11 +560,12 @@ class _PlayerQuestViewState extends State<PlayerQuestView> {
       appBar: AppBar(
         title: const Text('Quests & Directives Playlists'),
       ),
-      body: allQuests.isEmpty
-          ? const Center(child: Text('No quests available.'))
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
+      body: SafeArea(
+        child: allQuests.isEmpty
+            ? const Center(child: Text('No quests available.'))
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                children: [
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -689,6 +692,7 @@ class _PlayerQuestViewState extends State<PlayerQuestView> {
                 )),
               ],
             ),
+      ),
     );
   }
 }

@@ -124,12 +124,13 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
           ),
         ],
       ),
-      body: AnimatedBuilder(
-        animation: _engine,
-        builder: (context, _) {
-          return ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            children: [
+      body: SafeArea(
+        child: AnimatedBuilder(
+          animation: _engine,
+          builder: (context, _) {
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+              children: [
               // Center Visualizer Ring
               Card(
                 elevation: 2,
@@ -555,6 +556,7 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
           );
         },
       ),
+    ),
     );
   }
 

@@ -17,7 +17,8 @@ class HistoryLogView extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Discipline History Log'),
       ),
-      body: history.isEmpty
+      body: SafeArea(
+        child: history.isEmpty
           ? Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -39,7 +40,7 @@ class HistoryLogView extends StatelessWidget {
               ),
             )
           : ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               itemCount: history.length,
               itemBuilder: (context, index) {
                 final entry = history[index];
@@ -94,6 +95,7 @@ class HistoryLogView extends StatelessWidget {
                 );
               },
             ),
+      ),
     );
   }
 }
