@@ -34,6 +34,9 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
   bool _enableAudio = true;
   bool _enableHaptics = true;
   bool _enableToy = true;
+  CadenceToyMode _selectedToyMode = CadenceToyMode.pulse;
+  int _toyMinPower = 3;
+  int _toyMaxPower = 18;
 
   @override
   void initState() {
@@ -49,6 +52,9 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
     _enableAudio = cfg.enableAudio;
     _enableHaptics = cfg.enableHaptics;
     _enableToy = cfg.enableToy;
+    _selectedToyMode = cfg.toyMode;
+    _toyMinPower = cfg.toyMinPower;
+    _toyMaxPower = cfg.toyMaxPower;
     _durationSeconds = widget.initialDuration ?? 60;
 
     _engine = CadenceEngine(
@@ -76,6 +82,9 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
       enableHaptics: _enableHaptics,
       enableVisual: true,
       enableToy: _enableToy,
+      toyMode: _selectedToyMode,
+      toyMinPower: _toyMinPower,
+      toyMaxPower: _toyMaxPower,
     );
   }
 
@@ -443,7 +452,7 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Bluetooth Toy Sync'),
-                        subtitle: const Text('Direct BLE pulse vibration sync for Lovense & toys.'),
+                        subtitle: const Text('Direct BLE synchronization for Lovense & toys.'),
                         value: _enableToy,
                         secondary: IconButton(
                           icon: const Icon(Icons.bluetooth_searching_rounded),
@@ -455,6 +464,87 @@ class _CadenceStudioViewState extends State<CadenceStudioView> {
                           _applyConfigToEngine();
                         },
                       ),
+                      if (_enableToy) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Text('Toy Mode:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: SegmentedButton<CadenceToyMode>(
+                                segments: const [
+                                  ButtonSegment(
+                                    value: CadenceToyMode.pulse,
+                                    label: Text('Beat Pulses', style: TextStyle(fontSize: 11)),
+                                    icon: Icon(Icons.vibration_rounded, size: 14),
+                                  ),
+                                  ButtonSegment(
+                                    value: CadenceToyMode.continuous,
+                                    label: Text('Steady Buzz', style: TextStyle(fontSize: 11)),
+                                    icon: Icon(Icons.waves_rounded, size: 14),
+                                  ),
+                                ],
+                                selected: {_selectedToyMode},
+                                onSelectionChanged: (set) {
+                                  setState(() => _selectedToyMode = set.first);
+                                  _applyConfigToEngine();
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_selectedToyMode == CadenceToyMode.continuous) ...[
+                          const SizedBox(height: 12),
+                          if (_selectedMode == CadenceMode.fixed) ...[
+                            _sliderTile(
+                              title: 'Steady Buzz Power',
+                              valueText: 'Level $_toyMaxPower / 20',
+                              value: _toyMaxPower.toDouble(),
+                              min: 1,
+                              max: 20,
+                              divisions: 19,
+                              onChanged: (val) {
+                                setState(() {
+                                  _toyMaxPower = val.round();
+                                  _toyMinPower = _toyMaxPower;
+                                });
+                                _applyConfigToEngine();
+                              },
+                            ),
+                          ] else ...[
+                            _sliderTile(
+                              title: 'Min Buzz Power',
+                              valueText: 'Level $_toyMinPower / 20',
+                              value: _toyMinPower.toDouble(),
+                              min: 1,
+                              max: 20,
+                              divisions: 19,
+                              onChanged: (val) {
+                                setState(() {
+                                  _toyMinPower = val.round();
+                                  if (_toyMinPower >= _toyMaxPower) _toyMaxPower = _toyMinPower + 1;
+                                });
+                                _applyConfigToEngine();
+                              },
+                            ),
+                            _sliderTile(
+                              title: 'Max Buzz Power',
+                              valueText: 'Level $_toyMaxPower / 20',
+                              value: _toyMaxPower.toDouble(),
+                              min: 1,
+                              max: 20,
+                              divisions: 19,
+                              onChanged: (val) {
+                                setState(() {
+                                  _toyMaxPower = val.round();
+                                  if (_toyMaxPower <= _toyMinPower) _toyMinPower = max(1, _toyMaxPower - 1);
+                                });
+                                _applyConfigToEngine();
+                              },
+                            ),
+                          ],
+                        ],
+                      ],
                     ],
                   ),
                 ),

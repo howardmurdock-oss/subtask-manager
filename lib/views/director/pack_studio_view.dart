@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/order_pack.dart';
@@ -106,6 +107,10 @@ class _PackStudioViewState extends State<PackStudioView> {
     int cadenceWaveCount = existingOrder?.cadenceConfig?.waveCount ?? 2;
     int cadenceRandomInterval = existingOrder?.cadenceConfig?.randomIntervalSeconds ?? 15;
     CadenceSoundTone cadenceTone = existingOrder?.cadenceConfig?.soundTone ?? CadenceSoundTone.woodblock;
+    CadenceToyMode cadenceToyMode = existingOrder?.cadenceConfig?.toyMode ?? CadenceToyMode.pulse;
+    int cadenceToyMinPower = existingOrder?.cadenceConfig?.toyMinPower ?? 3;
+    int cadenceToyMaxPower = existingOrder?.cadenceConfig?.toyMaxPower ?? 18;
+    bool cadenceEnableAudio = existingOrder?.cadenceConfig?.enableAudio ?? true;
 
     DraggableDialog.show(
       context: context,
@@ -141,6 +146,10 @@ class _PackStudioViewState extends State<PackStudioView> {
             if (cadenceMinBpm != (origCadence?.minBpm ?? 30)) return true;
             if (cadenceMaxBpm != (origCadence?.maxBpm ?? 110)) return true;
           }
+          if (cadenceToyMode != (origCadence?.toyMode ?? CadenceToyMode.pulse)) return true;
+          if (cadenceToyMinPower != (origCadence?.toyMinPower ?? 3)) return true;
+          if (cadenceToyMaxPower != (origCadence?.toyMaxPower ?? 18)) return true;
+          if (cadenceEnableAudio != (origCadence?.enableAudio ?? true)) return true;
         }
 
         int computedActionSecs = actionValue;
@@ -364,6 +373,104 @@ class _PackStudioViewState extends State<PackStudioView> {
                             ],
                           ),
                         ],
+                        const Divider(height: 18),
+                        Row(
+                          children: [
+                            Icon(Icons.bluetooth_audio_rounded, size: 16, color: Theme.of(context).colorScheme.primary),
+                            const SizedBox(width: 8),
+                            const Text('Toy Sync:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: DropdownButtonFormField<CadenceToyMode>(
+                                value: cadenceToyMode,
+                                decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
+                                items: const [
+                                  DropdownMenuItem(value: CadenceToyMode.pulse, child: Text('Beat Pulses', style: TextStyle(fontSize: 12))),
+                                  DropdownMenuItem(value: CadenceToyMode.continuous, child: Text('Steady Buzz (Continuous)', style: TextStyle(fontSize: 12))),
+                                ],
+                                onChanged: (val) {
+                                  if (val != null) setModalState(() => cadenceToyMode = val);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (cadenceToyMode == CadenceToyMode.continuous) ...[
+                          const SizedBox(height: 8),
+                          if (cadenceMode == CadenceMode.fixed) ...[
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text('Steady Power: Level $cadenceToyMaxPower / 20', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child: Slider(
+                                    value: cadenceToyMaxPower.toDouble().clamp(1, 20),
+                                    min: 1,
+                                    max: 20,
+                                    divisions: 19,
+                                    onChanged: (val) => setModalState(() {
+                                      cadenceToyMaxPower = val.round();
+                                      cadenceToyMinPower = cadenceToyMaxPower;
+                                    }),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ] else ...[
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text('Min Power: Level $cadenceToyMinPower', style: const TextStyle(fontSize: 12)),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child: Slider(
+                                    value: cadenceToyMinPower.toDouble().clamp(1, 20),
+                                    min: 1,
+                                    max: 20,
+                                    divisions: 19,
+                                    onChanged: (val) => setModalState(() {
+                                      cadenceToyMinPower = val.round();
+                                      if (cadenceToyMinPower >= cadenceToyMaxPower) cadenceToyMaxPower = cadenceToyMinPower + 1;
+                                    }),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text('Max Power: Level $cadenceToyMaxPower', style: const TextStyle(fontSize: 12)),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child: Slider(
+                                    value: cadenceToyMaxPower.toDouble().clamp(1, 20),
+                                    min: 1,
+                                    max: 20,
+                                    divisions: 19,
+                                    onChanged: (val) => setModalState(() {
+                                      cadenceToyMaxPower = val.round();
+                                      if (cadenceToyMaxPower <= cadenceToyMinPower) cadenceToyMinPower = max(1, cadenceToyMaxPower - 1);
+                                    }),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Audible Metronome Clicks', style: TextStyle(fontSize: 12)),
+                            Switch(
+                              value: cadenceEnableAudio,
+                              onChanged: (val) => setModalState(() => cadenceEnableAudio = val),
+                            ),
+                          ],
+                        ),
                         Align(
                           alignment: Alignment.centerRight,
                           child: TextButton.icon(
@@ -384,6 +491,13 @@ class _PackStudioViewState extends State<PackStudioView> {
                                       waveCount: cadenceWaveCount,
                                       randomIntervalSeconds: cadenceRandomInterval,
                                       soundTone: cadenceTone,
+                                      enableAudio: cadenceEnableAudio,
+                                      enableHaptics: true,
+                                      enableVisual: true,
+                                      enableToy: true,
+                                      toyMode: cadenceToyMode,
+                                      toyMinPower: cadenceToyMinPower,
+                                      toyMaxPower: cadenceToyMaxPower,
                                     ),
                                     initialDuration: sec,
                                   ),
@@ -560,6 +674,13 @@ class _PackStudioViewState extends State<PackStudioView> {
                           waveCount: cadenceWaveCount,
                           randomIntervalSeconds: cadenceRandomInterval,
                           soundTone: cadenceTone,
+                          enableAudio: cadenceEnableAudio,
+                          enableHaptics: true,
+                          enableVisual: true,
+                          enableToy: true,
+                          toyMode: cadenceToyMode,
+                          toyMinPower: cadenceToyMinPower,
+                          toyMaxPower: cadenceToyMaxPower,
                         )
                       : null;
 
@@ -875,7 +996,9 @@ class _PackStudioViewState extends State<PackStudioView> {
                                     const Icon(Icons.speed_rounded, size: 10, color: Colors.amberAccent),
                                     const SizedBox(width: 3),
                                     Text(
-                                      'Metronome: ${item.cadenceConfig!.mode.displayName}',
+                                      item.cadenceConfig!.toyMode == CadenceToyMode.continuous
+                                          ? 'Steady Buzz: ${item.cadenceConfig!.mode.displayName}'
+                                          : 'Metronome: ${item.cadenceConfig!.mode.displayName}',
                                       style: const TextStyle(
                                         fontSize: 9,
                                         fontWeight: FontWeight.bold,

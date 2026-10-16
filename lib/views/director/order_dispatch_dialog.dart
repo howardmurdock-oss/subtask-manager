@@ -91,6 +91,10 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
   int _cadenceWaveCount = 2;
   int _cadenceRandomInterval = 15;
   CadenceSoundTone _cadenceTone = CadenceSoundTone.woodblock;
+  CadenceToyMode _cadenceToyMode = CadenceToyMode.pulse;
+  int _cadenceToyMinPower = 3;
+  int _cadenceToyMaxPower = 18;
+  bool _cadenceEnableAudio = true;
 
   CadenceConfig? _buildCadenceConfig() {
     if (!_enableCadence || _cadenceMode == CadenceMode.none) return null;
@@ -102,9 +106,13 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
       waveCount: _cadenceWaveCount,
       randomIntervalSeconds: _cadenceRandomInterval,
       soundTone: _cadenceTone,
-      enableAudio: true,
+      enableAudio: _cadenceEnableAudio,
       enableHaptics: true,
       enableVisual: true,
+      enableToy: true,
+      toyMode: _cadenceToyMode,
+      toyMinPower: _cadenceToyMinPower,
+      toyMaxPower: _cadenceToyMaxPower,
     );
   }
 
@@ -163,9 +171,17 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
         _cadenceWaveCount = order.cadenceConfig!.waveCount;
         _cadenceRandomInterval = order.cadenceConfig!.randomIntervalSeconds;
         _cadenceTone = order.cadenceConfig!.soundTone;
+        _cadenceToyMode = order.cadenceConfig!.toyMode;
+        _cadenceToyMinPower = order.cadenceConfig!.toyMinPower;
+        _cadenceToyMaxPower = order.cadenceConfig!.toyMaxPower;
+        _cadenceEnableAudio = order.cadenceConfig!.enableAudio;
       } else {
         _enableCadence = false;
         _cadenceMode = CadenceMode.fixed;
+        _cadenceToyMode = CadenceToyMode.pulse;
+        _cadenceToyMinPower = 3;
+        _cadenceToyMaxPower = 18;
+        _cadenceEnableAudio = true;
       }
     } else {
       _titleController = TextEditingController();
@@ -223,9 +239,17 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
         _cadenceWaveCount = order.cadenceConfig!.waveCount;
         _cadenceRandomInterval = order.cadenceConfig!.randomIntervalSeconds;
         _cadenceTone = order.cadenceConfig!.soundTone;
+        _cadenceToyMode = order.cadenceConfig!.toyMode;
+        _cadenceToyMinPower = order.cadenceConfig!.toyMinPower;
+        _cadenceToyMaxPower = order.cadenceConfig!.toyMaxPower;
+        _cadenceEnableAudio = order.cadenceConfig!.enableAudio;
       } else {
         _enableCadence = false;
         _cadenceMode = CadenceMode.fixed;
+        _cadenceToyMode = CadenceToyMode.pulse;
+        _cadenceToyMinPower = 3;
+        _cadenceToyMaxPower = 18;
+        _cadenceEnableAudio = true;
       }
 
       _tabController.animateTo(1);
@@ -596,9 +620,15 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
                   _buildInfoChip(Icons.casino_outlined, 'Manual Only', color: Colors.amberAccent),
                 if (order.cadenceConfig != null && order.cadenceConfig!.mode != CadenceMode.none)
                   _buildInfoChip(
-                    Icons.speed_rounded,
-                    'Metronome: ${order.cadenceConfig!.mode.displayName}',
-                    color: Colors.cyanAccent,
+                    order.cadenceConfig!.toyMode == CadenceToyMode.continuous
+                        ? Icons.waves_rounded
+                        : Icons.speed_rounded,
+                    order.cadenceConfig!.toyMode == CadenceToyMode.continuous
+                        ? 'Steady Buzz: ${order.cadenceConfig!.mode.displayName}'
+                        : 'Metronome: ${order.cadenceConfig!.mode.displayName}',
+                    color: order.cadenceConfig!.toyMode == CadenceToyMode.continuous
+                        ? Colors.pinkAccent
+                        : Colors.cyanAccent,
                   ),
               ],
             ),
@@ -965,6 +995,104 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
                           ],
                         ),
                       ],
+                      const Divider(height: 18),
+                      Row(
+                        children: [
+                          Icon(Icons.bluetooth_audio_rounded, size: 16, color: theme.colorScheme.primary),
+                          const SizedBox(width: 8),
+                          const Text('Toy Sync:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: DropdownButtonFormField<CadenceToyMode>(
+                              value: _cadenceToyMode,
+                              decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
+                              items: const [
+                                DropdownMenuItem(value: CadenceToyMode.pulse, child: Text('Beat Pulses', style: TextStyle(fontSize: 12))),
+                                DropdownMenuItem(value: CadenceToyMode.continuous, child: Text('Steady Buzz (Continuous)', style: TextStyle(fontSize: 12))),
+                              ],
+                              onChanged: (val) {
+                                if (val != null) setState(() => _cadenceToyMode = val);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_cadenceToyMode == CadenceToyMode.continuous) ...[
+                        const SizedBox(height: 8),
+                        if (_cadenceMode == CadenceMode.fixed) ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text('Steady Power: Level $_cadenceToyMaxPower / 20', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                              ),
+                              Expanded(
+                                flex: 2,
+                                child: Slider(
+                                  value: _cadenceToyMaxPower.toDouble().clamp(1, 20),
+                                  min: 1,
+                                  max: 20,
+                                  divisions: 19,
+                                  onChanged: (val) => setState(() {
+                                    _cadenceToyMaxPower = val.round();
+                                    _cadenceToyMinPower = _cadenceToyMaxPower;
+                                  }),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ] else ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text('Min Power: Level $_cadenceToyMinPower', style: const TextStyle(fontSize: 12)),
+                              ),
+                              Expanded(
+                                flex: 2,
+                                child: Slider(
+                                  value: _cadenceToyMinPower.toDouble().clamp(1, 20),
+                                  min: 1,
+                                  max: 20,
+                                  divisions: 19,
+                                  onChanged: (val) => setState(() {
+                                    _cadenceToyMinPower = val.round();
+                                    if (_cadenceToyMinPower >= _cadenceToyMaxPower) _cadenceToyMaxPower = _cadenceToyMinPower + 1;
+                                  }),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text('Max Power: Level $_cadenceToyMaxPower', style: const TextStyle(fontSize: 12)),
+                              ),
+                              Expanded(
+                                flex: 2,
+                                child: Slider(
+                                  value: _cadenceToyMaxPower.toDouble().clamp(1, 20),
+                                  min: 1,
+                                  max: 20,
+                                  divisions: 19,
+                                  onChanged: (val) => setState(() {
+                                    _cadenceToyMaxPower = val.round();
+                                    if (_cadenceToyMaxPower <= _cadenceToyMinPower) _cadenceToyMinPower = max(1, _cadenceToyMaxPower - 1);
+                                  }),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Audible Metronome Clicks', style: TextStyle(fontSize: 12)),
+                          Switch(
+                            value: _cadenceEnableAudio,
+                            onChanged: (val) => setState(() => _cadenceEnableAudio = val),
+                          ),
+                        ],
+                      ),
                       Align(
                         alignment: Alignment.centerRight,
                         child: TextButton.icon(

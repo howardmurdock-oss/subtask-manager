@@ -43,6 +43,7 @@ class CadenceEngine extends ChangeNotifier {
   TempoTrend _trend = TempoTrend.steady;
 
   Timer? _beatTimer;
+  Timer? _continuousToyTimer;
   DateTime? _lastBeatTime;
   int _lastRandomStepIndex = -1;
 
@@ -89,6 +90,17 @@ class CadenceEngine extends ChangeNotifier {
     _config = newConfig;
     _currentBpm = _config.calculateBpmAt(_elapsedSeconds, _totalDurationSeconds, seed: _seed);
     _trend = _config.calculateTrendAt(_elapsedSeconds, _totalDurationSeconds, seed: _seed);
+    if (_isRunning && !_isPaused) {
+      if (_config.enableToy && _config.toyMode == CadenceToyMode.continuous) {
+        _startContinuousToyLoop();
+      } else {
+        _continuousToyTimer?.cancel();
+        _continuousToyTimer = null;
+        if (!_config.enableToy) {
+          ToyService.instance.stopVibration();
+        }
+      }
+    }
     notifyListeners();
   }
 
@@ -110,6 +122,7 @@ class CadenceEngine extends ChangeNotifier {
     _lastRandomStepIndex = -1;
 
     _scheduleNextBeat(immediate: true);
+    _startContinuousToyLoop();
     notifyListeners();
   }
 
@@ -117,6 +130,8 @@ class CadenceEngine extends ChangeNotifier {
     if (!_isRunning || _isPaused) return;
     _beatTimer?.cancel();
     _beatTimer = null;
+    _continuousToyTimer?.cancel();
+    _continuousToyTimer = null;
     _isPaused = true;
     _playerA?.stop().catchError((_) {});
     _playerB?.stop().catchError((_) {});
@@ -129,12 +144,15 @@ class CadenceEngine extends ChangeNotifier {
     _isPaused = false;
     _lastBeatTime = DateTime.now();
     _scheduleNextBeat(immediate: true);
+    _startContinuousToyLoop();
     notifyListeners();
   }
 
   void stop() {
     _beatTimer?.cancel();
     _beatTimer = null;
+    _continuousToyTimer?.cancel();
+    _continuousToyTimer = null;
     _isRunning = false;
     _isPaused = false;
     _playerA?.stop().catchError((_) {});
@@ -165,7 +183,11 @@ class CadenceEngine extends ChangeNotifier {
   void toggleToy(bool enabled) {
     _config = _config.copyWith(enableToy: enabled);
     if (!enabled) {
+      _continuousToyTimer?.cancel();
+      _continuousToyTimer = null;
       ToyService.instance.stopVibration();
+    } else if (_isRunning && !_isPaused && _config.toyMode == CadenceToyMode.continuous) {
+      _startContinuousToyLoop();
     }
     notifyListeners();
   }
@@ -246,7 +268,7 @@ class CadenceEngine extends ChangeNotifier {
     );
 
     // Connected novelty hardware sync
-    if (_config.enableToy) {
+    if (_config.enableToy && _config.toyMode == CadenceToyMode.pulse) {
       ToyService.instance.onCadenceTick(tick);
     }
 
@@ -261,6 +283,28 @@ class CadenceEngine extends ChangeNotifier {
     }
 
     _scheduleNextBeat(immediate: false);
+  }
+
+  void _startContinuousToyLoop() {
+    _continuousToyTimer?.cancel();
+    if (!_config.enableToy || _config.toyMode != CadenceToyMode.continuous) return;
+
+    _updateContinuousToy();
+    _continuousToyTimer = Timer.periodic(const Duration(milliseconds: 150), (_) {
+      if (!_isRunning || _isPaused) return;
+      _updateContinuousToy();
+    });
+  }
+
+  void _updateContinuousToy() {
+    if (!ToyService.instance.isConnected) return;
+    final speed = _config.calculateToySpeedAt(
+      _elapsedSeconds,
+      _totalDurationSeconds,
+      seed: _seed,
+      maxCeiling: ToyService.instance.manualIntensity,
+    );
+    ToyService.instance.setVibrateSpeed(speed);
   }
 
   void _playBeatAudio({bool isShift = false}) {
@@ -289,6 +333,7 @@ class CadenceEngine extends ChangeNotifier {
   @override
   void dispose() {
     _beatTimer?.cancel();
+    _continuousToyTimer?.cancel();
     _tickController.close();
     try {
       _playerA?.dispose();

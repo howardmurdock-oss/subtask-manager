@@ -88,7 +88,7 @@ void main() {
       }
     });
 
-    test('JSON serialization and deserialization roundtrip preserves all parameters', () {
+    test('JSON serialization and deserialization roundtrip preserves all parameters including continuous toy mode', () {
       const original = CadenceConfig(
         mode: CadenceMode.wave,
         bpm: 80,
@@ -100,7 +100,10 @@ void main() {
         enableAudio: false,
         enableHaptics: true,
         enableVisual: false,
-        enableToy: false,
+        enableToy: true,
+        toyMode: CadenceToyMode.continuous,
+        toyMinPower: 4,
+        toyMaxPower: 18,
       );
 
       final json = original.toJson();
@@ -116,7 +119,101 @@ void main() {
       expect(restored.enableAudio, isFalse);
       expect(restored.enableHaptics, isTrue);
       expect(restored.enableVisual, isFalse);
-      expect(restored.enableToy, isFalse);
+      expect(restored.enableToy, isTrue);
+      expect(restored.toyMode, CadenceToyMode.continuous);
+      expect(restored.toyMinPower, 4);
+      expect(restored.toyMaxPower, 18);
+    });
+
+    test('CadenceToyMode enum displays user-friendly labels and descriptions', () {
+      expect(CadenceToyMode.pulse.displayName, 'Beat Pulses');
+      expect(CadenceToyMode.continuous.displayName, 'Steady Buzz');
+      expect(CadenceToyMode.pulse.description, contains('bursts on every metronome beat'));
+      expect(CadenceToyMode.continuous.description, contains('Continuous humming vibration'));
+    });
+
+    test('calculateIntensityFactorAt and calculateToySpeedAt follow cadence patterns', () {
+      // 1. Fixed mode: constant max power
+      const fixedConfig = CadenceConfig(
+        mode: CadenceMode.fixed,
+        bpm: 60,
+        toyMode: CadenceToyMode.continuous,
+        toyMinPower: 3,
+        toyMaxPower: 15,
+      );
+      expect(fixedConfig.calculateIntensityFactorAt(0, 60), 1.0);
+      expect(fixedConfig.calculateIntensityFactorAt(30, 60), 1.0);
+      expect(fixedConfig.calculateToySpeedAt(0, 60), 15);
+      expect(fixedConfig.calculateToySpeedAt(30, 60), 15);
+
+      // 2. Ramp mode: 0% -> min, 50% -> mid, 100% -> max
+      const rampConfig = CadenceConfig(
+        mode: CadenceMode.ramp,
+        minBpm: 30,
+        maxBpm: 120,
+        toyMode: CadenceToyMode.continuous,
+        toyMinPower: 2,
+        toyMaxPower: 10,
+      );
+      expect(rampConfig.calculateIntensityFactorAt(0, 100), 0.0);
+      expect(rampConfig.calculateIntensityFactorAt(50, 100), 0.5);
+      expect(rampConfig.calculateIntensityFactorAt(100, 100), 1.0);
+      expect(rampConfig.calculateToySpeedAt(0, 100), 2);
+      expect(rampConfig.calculateToySpeedAt(50, 100), 6); // 2 + 0.5 * 8 = 6
+      expect(rampConfig.calculateToySpeedAt(100, 100), 10);
+
+      // 3. Peak mode: 0% -> min, 50% -> max, 100% -> min
+      const peakConfig = CadenceConfig(
+        mode: CadenceMode.peak,
+        minBpm: 40,
+        maxBpm: 100,
+        toyMode: CadenceToyMode.continuous,
+        toyMinPower: 2,
+        toyMaxPower: 12,
+      );
+      expect(peakConfig.calculateIntensityFactorAt(0, 100), closeTo(0.0, 0.001));
+      expect(peakConfig.calculateIntensityFactorAt(50, 100), closeTo(1.0, 0.001));
+      expect(peakConfig.calculateIntensityFactorAt(100, 100), closeTo(0.0, 0.001));
+      expect(peakConfig.calculateToySpeedAt(0, 100), 2);
+      expect(peakConfig.calculateToySpeedAt(50, 100), 12);
+      expect(peakConfig.calculateToySpeedAt(100, 100), 2);
+
+      // 4. Wave mode: starts at 0, peaks at midpoint, returns to 0
+      const waveConfig = CadenceConfig(
+        mode: CadenceMode.wave,
+        minBpm: 30,
+        maxBpm: 90,
+        waveCount: 1,
+        toyMode: CadenceToyMode.continuous,
+        toyMinPower: 1,
+        toyMaxPower: 11,
+      );
+      expect(waveConfig.calculateIntensityFactorAt(0, 60), closeTo(0.0, 0.001));
+      expect(waveConfig.calculateIntensityFactorAt(30, 60), closeTo(1.0, 0.001));
+      expect(waveConfig.calculateIntensityFactorAt(60, 60), closeTo(0.0, 0.001));
+      expect(waveConfig.calculateToySpeedAt(0, 60), 1);
+      expect(waveConfig.calculateToySpeedAt(30, 60), 11);
+      expect(waveConfig.calculateToySpeedAt(60, 60), 1);
+
+      // 5. Random mode: stays within [minPower, maxPower]
+      const randomConfig = CadenceConfig(
+        mode: CadenceMode.random,
+        minBpm: 30,
+        maxBpm: 90,
+        randomIntervalSeconds: 5,
+        toyMode: CadenceToyMode.continuous,
+        toyMinPower: 3,
+        toyMaxPower: 15,
+      );
+      for (double t = 0; t <= 30; t += 2) {
+        final speed = randomConfig.calculateToySpeedAt(t, 30);
+        expect(speed, greaterThanOrEqualTo(3));
+        expect(speed, lessThanOrEqualTo(15));
+      }
+
+      // 6. Max ceiling safety clamping
+      expect(rampConfig.calculateToySpeedAt(100, 100, maxCeiling: 6), 6);
+      expect(fixedConfig.calculateToySpeedAt(0, 60, maxCeiling: 8), 8);
     });
 
     test('OrderItem correctly serializes and deserializes attached CadenceConfig', () {
@@ -261,6 +358,54 @@ void main() {
       expect(roundtrip.cadenceConfig!.maxBpm, 60);
       expect(roundtrip.cadenceConfig!.waveCount, 3);
       expect(roundtrip.cadenceConfig, equals(orderWithCadence.cadenceConfig));
+    });
+
+    testWidgets('Continuous toy mode starts, pauses, resumes, updates, and stops cleanly', (tester) async {
+      final engine = CadenceEngine(
+        config: const CadenceConfig(
+          mode: CadenceMode.wave,
+          minBpm: 30,
+          maxBpm: 90,
+          enableAudio: false,
+          enableHaptics: false,
+          enableToy: true,
+          toyMode: CadenceToyMode.continuous,
+          toyMinPower: 2,
+          toyMaxPower: 12,
+        ),
+        totalDurationSeconds: 60,
+      );
+
+      engine.start();
+      expect(engine.isRunning, isTrue);
+
+      engine.pause();
+      expect(engine.isPaused, isTrue);
+
+      engine.resume();
+      expect(engine.isPaused, isFalse);
+
+      engine.updateConfig(
+        engine.config.copyWith(
+          toyMode: CadenceToyMode.pulse,
+        ),
+      );
+      expect(engine.config.toyMode, CadenceToyMode.pulse);
+
+      engine.updateConfig(
+        engine.config.copyWith(
+          toyMode: CadenceToyMode.continuous,
+        ),
+      );
+      expect(engine.config.toyMode, CadenceToyMode.continuous);
+
+      engine.stop();
+      expect(engine.isRunning, isFalse);
+
+      engine.reset();
+      expect(engine.beatCount, 0);
+
+      engine.dispose();
     });
   });
 }

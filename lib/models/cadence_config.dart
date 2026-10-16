@@ -26,6 +26,32 @@ enum TempoTrend {
   decelerating,
 }
 
+/// Vibration style on connected Bluetooth novelty hardware during an order.
+enum CadenceToyMode {
+  pulse,      // Beat Pulses: Sharp physical bursts on every metronome beat
+  continuous, // Steady Buzz: Continuous vibration rising and falling with the pattern
+}
+
+extension CadenceToyModeExtension on CadenceToyMode {
+  String get displayName {
+    switch (this) {
+      case CadenceToyMode.pulse:
+        return 'Beat Pulses';
+      case CadenceToyMode.continuous:
+        return 'Steady Buzz';
+    }
+  }
+
+  String get description {
+    switch (this) {
+      case CadenceToyMode.pulse:
+        return 'Sharp physical bursts on every metronome beat';
+      case CadenceToyMode.continuous:
+        return 'Continuous humming vibration that rises and falls with the pattern';
+    }
+  }
+}
+
 /// Configuration for a pacing cadence on an Action Routine or metronome session.
 class CadenceConfig {
   final CadenceMode mode;
@@ -39,6 +65,9 @@ class CadenceConfig {
   final bool enableHaptics;
   final bool enableVisual;
   final bool enableToy;
+  final CadenceToyMode toyMode;
+  final int toyMinPower;
+  final int toyMaxPower;
 
   const CadenceConfig({
     this.mode = CadenceMode.fixed,
@@ -52,14 +81,26 @@ class CadenceConfig {
     this.enableHaptics = true,
     this.enableVisual = true,
     this.enableToy = true,
+    this.toyMode = CadenceToyMode.pulse,
+    this.toyMinPower = 1,
+    this.toyMaxPower = 20,
   });
 
   /// Factory for a default fixed BPM cadence
-  factory CadenceConfig.fixed({int bpm = 60, CadenceSoundTone tone = CadenceSoundTone.woodblock}) {
+  factory CadenceConfig.fixed({
+    int bpm = 60,
+    CadenceSoundTone tone = CadenceSoundTone.woodblock,
+    CadenceToyMode toyMode = CadenceToyMode.pulse,
+    int toyMinPower = 1,
+    int toyMaxPower = 20,
+  }) {
     return CadenceConfig(
       mode: CadenceMode.fixed,
       bpm: bpm.clamp(10, 300),
       soundTone: tone,
+      toyMode: toyMode,
+      toyMinPower: toyMinPower.clamp(1, 20),
+      toyMaxPower: toyMaxPower.clamp(1, 20),
     );
   }
 
@@ -69,6 +110,9 @@ class CadenceConfig {
     int maxBpm = 120,
     int waveCount = 2,
     CadenceSoundTone tone = CadenceSoundTone.woodblock,
+    CadenceToyMode toyMode = CadenceToyMode.pulse,
+    int toyMinPower = 1,
+    int toyMaxPower = 20,
   }) {
     return CadenceConfig(
       mode: CadenceMode.wave,
@@ -76,6 +120,9 @@ class CadenceConfig {
       maxBpm: maxBpm.clamp(10, 300),
       waveCount: waveCount.clamp(1, 10),
       soundTone: tone,
+      toyMode: toyMode,
+      toyMinPower: toyMinPower.clamp(1, 20),
+      toyMaxPower: toyMaxPower.clamp(1, 20),
     );
   }
 
@@ -84,12 +131,18 @@ class CadenceConfig {
     int minBpm = 30,
     int maxBpm = 120,
     CadenceSoundTone tone = CadenceSoundTone.woodblock,
+    CadenceToyMode toyMode = CadenceToyMode.pulse,
+    int toyMinPower = 1,
+    int toyMaxPower = 20,
   }) {
     return CadenceConfig(
       mode: CadenceMode.peak,
       minBpm: minBpm.clamp(10, 300),
       maxBpm: maxBpm.clamp(10, 300),
       soundTone: tone,
+      toyMode: toyMode,
+      toyMinPower: toyMinPower.clamp(1, 20),
+      toyMaxPower: toyMaxPower.clamp(1, 20),
     );
   }
 
@@ -98,12 +151,18 @@ class CadenceConfig {
     int minBpm = 30,
     int maxBpm = 120,
     CadenceSoundTone tone = CadenceSoundTone.woodblock,
+    CadenceToyMode toyMode = CadenceToyMode.pulse,
+    int toyMinPower = 1,
+    int toyMaxPower = 20,
   }) {
     return CadenceConfig(
       mode: CadenceMode.ramp,
       minBpm: minBpm.clamp(10, 300),
       maxBpm: maxBpm.clamp(10, 300),
       soundTone: tone,
+      toyMode: toyMode,
+      toyMinPower: toyMinPower.clamp(1, 20),
+      toyMaxPower: toyMaxPower.clamp(1, 20),
     );
   }
 
@@ -113,6 +172,9 @@ class CadenceConfig {
     int maxBpm = 120,
     int intervalSeconds = 15,
     CadenceSoundTone tone = CadenceSoundTone.woodblock,
+    CadenceToyMode toyMode = CadenceToyMode.pulse,
+    int toyMinPower = 1,
+    int toyMaxPower = 20,
   }) {
     return CadenceConfig(
       mode: CadenceMode.random,
@@ -120,6 +182,9 @@ class CadenceConfig {
       maxBpm: maxBpm.clamp(10, 300),
       randomIntervalSeconds: intervalSeconds.clamp(3, 60),
       soundTone: tone,
+      toyMode: toyMode,
+      toyMinPower: toyMinPower.clamp(1, 20),
+      toyMaxPower: toyMaxPower.clamp(1, 20),
     );
   }
 
@@ -135,6 +200,9 @@ class CadenceConfig {
     bool? enableHaptics,
     bool? enableVisual,
     bool? enableToy,
+    CadenceToyMode? toyMode,
+    int? toyMinPower,
+    int? toyMaxPower,
   }) {
     return CadenceConfig(
       mode: mode ?? this.mode,
@@ -148,6 +216,9 @@ class CadenceConfig {
       enableHaptics: enableHaptics ?? this.enableHaptics,
       enableVisual: enableVisual ?? this.enableVisual,
       enableToy: enableToy ?? this.enableToy,
+      toyMode: toyMode ?? this.toyMode,
+      toyMinPower: toyMinPower ?? this.toyMinPower,
+      toyMaxPower: toyMaxPower ?? this.toyMaxPower,
     );
   }
 
@@ -164,6 +235,9 @@ class CadenceConfig {
       'enableHaptics': enableHaptics,
       'enableVisual': enableVisual,
       'enableToy': enableToy,
+      'toyMode': toyMode.name,
+      'toyMinPower': toyMinPower,
+      'toyMaxPower': toyMaxPower,
     };
   }
 
@@ -186,6 +260,11 @@ class CadenceConfig {
       enableHaptics: json['enableHaptics'] as bool? ?? true,
       enableVisual: json['enableVisual'] as bool? ?? true,
       enableToy: json['enableToy'] as bool? ?? true,
+      toyMode: json['toyMode'] == 'continuous'
+          ? CadenceToyMode.continuous
+          : CadenceToyMode.pulse,
+      toyMinPower: (json['toyMinPower'] as num?)?.toInt() ?? 1,
+      toyMaxPower: (json['toyMaxPower'] as num?)?.toInt() ?? 20,
     );
   }
 
@@ -256,6 +335,57 @@ class CadenceConfig {
     return TempoTrend.steady;
   }
 
+  /// Calculates normalized intensity curve position (0.0 to 1.0) at [elapsedSeconds].
+  double calculateIntensityFactorAt(double elapsedSeconds, int totalDurationSeconds, {int seed = 42}) {
+    if (mode == CadenceMode.none) return 0.0;
+    if (mode == CadenceMode.fixed) return 1.0;
+
+    final progress = totalDurationSeconds > 0
+        ? (elapsedSeconds / totalDurationSeconds).clamp(0.0, 1.0)
+        : 0.0;
+
+    switch (mode) {
+      case CadenceMode.fixed:
+      case CadenceMode.none:
+        return 1.0;
+
+      case CadenceMode.wave:
+        final cycles = waveCount.clamp(1, 10);
+        return (1.0 - cos(2.0 * pi * cycles * progress)) / 2.0;
+
+      case CadenceMode.peak:
+        return progress <= 0.5
+            ? (progress * 2.0)
+            : ((1.0 - progress) * 2.0);
+
+      case CadenceMode.ramp:
+        return progress;
+
+      case CadenceMode.random:
+        final interval = randomIntervalSeconds.clamp(3, 60);
+        final stepIndex = (elapsedSeconds / interval).floor();
+        final stepRng = Random(seed + stepIndex * 7919);
+        return stepRng.nextDouble();
+    }
+  }
+
+  /// Calculates target continuous vibration motor power (1 to 20) at [elapsedSeconds].
+  ///
+  /// Maps the cadence curve between [toyMinPower] and [toyMaxPower], bounded by [maxCeiling] if provided.
+  int calculateToySpeedAt(double elapsedSeconds, int totalDurationSeconds, {int seed = 42, int? maxCeiling}) {
+    final ceiling = (maxCeiling ?? 20).clamp(1, 20);
+    final minP = toyMinPower.clamp(1, ceiling);
+    final maxP = toyMaxPower.clamp(minP, ceiling);
+
+    if (mode == CadenceMode.fixed) {
+      return maxP;
+    }
+
+    final factor = calculateIntensityFactorAt(elapsedSeconds, totalDurationSeconds, seed: seed);
+    final calculated = minP + (factor * (maxP - minP)).round();
+    return calculated.clamp(minP, ceiling);
+  }
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
@@ -270,7 +400,10 @@ class CadenceConfig {
         other.enableAudio == enableAudio &&
         other.enableHaptics == enableHaptics &&
         other.enableVisual == enableVisual &&
-        other.enableToy == enableToy;
+        other.enableToy == enableToy &&
+        other.toyMode == toyMode &&
+        other.toyMinPower == toyMinPower &&
+        other.toyMaxPower == toyMaxPower;
   }
 
   @override
@@ -286,6 +419,9 @@ class CadenceConfig {
         enableHaptics,
         enableVisual,
         enableToy,
+        toyMode,
+        toyMinPower,
+        toyMaxPower,
       );
 }
 

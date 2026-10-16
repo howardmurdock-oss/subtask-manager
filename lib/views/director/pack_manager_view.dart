@@ -563,7 +563,9 @@ class PackManagerView extends StatelessWidget {
                                                       const Icon(Icons.speed_rounded, size: 10, color: Colors.amberAccent),
                                                       const SizedBox(width: 3),
                                                       Text(
-                                                        'Metronome: ${order.cadenceConfig!.mode.displayName}',
+                                                        order.cadenceConfig!.toyMode == CadenceToyMode.continuous
+                                                            ? 'Steady Buzz: ${order.cadenceConfig!.mode.displayName}'
+                                                            : 'Metronome: ${order.cadenceConfig!.mode.displayName}',
                                                         style: const TextStyle(
                                                           fontSize: 9,
                                                           fontWeight: FontWeight.bold,
