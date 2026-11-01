@@ -97,7 +97,7 @@ export function sanitizePublicOrders(raw: any): PublicOrdersConfig {
     if (orders.length >= ORDERS_MAX) break;
   }
   return {
-    enabled: raw?.enabled === true && orders.length > 0,
+    enabled: raw?.enabled === true,
     orders,
     maxQueued: raw?.maxQueued == null ? null : int(raw.maxQueued, 1, 1000, 1),
     perVisitorDaily: int(raw?.perVisitorDaily, 1, 20, 1),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -6,8 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
 
+import '../../models/chastity_timer.dart';
 import '../../services/chastity_timer_service.dart';
+import 'public_orders_editor.dart';
 import 'timer_embed_sheet.dart';
 
 /// The player's public page: one link that always shows their current timer.
@@ -95,6 +99,21 @@ class _TimerProfileViewState extends State<TimerProfileView> {
         ),
       ];
 
+  static const _socialPlatforms = [
+    ('reddit', 'Reddit', '💬', 'https://reddit.com/u/'),
+    ('discord', 'Discord', '🎮', 'https://discord.gg/'),
+    ('onlyfans', 'OnlyFans', '⭐', 'https://onlyfans.com/'),
+    ('fansly', 'Fansly', '💎', 'https://fansly.com/'),
+    ('twitter', 'X / Twitter', '𝕏', 'https://x.com/'),
+    ('instagram', 'Instagram', '📷', 'https://instagram.com/'),
+    ('bluesky', 'Bluesky', '🦋', 'https://bsky.app/profile/'),
+    ('patreon', 'Patreon', '🎁', 'https://patreon.com/'),
+    ('twitch', 'Twitch', '📺', 'https://twitch.tv/'),
+    ('youtube', 'YouTube', '▶️', 'https://youtube.com/@'),
+    ('tiktok', 'TikTok', '🎵', 'https://tiktok.com/@'),
+    ('custom', 'Custom link', '🔗', ''),
+  ];
+
   List<Widget> _manage(ChastityTimerService timers) {
     final profile = timers.profile!;
     final link = timers.profileLink!;
@@ -139,6 +158,7 @@ class _TimerProfileViewState extends State<TimerProfileView> {
         style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
       ),
       const SizedBox(height: 12),
+      // Bio & Socials
       Card(
         child: Column(
           children: [
@@ -149,6 +169,50 @@ class _TimerProfileViewState extends State<TimerProfileView> {
               trailing: const Icon(Icons.edit_rounded),
               onTap: _busy ? null : () => _editName(profile.name),
             ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.person_pin_rounded),
+              title: const Text('Bio'),
+              subtitle: Text(
+                profile.bio?.isNotEmpty == true ? profile.bio! : 'None - tap to add a short bio',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: const Icon(Icons.edit_rounded),
+              onTap: _busy ? null : () => _editBio(profile.bio),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.link_rounded),
+              title: const Text('Social links'),
+              subtitle: Text(profile.socials.isEmpty
+                  ? 'Add Reddit, Discord, OF, Fansly, etc.'
+                  : '${profile.socials.length} link(s) added'),
+              trailing: IconButton(
+                icon: const Icon(Icons.add_circle_outline_rounded),
+                tooltip: 'Add social link',
+                onPressed: _busy ? null : () => _addSocialLink(profile),
+              ),
+            ),
+            if (profile.socials.isNotEmpty) ...[
+              for (final s in profile.socials)
+                ListTile(
+                  dense: true,
+                  leading: Text(
+                    _socialPlatforms.where((p) => p.$1 == s.platform).firstOrNull?.$3 ?? '🔗',
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                  title: Text(s.label.isNotEmpty ? s.label : s.platform,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: Text(s.url, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    tooltip: 'Remove',
+                    onPressed: _busy ? null : () => _deleteSocialLink(profile, s.id),
+                  ),
+                ),
+            ],
+            const Divider(height: 1),
             SwitchListTile(
               secondary: const Icon(Icons.history_rounded),
               value: profile.showHistory,
@@ -159,6 +223,53 @@ class _TimerProfileViewState extends State<TimerProfileView> {
               title: const Text('Show past timers'),
               subtitle: const Text('When each ended, and how long it ran.'),
             ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
+      // Visitor Messages
+      Card(
+        child: SwitchListTile(
+          secondary: const Icon(Icons.mark_email_unread_rounded),
+          value: profile.acceptMessages,
+          onChanged: _busy
+              ? null
+              : (on) => _run(() => _timers.updateProfile(acceptMessages: on),
+                  done: on ? 'Visitor messages enabled.' : 'Visitor messages disabled.'),
+          title: const Text('Allow visitor messages'),
+          subtitle: const Text('Visitors can chat with you on your page. Chats appear in the Chat tab.'),
+        ),
+      ),
+      const SizedBox(height: 12),
+      // Standalone Directives / Orders
+      Card(
+        child: Column(
+          children: [
+            SwitchListTile(
+              secondary: const Icon(Icons.assignment_turned_in_rounded),
+              value: profile.publicOrders?.enabled == true,
+              onChanged: _busy
+                  ? null
+                  : (on) {
+                      final current = profile.publicOrders ?? const PublicOrdersSettings(enabled: true);
+                      _run(
+                        () => _timers.updateProfile(publicOrders: current.copyWith(enabled: on)),
+                        done: on ? 'Public orders enabled for profile.' : 'Public orders disabled for profile.',
+                      );
+                    },
+              title: const Text('Allow orders without a timer'),
+              subtitle: const Text('Visitors can send orders even when you do not have an active timer running.'),
+            ),
+            if (profile.publicOrders?.enabled == true) ...[
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.tune_rounded),
+                title: const Text('Configure orders'),
+                subtitle: Text('${profile.publicOrders!.orders.length} order(s) available to visitors'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: _busy ? null : () => _editProfileOrders(profile.publicOrders!),
+              ),
+            ],
           ],
         ),
       ),
@@ -188,6 +299,155 @@ class _TimerProfileViewState extends State<TimerProfileView> {
         ),
       ),
     ];
+  }
+
+  Future<void> _editBio(String? current) async {
+    final controller = TextEditingController(text: current ?? '');
+    final bio = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Profile bio'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 250,
+          maxLines: 4,
+          minLines: 2,
+          decoration: const InputDecoration(
+            hintText: 'Tell visitors a little about yourself…',
+            helperText: 'Shown below your name on your public page. Leave empty for none.',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Save')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (bio == null || !mounted) return;
+    await _run(() => _timers.updateProfile(bio: bio.isEmpty ? null : bio, clearBio: bio.isEmpty),
+        done: bio.isEmpty ? 'Bio removed.' : 'Bio saved.');
+  }
+
+  Future<void> _addSocialLink(TimerProfile profile) async {
+    String selectedPlatform = 'reddit';
+    final labelController = TextEditingController(text: 'Reddit');
+    final urlController = TextEditingController();
+
+    final added = await showDialog<ProfileSocial>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final prefix = _socialPlatforms.firstWhere((p) => p.$1 == selectedPlatform).$4;
+          return AlertDialog(
+            title: const Text('Add social link'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: selectedPlatform,
+                    decoration: const InputDecoration(labelText: 'Platform'),
+                    items: _socialPlatforms
+                        .map((p) => DropdownMenuItem(
+                              value: p.$1,
+                              child: Text('${p.$3}  ${p.$2}'),
+                            ))
+                        .toList(),
+                    onChanged: (val) {
+                      if (val == null) return;
+                      setDialogState(() {
+                        selectedPlatform = val;
+                        final defaultLabel = _socialPlatforms.firstWhere((p) => p.$1 == val).$2;
+                        labelController.text = defaultLabel;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: labelController,
+                    maxLength: 40,
+                    decoration: const InputDecoration(
+                      labelText: 'Button label',
+                      hintText: 'e.g. My Reddit or @username',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: urlController,
+                    decoration: InputDecoration(
+                      labelText: selectedPlatform == 'custom' ? 'Full URL' : 'URL or username',
+                      hintText: prefix.isNotEmpty ? '${prefix}username or full link' : 'https://...',
+                      helperText: 'Opens when visitors tap the link on your page.',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+              FilledButton(
+                onPressed: () {
+                  var rawUrl = urlController.text.trim();
+                  if (rawUrl.isEmpty) return;
+                  if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+                    if (prefix.isNotEmpty) {
+                      if (rawUrl.startsWith('@') || rawUrl.startsWith('/')) {
+                        rawUrl = rawUrl.substring(1);
+                      }
+                      rawUrl = '$prefix$rawUrl';
+                    } else {
+                      rawUrl = 'https://$rawUrl';
+                    }
+                  }
+                  final label = labelController.text.trim().isEmpty
+                      ? _socialPlatforms.firstWhere((p) => p.$1 == selectedPlatform).$2
+                      : labelController.text.trim();
+                  Navigator.pop(
+                    ctx,
+                    ProfileSocial(
+                      id: const Uuid().v4(),
+                      platform: selectedPlatform,
+                      label: label,
+                      url: rawUrl,
+                    ),
+                  );
+                },
+                child: const Text('Add'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    labelController.dispose();
+    urlController.dispose();
+
+    if (added == null || !mounted) return;
+    final updated = [...profile.socials, added];
+    await _run(() => _timers.updateProfile(socials: updated), done: 'Social link added.');
+  }
+
+  Future<void> _deleteSocialLink(TimerProfile profile, String id) async {
+    final updated = profile.socials.where((s) => s.id != id).toList();
+    await _run(() => _timers.updateProfile(socials: updated), done: 'Social link removed.');
+  }
+
+  void _editProfileOrders(PublicOrdersSettings current) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (ctx) => _ProfileOrdersConfigPage(
+          initial: current,
+          onSave: (settings) async {
+            await _run(() => _timers.updateProfile(publicOrders: settings), done: 'Profile orders saved.');
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _editName(String? current) async {
@@ -321,3 +581,58 @@ class _TimerProfileViewState extends State<TimerProfileView> {
     await _run(() => _timers.importProfile(code), done: 'Page imported. It now updates from this device.');
   }
 }
+
+class _ProfileOrdersConfigPage extends StatefulWidget {
+  const _ProfileOrdersConfigPage({required this.initial, required this.onSave});
+
+  final PublicOrdersSettings initial;
+  final Future<void> Function(PublicOrdersSettings) onSave;
+
+  @override
+  State<_ProfileOrdersConfigPage> createState() => _ProfileOrdersConfigPageState();
+}
+
+class _ProfileOrdersConfigPageState extends State<_ProfileOrdersConfigPage> {
+  late PublicOrdersSettings _settings;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _settings = widget.initial;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Public orders settings'),
+        actions: [
+          TextButton(
+            onPressed: _saving
+                ? null
+                : () async {
+                    setState(() => _saving = true);
+                    await widget.onSave(_settings);
+                    if (mounted) Navigator.pop(context);
+                  },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: EdgeInsets.fromLTRB(16, 12, 16, 24 + MediaQuery.paddingOf(context).bottom),
+        children: [
+          PublicOrdersEditor(
+            value: _settings,
+            hasDirector: false,
+            isDirector: false,
+            onChanged: (updated) => setState(() => _settings = updated),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+

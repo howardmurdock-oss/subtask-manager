@@ -15,9 +15,10 @@ const order = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-test('off unless switched on, and never on with nothing to order', () => {
+test('off unless switched on', () => {
   assert.equal(sanitizePublicOrders(undefined).enabled, false);
-  assert.equal(sanitizePublicOrders({ enabled: true, orders: [] }).enabled, false);
+  assert.equal(sanitizePublicOrders({ enabled: false, orders: [] }).enabled, false);
+  assert.equal(sanitizePublicOrders({ enabled: true, orders: [] }).enabled, true);
   assert.equal(sanitizePublicOrders({ enabled: true, orders: [order()] }).enabled, true);
 });
 

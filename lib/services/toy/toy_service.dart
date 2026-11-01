@@ -122,18 +122,6 @@ class ToyService extends ChangeNotifier {
 
           if (name.isEmpty) continue;
 
-          // Filter for Lovense, typical novelty prefixes, or open BLE peripherals
-          final isToyLike = name.toUpperCase().startsWith('LVS') ||
-              name.toUpperCase().contains('LOVENSE') ||
-              name.toUpperCase().contains('HUSH') ||
-              name.toUpperCase().contains('LUSH') ||
-              name.toUpperCase().contains('DOMI') ||
-              name.toUpperCase().contains('NORA') ||
-              name.toUpperCase().contains('MAX') ||
-              name.toUpperCase().contains('EDGE') ||
-              name.toUpperCase().contains('WE-VIBE') ||
-              name.toUpperCase().contains('SVAKOM') ||
-              name.toUpperCase().contains('TOY');
 
           final id = r.device.remoteId.str;
           final existingIdx = _discoveredToys.indexWhere((t) => t.id == id);
@@ -296,7 +284,6 @@ class ToyService extends ChangeNotifier {
     if (isConnected || _state == ToyConnectionState.connecting) return;
     try {
       if (!await FlutterBluePlus.isSupported) return;
-      final device = BluetoothDevice.fromId(id);
       connect(DiscoveredToy(id: id, name: name, rssi: -60));
     } catch (_) {}
   }

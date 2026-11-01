@@ -151,6 +151,33 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   .sheet .row { display:flex; gap:10px; }
   .sheet button { background:var(--accent); }
   .sheet button.plain { background:var(--line); color:var(--text); }
+  .bio { color:var(--text); font-size:14px; margin:6px 0 14px; opacity:0.9; line-height:1.4; word-break:break-word; }
+  .socials { display:flex; flex-direction:column; gap:8px; margin:16px 0 20px; width:100%; }
+  .social-pill { display:flex; align-items:center; justify-content:center; gap:8px; padding:12px 16px; border-radius:14px;
+                 background:var(--line); color:var(--text); text-decoration:none; font-weight:600; font-size:14px;
+                 transition:all 0.15s ease; border:1px solid transparent; }
+  .social-pill:hover { background:rgba(34,211,238,0.12); border-color:var(--accent); color:var(--accent); }
+  .chat-card { margin-top:20px; padding:16px; border:1px solid var(--line); border-radius:16px; background:rgba(255,255,255,0.02); text-align:left; display:flex; flex-direction:column; }
+  .chat-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  .chat-app-btn { font-size:12px; font-weight:600; color:var(--accent); background:rgba(34,211,238,0.1); border:1px solid rgba(34,211,238,0.3); border-radius:8px; padding:5px 9px; text-decoration:none; }
+  .chat-app-btn:hover { background:rgba(34,211,238,0.2); }
+  .chat-nick-bar { display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.04); padding:6px 10px; border-radius:8px; font-size:12px; margin-bottom:10px; }
+  .chat-nick-change-btn { background:none; border:none; color:var(--accent); font-size:12px; cursor:pointer; text-decoration:underline; padding:0; }
+  .chat-nick-prompt { background:rgba(255,255,255,0.04); padding:12px; border-radius:10px; margin-bottom:10px; }
+  .chat-messages { height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding:4px 0; margin-bottom:10px; }
+  .chat-empty { color:var(--muted); font-size:13px; text-align:center; margin:auto 0; }
+  .chat-bubble { max-width:85%; padding:8px 12px; border-radius:14px; font-size:14px; line-height:1.35; word-break:break-word; }
+  .chat-bubble.player { align-self:flex-start; background:rgba(255,255,255,0.08); border:1px solid var(--line); color:var(--text); border-bottom-left-radius:3px; }
+  .chat-bubble.visitor { align-self:flex-end; background:var(--accent); color:#050811; border-bottom-right-radius:3px; font-weight:500; }
+  .chat-meta { display:flex; justify-content:space-between; gap:8px; font-size:11px; opacity:0.75; margin-bottom:3px; }
+  .chat-name { font-weight:700; }
+  .chat-input-bar { display:flex; gap:8px; align-items:center; }
+  .chat-text-input { flex:1; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--text); padding:9px 12px; font:inherit; font-size:14px; }
+  .chat-text-input:focus { outline:none; border-color:var(--accent); }
+  .chat-send-btn { flex:none; width:40px; height:40px; border-radius:10px; background:var(--accent); color:#050811; border:0; display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; }
+  .chat-send-btn:hover { opacity:0.9; }
+  .msg-input { width:100%; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--text); padding:10px 12px; font:inherit; font-size:14px; margin-top:6px; margin-bottom:10px; }
+  .msg-input:focus { outline:none; border-color:var(--accent); }
 </style>
 </head>
 <body>
@@ -164,8 +191,10 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   </div>
   <div class="cols">
   <section class="col-timer">
-  <div class="label">Chastity Timer</div>
+  <div class="label" id="pageLabel">Chastity Timer</div>
   <h1 id="headline">Someone is locked up</h1>
+  <div class="bio" id="bio" hidden></div>
+  <div class="socials" id="socials" hidden></div>
   <div class="time" id="time">&nbsp;</div>
   <div class="sub" id="sub">Loading…</div>
   <div class="ran" id="ran"></div>
@@ -177,6 +206,40 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   <div id="cf"></div>
   <div class="msg" id="msg" role="status"></div>
   <div class="foot" id="votefoot">Each vote counts once toward a daily limit set by the person who's locked.</div>
+  <div class="chat-card" id="msgSection" hidden>
+    <div class="chat-header">
+      <div>
+        <div class="label" style="font-size:11px;margin:0" id="chatTitle">Chat</div>
+        <div class="chat-sub" style="font-size:12px;color:var(--muted)">Direct two-way chat</div>
+      </div>
+      <a class="chat-app-btn" id="openChatInApp" href="#" title="Open this chat in the SubTask Manager app">Open in App ↗</a>
+    </div>
+
+    <div class="chat-nick-bar" id="chatNickBar">
+      <span>Chatting as <strong id="chatNickName">Guest</strong></span>
+      <button class="chat-nick-change-btn" id="chatNickChangeBtn" type="button">Change nickname</button>
+    </div>
+
+    <div class="chat-nick-prompt" id="chatNickPrompt" hidden>
+      <div style="font-size:13px;color:var(--text);margin-bottom:8px">Choose a nickname to start chatting:</div>
+      <div style="display:flex;gap:8px">
+        <input id="chatNickInput" class="msg-input" placeholder="Your nickname" maxlength="40" style="margin:0;flex:1">
+        <button id="chatNickSaveBtn" style="flex:none;padding:8px 16px;border-radius:10px;background:var(--accent);color:#050811;font-weight:700">Join</button>
+      </div>
+    </div>
+
+    <div class="chat-messages" id="chatMessages">
+      <div class="chat-empty" id="chatEmpty">No messages yet. Say hello!</div>
+    </div>
+
+    <form class="chat-input-bar" id="chatInputBar" onsubmit="return false;">
+      <input id="chatInput" class="chat-text-input" placeholder="Type a message…" maxlength="500" autocomplete="off">
+      <button id="chatSendBtn" class="chat-send-btn" type="submit" aria-label="Send">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+      </button>
+    </form>
+    <div id="chatStatus" class="sub" style="margin-top:6px;font-size:12px" role="status"></div>
+  </div>
   </section>
   <section class="orders" id="orders" hidden>
     <div class="proof-alert" id="proofAlert" hidden>
@@ -305,16 +368,66 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     $('past').hidden = profile.history.length === 0;
   }
 
+  const platformIcon = (platform) => {
+    const p = (platform || '').toLowerCase();
+    if (p === 'reddit') return '💬';
+    if (p === 'discord') return '🎮';
+    if (p === 'onlyfans') return '⭐';
+    if (p === 'fansly') return '💎';
+    if (p === 'twitter' || p === 'x') return '𝕏';
+    if (p === 'instagram') return '📷';
+    if (p === 'bluesky') return '🦋';
+    if (p === 'patreon') return '🎁';
+    if (p === 'twitch') return '📺';
+    if (p === 'youtube') return '▶️';
+    if (p === 'tiktok') return '🎵';
+    return '🔗';
+  };
+
   function render() {
     renderLists();
     renderOrders();
     const who = profile && profile.name ? profile.name : null;
+    if (isProfile) {
+      if ($('bio')) {
+        $('bio').textContent = profile && profile.bio ? profile.bio : '';
+        $('bio').hidden = !profile || !profile.bio;
+      }
+      if ($('socials')) {
+        if (profile && profile.socials && profile.socials.length) {
+          $('socials').replaceChildren(...profile.socials.map((s) => {
+            const a = document.createElement('a');
+            a.className = 'social-pill';
+            a.href = s.url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            const icon = document.createElement('span');
+            icon.className = 'social-icon';
+            icon.textContent = platformIcon(s.platform);
+            const text = document.createElement('span');
+            text.textContent = s.label;
+            a.append(icon, text);
+            return a;
+          }));
+          $('socials').hidden = false;
+        } else {
+          $('socials').hidden = true;
+        }
+      }
+      if ($('msgSection')) {
+        const canChat = Boolean(profile && profile.acceptMessages);
+        $('msgSection').hidden = !canChat;
+        if (canChat && $('chatTitle')) {
+          $('chatTitle').textContent = who ? 'Chat with ' + who : 'Chat with them';
+        }
+      }
+    }
     if (!view) {
       if (!profile) return;
       // Between timers: the page stays, and says so.
       $('headline').textContent = (who || 'They') + " isn't locked up right now";
       $('time').textContent = 'Unlocked';
-      $('sub').textContent = 'Check back later.';
+      $('sub').textContent = (profile.orders && profile.orders.enabled) ? 'Accepting orders below · Check back later' : 'Check back later.';
       $('ran').textContent = '';
       $('buttons').hidden = $('votefoot').hidden = true;
       $('msg').textContent = '';
@@ -383,7 +496,15 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
       }
       offset = s.now - Date.now();
       render();
-      if (view && view.orders && view.orders.enabled) adultCheck();
+      if (isProfile && profile && profile.acceptMessages) {
+        updateNickUi();
+        if (!chatPollScheduled) {
+          chatPollScheduled = true;
+          pollChat(false);
+        }
+      }
+      const anyOrders = (view && view.orders) || (profile && profile.orders);
+      if (anyOrders && anyOrders.enabled) adultCheck();
     } catch { $('sub').textContent = "Couldn't reach the timer. Check your connection."; }
   }
 
@@ -494,8 +615,8 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     });
   }
 
-  const timerId = () => (isProfile ? (view && view.publicId) : id);
-  const ordersBase = () => (isProfile ? voteBase : base);
+  const timerId = () => (isProfile ? ((view && view.publicId) || id) : id);
+  const ordersBase = () => (isProfile ? (voteBase || base) : base);
   const mine = () => store.get(MINE, []).filter((m) => Date.now() - m.at < 3 * 86400000);
   const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
   const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -540,18 +661,28 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   }
 
   function renderOrders() {
-    const o = view && view.orders;
+    const o = (view && view.orders && view.orders.enabled)
+      ? view.orders
+      : (profile && profile.orders && profile.orders.enabled)
+        ? profile.orders
+        : null;
     $('orders').hidden = !(o && o.enabled);
     // Two columns on a wide screen - only when there are orders for one.
     $('page').classList.toggle('wide', !!(o && o.enabled));
     if (!o || !o.enabled) return;
-    const ordersLeft = view.you ? view.you.ordersLeft : null;
+    const ordersLeft = view && view.you
+      ? view.you.ordersLeft
+      : (profile && profile.orders && profile.orders.you)
+        ? profile.orders.you.ordersLeft
+        : null;
     const key = JSON.stringify(o) + (token ? 1 : 0) + mine().length;
     if (key === ordersShown) return;
     ordersShown = key;
     const notes = { 'paused': orderReasons.paused, 'full': orderReasons.full, 'not-running': orderReasons['not-running'] };
     $('ordersNote').textContent = o.accepting && ordersLeft === 0
       ? "You've sent all the orders you can today. Come back tomorrow."
+      : o.accepting && o.list && o.list.length === 0
+      ? "No directives are currently available."
       : o.accepting
       ? 'Pick one to send. They carry it out in the app, and how it went shows here.' +
         (ordersLeft != null ? ' You can send ' + ordersLeft + ' more today.' : '') +
@@ -671,11 +802,13 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
       const receipt = hex(crypto.getRandomValues(new Uint8Array(32)));
       const receiptHash = hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(receipt)));
       const body = { orderId: def.id, turnstileToken: token, receiptHash };
-      if (view.orders.proofTo === 'issuer') body.issuerKey = await issuerKey();
+      const currentOrders = (view && view.orders) || (profile && profile.orders);
+      if (currentOrders && currentOrders.proofTo === 'issuer') body.issuerKey = await issuerKey();
       const r = await fetch(ordersBase() + '/order', {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
       });
       const res = await r.json();
+      if (res.orders && profile) { profile.orders = res.orders; }
       if (res.view) { view = isProfile ? { ...res.view, publicId: view.publicId } : res.view; offset = res.view.now - Date.now(); }
       if (r.ok) {
         store.set(MINE, [...mine(), { pid: timerId(), no: res.no, receipt, title: def.title, at: Date.now() }]);
@@ -687,6 +820,172 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     if (siteKey && window.turnstile) { token = null; window.turnstile.reset('#cf'); }
     ordersShown = '';
     render();
+  }
+
+  const VISITOR_ID_KEY = 'stm_chat_visitor_id';
+  const NICK_KEY = 'stm_chat_nick';
+  let visitorId = localStorage.getItem(VISITOR_ID_KEY);
+  if (!visitorId) {
+    visitorId = 'v_' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+    localStorage.setItem(VISITOR_ID_KEY, visitorId);
+  }
+  let visitorNick = localStorage.getItem(NICK_KEY) || '';
+
+  function updateNickUi() {
+    if (!visitorNick) {
+      if ($('chatNickPrompt')) $('chatNickPrompt').hidden = false;
+      if ($('chatNickBar')) $('chatNickBar').hidden = true;
+      if ($('chatInputBar')) $('chatInputBar').hidden = true;
+    } else {
+      if ($('chatNickPrompt')) $('chatNickPrompt').hidden = true;
+      if ($('chatNickBar')) $('chatNickBar').hidden = false;
+      if ($('chatNickName')) $('chatNickName').textContent = visitorNick;
+      if ($('chatInputBar')) $('chatInputBar').hidden = false;
+    }
+  }
+
+  let lastChatHash = '';
+  let chatMsgCount = 0;
+  let lastChatActivity = 0;
+  let lastUserInteraction = Date.now();
+  let chatPollTimeout = null;
+  let chatPolling = false;
+  let chatPollScheduled = false;
+
+  function noteUserInteraction() {
+    const wasDormant = (Date.now() - lastUserInteraction > 600000);
+    lastUserInteraction = Date.now();
+    if (wasDormant && !document.hidden && isProfile && profile && profile.acceptMessages) {
+      pollChat(true);
+    }
+  }
+
+  async function pollChat(forceActive) {
+    if (chatPolling) return;
+    if (!isProfile || !profile || !profile.acceptMessages) return;
+    if (document.hidden) return;
+    const now = Date.now();
+    if (now - lastUserInteraction > 600000 && !forceActive) return;
+
+    chatPolling = true;
+    try {
+      const r = await fetch(base + '/chat?visitorId=' + encodeURIComponent(visitorId));
+      if (!r.ok) return;
+      const res = await r.json();
+      const msgs = res.messages || [];
+      const hash = JSON.stringify(msgs.map((m) => m.id + m.readAt));
+      if (msgs.length > chatMsgCount) {
+        lastChatActivity = Date.now();
+      }
+      chatMsgCount = msgs.length;
+      if (hash !== lastChatHash) {
+        lastChatHash = hash;
+        renderChat(msgs);
+      }
+    } catch {} finally {
+      chatPolling = false;
+      scheduleChatPoll();
+    }
+  }
+
+  function scheduleChatPoll(immediate) {
+    if (chatPollTimeout) clearTimeout(chatPollTimeout);
+    if (document.hidden) return;
+    if (!isProfile || !profile || !profile.acceptMessages) return;
+
+    const now = Date.now();
+    if (now - lastUserInteraction > 600000) return;
+
+    if (immediate) {
+      chatPollTimeout = setTimeout(() => pollChat(true), 50);
+      return;
+    }
+
+    let delay = 15000;
+    const chatRecency = now - lastChatActivity;
+    if (chatRecency < 120000 && chatMsgCount > 0) {
+      delay = 4000;
+    } else if (chatRecency < 300000 && chatMsgCount > 0) {
+      delay = 8000;
+    } else {
+      delay = 15000;
+    }
+    chatPollTimeout = setTimeout(() => pollChat(), delay);
+  }
+
+  function renderChat(msgs) {
+    const list = $('chatMessages');
+    if (!list) return;
+    if (!msgs || msgs.length === 0) {
+      list.innerHTML = '<div class="chat-empty">No messages yet. Say hello!</div>';
+      return;
+    }
+    list.innerHTML = '';
+    msgs.forEach((m) => {
+      const bubble = document.createElement('div');
+      const isYou = m.senderRole === 'visitor';
+      bubble.className = 'chat-bubble ' + (isYou ? 'visitor' : 'player');
+
+      const meta = document.createElement('div');
+      meta.className = 'chat-meta';
+      const name = document.createElement('span');
+      name.className = 'chat-name';
+      name.textContent = isYou ? (m.senderName || 'You') : (m.senderName || (profile && profile.name) || 'Host');
+      const time = document.createElement('span');
+      time.className = 'chat-time';
+      const d = new Date(m.createdAt);
+      time.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      meta.append(name, time);
+
+      const text = document.createElement('div');
+      text.className = 'chat-text';
+      text.textContent = m.text;
+
+      bubble.append(meta, text);
+      list.appendChild(bubble);
+    });
+    list.scrollTop = list.scrollHeight;
+  }
+
+  async function sendChatMessage() {
+    const input = $('chatInput');
+    const text = input ? input.value.trim() : '';
+    if (!text) return;
+    if (!visitorNick) {
+      updateNickUi();
+      return;
+    }
+    const sendBtn = $('chatSendBtn');
+    if (sendBtn) sendBtn.disabled = true;
+    if ($('chatStatus')) $('chatStatus').textContent = '';
+
+    try {
+      const r = await fetch(base + '/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          visitorId,
+          senderName: visitorNick,
+          text,
+          turnstileToken: token,
+        }),
+      });
+      const res = await r.json();
+      if (r.ok) {
+        if (input) input.value = '';
+        lastChatActivity = Date.now();
+        lastUserInteraction = Date.now();
+        await pollChat(true);
+      } else {
+        if ($('chatStatus')) {
+          $('chatStatus').textContent = res.error === 'turnstile' ? 'Please complete the check above first.' : "Couldn't send. Try again.";
+        }
+      }
+    } catch {
+      if ($('chatStatus')) $('chatStatus').textContent = "Couldn't send message. Check your connection.";
+    }
+    if (sendBtn) sendBtn.disabled = false;
+    if (siteKey && window.turnstile) { token = null; window.turnstile.reset('#cf'); }
   }
 
   // Approve and Reject, while the proof waits to be checked.
@@ -786,6 +1085,52 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
   $('add').onclick = () => vote(1);
   $('remove').onclick = () => vote(-1);
 
+  if ($('chatNickSaveBtn')) {
+    $('chatNickSaveBtn').onclick = () => {
+      const val = $('chatNickInput').value.trim();
+      if (val) {
+        visitorNick = val.slice(0, 40);
+        localStorage.setItem(NICK_KEY, visitorNick);
+        updateNickUi();
+        lastChatActivity = Date.now();
+        noteUserInteraction();
+        pollChat(true);
+      }
+    };
+  }
+
+  if ($('chatNickChangeBtn')) {
+    $('chatNickChangeBtn').onclick = () => {
+      if ($('chatNickInput')) $('chatNickInput').value = visitorNick;
+      if ($('chatNickPrompt')) $('chatNickPrompt').hidden = false;
+      if ($('chatNickBar')) $('chatNickBar').hidden = true;
+      if ($('chatInputBar')) $('chatInputBar').hidden = true;
+      if ($('chatNickInput')) $('chatNickInput').focus();
+    };
+  }
+
+  if ($('chatInputBar')) {
+    $('chatInputBar').onsubmit = (e) => {
+      e.preventDefault();
+      sendChatMessage();
+      return false;
+    };
+  }
+
+  if ($('openChatInApp')) {
+    const chatLink = 'subtaskmanager://p/' + id + '/chat';
+    $('openChatInApp').href = chatLink;
+    $('openChatInApp').onclick = (e) => {
+      e.preventDefault();
+      let left = false;
+      const away = () => { left = true; };
+      window.addEventListener('blur', away, { once: true });
+      document.addEventListener('visibilitychange', away, { once: true });
+      location.href = chatLink;
+      setTimeout(() => { if (!left && !document.hidden) location.href = 'https://www.subtaskmanager.com/?from=open-in-app#downloads'; }, 1500);
+    };
+  }
+
   if (siteKey) {
     window.onTurnstile = (t) => { token = t; ordersShown = ''; render(); };
     const wait = setInterval(() => {
@@ -802,6 +1147,37 @@ ${siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
     currentPollInterval = ms;
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(load, ms);
+  }
+
+  ['pointerdown', 'keydown', 'scroll'].forEach((evt) => {
+    window.addEventListener(evt, noteUserInteraction, { passive: true });
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      lastUserInteraction = Date.now();
+      if (isProfile && profile && profile.acceptMessages) {
+        pollChat(true);
+      }
+    } else {
+      if (chatPollTimeout) clearTimeout(chatPollTimeout);
+    }
+  });
+
+  if ($('chatInput')) {
+    $('chatInput').addEventListener('focus', () => {
+      lastChatActivity = Date.now();
+      noteUserInteraction();
+      scheduleChatPoll(true);
+    });
+    $('chatInput').addEventListener('input', () => {
+      lastChatActivity = Date.now();
+      noteUserInteraction();
+    });
+  }
+  if ($('chatNickInput')) {
+    $('chatNickInput').addEventListener('focus', noteUserInteraction);
+    $('chatNickInput').addEventListener('input', noteUserInteraction);
   }
 
   load();

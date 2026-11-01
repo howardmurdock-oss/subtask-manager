@@ -25,15 +25,48 @@ import { badgeSvg, embedPage, endedEmbedPage, previewText, type PublicView } fro
 import { pngResponse } from './preview_images.ts';
 import { confirmDevice, deviceOf, startDevice, verifyPage } from './device.ts';
 import {
+  PROFILE_NAME_MAX,
+  addProfileMessage,
   addProfileTimer,
+  cleanBio,
+  cleanMessageText,
   cleanName,
+  cleanSenderName,
+  cleanSocials,
+  addProfileChatMessage,
+  blockVisitor,
+  cleanVisitorId,
+  deleteProfileChatThread,
+  deleteProfileMessages,
   ensureProfileTables,
+  getProfileChatMessages,
+  isVisitorBlocked,
+  listProfileChatThreads,
+  listProfileMessages,
+  markProfileChatRead,
+  markProfileMessagesRead,
   profileByPublicId,
   profileState,
   profileSummary,
   profileWithKey,
   removeProfileTimer,
+  unblockVisitor,
 } from './profile.ts';
+import {
+  addProfileOrder,
+  advanceProfileOrders,
+  finishProfileOrder,
+  profileOpenOrderCount,
+  profileOrderProof,
+  profileOrdersPrivate,
+  profileOrdersPublic,
+  profileSentOrdersToday,
+  purgeProfileProofs,
+  reviewProfileOrder,
+  skipProfileOrder,
+  submitProfileOrder,
+} from './profile_orders.ts';
+import { PROOF_MAX_CHARS, sanitizePublicOrders, validIssuerKey } from './public_orders.ts';
 import { DOWNLOADS, hasStatsPassword, isBot, releaseUrl, statsPage, summarize, type CountRow } from './download_stats.ts';
 
 export { ChastityTimer };
@@ -171,8 +204,10 @@ const DESKTOP_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export class TopicHub {
   private readonly sql: SqlStorage;
+  private readonly ctx: DurableObjectState;
 
-  constructor(private readonly ctx: DurableObjectState, _env: Env) {
+  constructor(ctx: DurableObjectState, _env: Env) {
+    this.ctx = ctx;
     this.sql = ctx.storage.sql;
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS messages (
@@ -1249,7 +1284,7 @@ async function handleProfileCreate(request: Request, env: Env): Promise<Response
   return json({ profileId: id, publicId, key, name, showHistory: false, timers: [] });
 }
 
-async function handleProfileOp(request: Request, env: Env, profileId: string, op: string): Promise<Response> {
+async function handleProfileOp(request: Request, env: Env, profileId: string, op: string, subId?: string): Promise<Response> {
   // The app sends it in the header its timer requests use.
   const key = request.headers.get('X-Profile-Key') ?? request.headers.get('X-Timer-Key');
   const row = await profileWithKey(env.DB, profileId, key, sha256Hex);
@@ -1264,8 +1299,125 @@ async function handleProfileOp(request: Request, env: Env, profileId: string, op
     case 'settings': {
       const name = 'name' in body ? cleanName(body.name) : row.name;
       const showHistory = typeof body.showHistory === 'boolean' ? (body.showHistory ? 1 : 0) : row.show_history;
-      await env.DB.prepare('UPDATE profiles SET name = ?, show_history = ? WHERE id = ?').bind(name, showHistory, row.id).run();
-      return json(await profileSummary(env.DB, { ...row, name, show_history: showHistory }));
+      const bio = 'bio' in body ? cleanBio(body.bio) : (row.bio ?? null);
+      const socials = 'socials' in body ? JSON.stringify(cleanSocials(body.socials)) : (row.socials ?? null);
+      const acceptMessages = typeof body.acceptMessages === 'boolean' ? (body.acceptMessages ? 1 : 0) : (row.accept_messages ?? 0);
+      const ordersConfig = 'publicOrders' in body
+        ? (body.publicOrders ? JSON.stringify(sanitizePublicOrders(body.publicOrders)) : null)
+        : (row.orders_config ?? null);
+
+      await env.DB
+        .prepare(
+          'UPDATE profiles SET name = ?, show_history = ?, bio = ?, socials = ?, accept_messages = ?, orders_config = ? WHERE id = ?',
+        )
+        .bind(name, showHistory, bio, socials, acceptMessages, ordersConfig, row.id)
+        .run();
+      return json(
+        await profileSummary(env.DB, {
+          ...row,
+          name,
+          show_history: showHistory,
+          bio,
+          socials,
+          accept_messages: acceptMessages,
+          orders_config: ordersConfig,
+        }),
+      );
+    }
+
+    case 'chats': {
+      if (!subId) {
+        if (request.method === 'GET') {
+          return json({ threads: await listProfileChatThreads(env.DB, row.id) });
+        }
+        return json({ error: 'bad-method' }, 405);
+      }
+      const visitorId = cleanVisitorId(subId);
+      if (!visitorId) return json({ error: 'bad-visitor-id' }, 400);
+
+      if (request.method === 'GET') {
+        await markProfileChatRead(env.DB, row.id, visitorId, 'player');
+        return json({ messages: await getProfileChatMessages(env.DB, row.id, visitorId) });
+      }
+      if (request.method === 'POST') {
+        if (body.action === 'block') {
+          await blockVisitor(env.DB, row.id, visitorId);
+          return json({ ok: true, blocked: true });
+        }
+        if (body.action === 'unblock') {
+          await unblockVisitor(env.DB, row.id, visitorId);
+          return json({ ok: true, blocked: false });
+        }
+        const text = cleanMessageText(body.text ?? body.message);
+        if (!text) return json({ error: 'empty-message' }, 400);
+        const senderName = cleanSenderName(body.senderName ?? row.name ?? 'Host');
+        const id = await addProfileChatMessage(env.DB, row.id, visitorId, 'player', senderName, text);
+        return json({ ok: true, id });
+      }
+      if (request.method === 'DELETE') {
+        await deleteProfileChatThread(env.DB, row.id, visitorId);
+        return json({ ok: true });
+      }
+      return json({ error: 'bad-method' }, 405);
+    }
+
+    case 'messages': {
+      if (request.method === 'GET') {
+        return json(await listProfileMessages(env.DB, row.id));
+      }
+      if (request.method === 'POST') {
+        if (body.action === 'read') {
+          await markProfileMessagesRead(env.DB, row.id, body.ids ?? 'all');
+          return json({ ok: true });
+        }
+        if (body.action === 'delete') {
+          await deleteProfileMessages(env.DB, row.id, body.ids ?? 'all');
+          return json({ ok: true });
+        }
+        return json({ error: 'bad-action' }, 400);
+      }
+      return json({ error: 'bad-method' }, 405);
+    }
+
+    case 'orders': {
+      const now = Date.now();
+      const cfg = row.orders_config ? sanitizePublicOrders(JSON.parse(row.orders_config)) : null;
+      if (!cfg?.enabled) return json({ enabled: false });
+
+      if (request.method === 'GET') {
+        await advanceProfileOrders(env.DB, row.id, cfg, row.paused_until ?? null, now);
+        return json(await profileOrdersPrivate(env.DB, row, cfg, now));
+      }
+
+      if (request.method === 'POST') {
+        if (body.action === 'report') {
+          const no = Number(body.no);
+          const completed = body.completed === true;
+          const proof = typeof body.proof === 'string' && body.proof.length <= PROOF_MAX_CHARS ? body.proof : null;
+          const ok = await finishProfileOrder(env.DB, row.id, no, completed ? 'completed' : 'failed', proof, now);
+          if (!ok) return json({ error: 'not-active' }, 409);
+          await advanceProfileOrders(env.DB, row.id, cfg, row.paused_until ?? null, now);
+          return json(await profileOrdersPrivate(env.DB, row, cfg, now));
+        }
+        if (body.action === 'submit') {
+          const no = Number(body.no);
+          const proof = typeof body.proof === 'string' && body.proof.length <= PROOF_MAX_CHARS ? body.proof : null;
+          const ok = await submitProfileOrder(env.DB, row.id, no, proof, now);
+          if (!ok) return json({ error: 'not-active' }, 409);
+          await advanceProfileOrders(env.DB, row.id, cfg, row.paused_until ?? null, now);
+          return json(await profileOrdersPrivate(env.DB, row, cfg, now));
+        }
+        if (body.action === 'skip') {
+          const no = Number(body.no);
+          const ok = await skipProfileOrder(env.DB, row, cfg, no, now);
+          if (!ok) return json({ error: 'cannot-skip' }, 409);
+          await advanceProfileOrders(env.DB, row.id, cfg, now + (cfg.skipPauseMinutes ?? 30) * 60 * 1000, now);
+          const updatedRow = await profileWithKey(env.DB, row.id, key, sha256Hex);
+          return json(await profileOrdersPrivate(env.DB, updatedRow ?? row, cfg, now));
+        }
+        return json({ error: 'bad-action' }, 400);
+      }
+      return json({ error: 'bad-method' }, 405);
     }
 
     case 'add': {
@@ -1311,13 +1463,108 @@ async function handlePublicProfile(request: Request, env: Env, publicId: string,
     if (op === 'state') return withCors(json({ error: 'no such profile' }, 404));
     return new Response(profileGonePage(), { status: 404, headers: PAGE_HEADERS });
   }
+
+  if (op === 'message' && request.method === 'POST') {
+    if (row.accept_messages !== 1) return withCors(json({ error: 'messages-off' }, 403));
+    const body: any = await request.json().catch(() => ({}));
+    const visitor = await visitorOf(request, env, publicId, body.turnstileToken);
+    if (!visitor) return withCors(json({ error: 'turnstile' }, 403));
+    const msgText = cleanMessageText(body.message);
+    if (!msgText) return withCors(json({ error: 'empty-message' }, 400));
+    const senderName = cleanSenderName(body.senderName);
+    await addProfileMessage(env.DB, row.id, senderName, msgText);
+    return withCors(json({ ok: true }));
+  }
+
+  if (op === 'chat') {
+    if (row.accept_messages !== 1) return withCors(json({ error: 'messages-off' }, 403));
+    if (request.method === 'GET') {
+      const url = new URL(request.url);
+      const visitorId = cleanVisitorId(url.searchParams.get('visitorId'));
+      if (!visitorId) return withCors(json({ error: 'missing-visitor-id' }, 400));
+      await markProfileChatRead(env.DB, row.id, visitorId, 'visitor');
+      const messages = await getProfileChatMessages(env.DB, row.id, visitorId);
+      return withCors(json({ messages }));
+    }
+    if (request.method === 'POST') {
+      const body: any = await request.json().catch(() => ({}));
+      const visitorId = cleanVisitorId(body.visitorId);
+      if (!visitorId) return withCors(json({ error: 'missing-visitor-id' }, 400));
+      if (await isVisitorBlocked(env.DB, row.id, visitorId)) {
+        return withCors(json({ error: 'blocked' }, 403));
+      }
+      const text = cleanMessageText(body.text ?? body.message);
+      if (!text) return withCors(json({ error: 'empty-message' }, 400));
+      const existing = await getProfileChatMessages(env.DB, row.id, visitorId, 1);
+      if (existing.length === 0) {
+        const visitor = await visitorOf(request, env, publicId, body.turnstileToken);
+        if (!visitor) return withCors(json({ error: 'turnstile' }, 403));
+      }
+      const senderName = cleanSenderName(body.senderName ?? 'Visitor');
+      const id = await addProfileChatMessage(env.DB, row.id, visitorId, 'visitor', senderName, text);
+      return withCors(json({ ok: true, id }));
+    }
+    return withCors(json({ error: 'bad-method' }, 405));
+  }
+
+  if (op === 'order' && request.method === 'POST') {
+    if (!row.orders_config) return withCors(json({ error: 'orders-off' }, 403));
+    const cfg = sanitizePublicOrders(JSON.parse(row.orders_config));
+    if (!cfg.enabled) return withCors(json({ error: 'orders-off' }, 403));
+    const now = Date.now();
+    if ((row.paused_until ?? 0) > now) return withCors(json({ error: 'paused' }, 409));
+    const body: any = await request.json().catch(() => ({}));
+    if (body.visitorId && (await isVisitorBlocked(env.DB, row.id, cleanVisitorId(body.visitorId)))) {
+      return withCors(json({ error: 'blocked' }, 403));
+    }
+    const visitor = await visitorOf(request, env, publicId, body.turnstileToken);
+    if (!visitor) return withCors(json({ error: 'turnstile' }, 403));
+    const def = cfg.orders.find((o) => o.id === body.orderId);
+    if (!def) return withCors(json({ error: 'unknown-order' }, 400));
+    if ((await profileSentOrdersToday(env.DB, row.id, visitor, now)) >= cfg.perVisitorDaily) {
+      return withCors(json({ error: 'visitor-cap' }, 409));
+    }
+    if (cfg.maxQueued != null && (await profileOpenOrderCount(env.DB, row.id)) >= cfg.maxQueued) {
+      return withCors(json({ error: 'full' }, 409));
+    }
+    const receiptHash = typeof body.receiptHash === 'string' && /^[0-9a-f]{64}$/.test(body.receiptHash) ? body.receiptHash : null;
+    if (!receiptHash) return withCors(json({ error: 'bad-receipt' }, 400));
+    const issuerKey = cfg.proofTo === 'issuer' ? validIssuerKey(body.issuerKey) : null;
+    if (cfg.proofTo === 'issuer' && def.verification === 'photoProof' && !issuerKey) {
+      return withCors(json({ error: 'bad-key' }, 400));
+    }
+    const no = await addProfileOrder(env.DB, row.id, def, visitor, issuerKey, receiptHash, now, body.issuerTopic ?? null);
+    await advanceProfileOrders(env.DB, row.id, cfg, row.paused_until ?? null, now);
+    const orders = await profileOrdersPublic(env.DB, row.id, cfg, row.paused_until ?? null, now, visitor);
+    return withCors(json({ no, orders }));
+  }
+
+  if (op === 'review' && request.method === 'POST') {
+    const body: any = await request.json().catch(() => ({}));
+    const receiptHash = typeof body.receipt === 'string' && body.receipt.length <= 200 ? await sha256Hex(body.receipt) : '';
+    const no = Number(body.no);
+    const now = Date.now();
+    if (!(await reviewProfileOrder(env.DB, row.id, no, receiptHash, body.verdict === 'approve', now))) {
+      return withCors(json({ error: 'not-reviewing' }, 409));
+    }
+    return withCors(json({ ok: true }));
+  }
+
+  if (op === 'proof' && request.method === 'POST') {
+    const body: any = await request.json().catch(() => ({}));
+    const receiptHash = typeof body.receipt === 'string' && body.receipt.length <= 200 ? await sha256Hex(body.receipt) : '';
+    const now = Date.now();
+    const proof = await profileOrderProof(env.DB, row.id, Number(body.no), receiptHash, now);
+    return proof ? withCors(json({ proof })) : withCors(json({ error: 'no proof' }, 404));
+  }
+
   await ensureTimerLinksTable(env);
+  const visitor = op === 'state' ? await visitorLooking(request, env, publicId) : undefined;
   const state = await profileState(env.DB, row, async (timerId, timerPublicId) => {
     // Only the page's own state needs who is looking.
-    const visitor = op === 'state' ? await visitorLooking(request, env, timerPublicId) : undefined;
     const r = await callTimer(env, timerId, 'profile-view', { publicId: timerPublicId, visitor });
     return r.ok ? ((await r.json()) as PublicView) : null;
-  });
+  }, visitor);
   const url = `https://subtaskmanager.com/p/${publicId}`;
 
   switch (op) {
@@ -1397,6 +1644,7 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(runDueSchedules(env));
     ctx.waitUntil(sweepExpiredBlobs(env));
+    ctx.waitUntil(purgeProfileProofs(env.DB, Date.now()).catch(() => {}));
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -1508,16 +1756,19 @@ export default {
       if (!(await withinLimit(env.TIMER_CREATE_LIMIT, `profile:${ip}`))) return slowDown();
       return handleProfileCreate(request, env).catch((e) => json({ error: String(e) }, 500));
     }
-    const profileRoute = url.pathname.match(/^\/profile\/([A-Za-z0-9_-]{8,64})\/([a-z-]+)$/);
+    const profileRoute = url.pathname.match(/^\/profile\/([A-Za-z0-9_-]{8,64})\/([a-z-]+)(?:\/([A-Za-z0-9_-]{1,64}))?$/);
     if (profileRoute) {
       if (!(await withinLimit(env.TIMER_OP_LIMIT, `profile:${profileRoute[1]}`))) return slowDown();
-      return handleProfileOp(request, env, profileRoute[1], profileRoute[2]).catch((e) => json({ error: String(e) }, 500));
+      return handleProfileOp(request, env, profileRoute[1], profileRoute[2], profileRoute[3]).catch((e) => json({ error: String(e) }, 500));
     }
-    const publicProfileRoute = url.pathname.match(/^\/p\/([A-Za-z0-9_-]{6,32})(?:\/(state|embed|badge\.svg|badge\.png|preview\.png))?\/?$/);
-    if (publicProfileRoute && (request.method === 'GET' || request.method === 'HEAD' || request.method === 'OPTIONS')) {
+    const publicProfileRoute = url.pathname.match(
+      /^\/p\/([A-Za-z0-9_-]{6,32})(?:\/(state|message|chat|order|review|proof|embed|badge\.svg|badge\.png|preview\.png))?\/?$/,
+    );
+    if (publicProfileRoute) {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: PUBLIC_CORS });
       const op = publicProfileRoute[2] ?? '';
       if (op === 'state' && !(await withinLimit(env.TIMER_PUBLIC_LIMIT, ip))) return withCors(slowDown());
+      if ((op === 'message' || op === 'order' || op === 'chat') && !(await withinLimit(env.TIMER_PUBLIC_LIMIT, ip))) return withCors(slowDown());
       return handlePublicProfile(request, env, publicProfileRoute[1], op).catch((e) => withCors(json({ error: String(e) }, 500)));
     }
     if (url.pathname.startsWith('/p/') && (request.method === 'GET' || request.method === 'HEAD')) {

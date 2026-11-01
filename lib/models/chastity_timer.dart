@@ -447,6 +447,161 @@ class TimerInvite {
       );
 }
 
+/// One social link displayed on a player's public profile page.
+class ProfileSocial {
+  const ProfileSocial({
+    required this.id,
+    required this.platform,
+    required this.label,
+    required this.url,
+  });
+
+  final String id;
+  final String platform;
+  final String label;
+  final String url;
+
+  ProfileSocial copyWith({String? platform, String? label, String? url}) => ProfileSocial(
+        id: id,
+        platform: platform ?? this.platform,
+        label: label ?? this.label,
+        url: url ?? this.url,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'platform': platform,
+        'label': label,
+        'url': url,
+      };
+
+  factory ProfileSocial.fromJson(Map<String, dynamic> json) => ProfileSocial(
+        id: json['id'] as String? ?? '',
+        platform: json['platform'] as String? ?? 'custom',
+        label: json['label'] as String? ?? '',
+        url: json['url'] as String? ?? '',
+      );
+}
+
+/// A visitor message left on the player's public profile page.
+class ProfileMessage {
+  const ProfileMessage({
+    required this.id,
+    required this.profileId,
+    this.senderName,
+    required this.message,
+    required this.createdAt,
+    this.readAt,
+  });
+
+  final String id;
+  final String profileId;
+  final String? senderName;
+  final String message;
+  final DateTime createdAt;
+  final DateTime? readAt;
+
+  bool get isRead => readAt != null;
+
+  factory ProfileMessage.fromJson(Map<String, dynamic> json) => ProfileMessage(
+        id: json['id'] as String? ?? '',
+        profileId: json['profileId'] as String? ?? '',
+        senderName: json['senderName'] as String?,
+        message: json['message'] as String? ?? '',
+        createdAt: DateTime.fromMillisecondsSinceEpoch((json['createdAt'] as num?)?.toInt() ?? 0),
+        readAt: json['readAt'] != null
+            ? DateTime.fromMillisecondsSinceEpoch((json['readAt'] as num).toInt())
+            : null,
+      );
+}
+
+/// A message in a two-way profile chat between player and visitor.
+class ProfileChatMessage {
+  const ProfileChatMessage({
+    required this.id,
+    required this.profileId,
+    required this.visitorId,
+    required this.senderRole,
+    required this.senderName,
+    required this.text,
+    required this.createdAt,
+    this.readAt,
+  });
+
+  final String id;
+  final String profileId;
+  final String visitorId;
+  final String senderRole; // 'visitor' or 'player'
+  final String senderName;
+  final String text;
+  final DateTime createdAt;
+  final DateTime? readAt;
+
+  bool get isRead => readAt != null;
+  bool get isFromPlayer => senderRole == 'player';
+  bool get isFromVisitor => senderRole == 'visitor';
+
+  factory ProfileChatMessage.fromJson(Map<String, dynamic> json) => ProfileChatMessage(
+        id: json['id'] as String? ?? '',
+        profileId: json['profileId'] as String? ?? '',
+        visitorId: json['visitorId'] as String? ?? '',
+        senderRole: json['senderRole'] as String? ?? 'visitor',
+        senderName: json['senderName'] as String? ?? '',
+        text: (json['text'] ?? json['message']) as String? ?? '',
+        createdAt: DateTime.fromMillisecondsSinceEpoch((json['createdAt'] as num?)?.toInt() ?? 0),
+        readAt: json['readAt'] != null
+            ? DateTime.fromMillisecondsSinceEpoch((json['readAt'] as num).toInt())
+            : null,
+      );
+}
+
+/// A conversation thread between the profile owner and a visitor.
+class ProfileChatThread {
+  const ProfileChatThread({
+    required this.visitorId,
+    required this.visitorName,
+    required this.lastMessage,
+    required this.lastMessageAt,
+    required this.unreadCount,
+    this.isBlocked = false,
+  });
+
+  final String visitorId;
+  final String visitorName;
+  final String lastMessage;
+  final DateTime lastMessageAt;
+  final int unreadCount;
+  final bool isBlocked;
+
+  bool get hasUnread => unreadCount > 0;
+
+  ProfileChatThread copyWith({
+    String? visitorId,
+    String? visitorName,
+    String? lastMessage,
+    DateTime? lastMessageAt,
+    int? unreadCount,
+    bool? isBlocked,
+  }) =>
+      ProfileChatThread(
+        visitorId: visitorId ?? this.visitorId,
+        visitorName: visitorName ?? this.visitorName,
+        lastMessage: lastMessage ?? this.lastMessage,
+        lastMessageAt: lastMessageAt ?? this.lastMessageAt,
+        unreadCount: unreadCount ?? this.unreadCount,
+        isBlocked: isBlocked ?? this.isBlocked,
+      );
+
+  factory ProfileChatThread.fromJson(Map<String, dynamic> json) => ProfileChatThread(
+        visitorId: json['visitorId'] as String? ?? '',
+        visitorName: json['visitorName'] as String? ?? 'Anonymous',
+        lastMessage: json['lastMessage'] as String? ?? '',
+        lastMessageAt: DateTime.fromMillisecondsSinceEpoch((json['lastMessageAt'] as num?)?.toInt() ?? 0),
+        unreadCount: (json['unreadCount'] as num?)?.toInt() ?? 0,
+        isBlocked: json['isBlocked'] == true,
+      );
+}
+
 /// The player's public page: one link for all their timers. The key proves
 /// this device may change it - never shown, except to move it to another.
 class TimerProfile {
@@ -456,6 +611,11 @@ class TimerProfile {
     required this.publicId,
     this.name,
     this.showHistory = false,
+    this.bio,
+    this.socials = const [],
+    this.acceptMessages = false,
+    this.unreadMessages = 0,
+    this.publicOrders,
   });
 
   final String profileId;
@@ -463,14 +623,37 @@ class TimerProfile {
   final String publicId;
   final String? name;
   final bool showHistory;
+  final String? bio;
+  final List<ProfileSocial> socials;
+  final bool acceptMessages;
+  final int unreadMessages;
+  final PublicOrdersSettings? publicOrders;
 
-  TimerProfile copyWith({String? key, String? publicId, String? name, bool clearName = false, bool? showHistory}) =>
+  TimerProfile copyWith({
+    String? key,
+    String? publicId,
+    String? name,
+    bool clearName = false,
+    bool? showHistory,
+    String? bio,
+    bool clearBio = false,
+    List<ProfileSocial>? socials,
+    bool? acceptMessages,
+    int? unreadMessages,
+    PublicOrdersSettings? publicOrders,
+    bool clearOrders = false,
+  }) =>
       TimerProfile(
         profileId: profileId,
         key: key ?? this.key,
         publicId: publicId ?? this.publicId,
         name: clearName ? null : (name ?? this.name),
         showHistory: showHistory ?? this.showHistory,
+        bio: clearBio ? null : (bio ?? this.bio),
+        socials: socials ?? this.socials,
+        acceptMessages: acceptMessages ?? this.acceptMessages,
+        unreadMessages: unreadMessages ?? this.unreadMessages,
+        publicOrders: clearOrders ? null : (publicOrders ?? this.publicOrders),
       );
 
   Map<String, dynamic> toJson() => {
@@ -479,6 +662,11 @@ class TimerProfile {
         'publicId': publicId,
         'name': name,
         'showHistory': showHistory,
+        'bio': bio,
+        'socials': socials.map((s) => s.toJson()).toList(),
+        'acceptMessages': acceptMessages,
+        'unreadMessages': unreadMessages,
+        'publicOrders': publicOrders?.toJson(),
       };
 
   factory TimerProfile.fromJson(Map<String, dynamic> json) => TimerProfile(
@@ -487,6 +675,16 @@ class TimerProfile {
         publicId: json['publicId'] as String,
         name: json['name'] as String?,
         showHistory: json['showHistory'] == true,
+        bio: json['bio'] as String?,
+        socials: ((json['socials'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((m) => ProfileSocial.fromJson(Map<String, dynamic>.from(m)))
+            .toList(),
+        acceptMessages: json['acceptMessages'] == true,
+        unreadMessages: (json['unreadMessages'] as num?)?.toInt() ?? 0,
+        publicOrders: json['publicOrders'] != null && json['publicOrders'] is Map
+            ? PublicOrdersSettings.fromJson(Map<String, dynamic>.from(json['publicOrders'] as Map))
+            : null,
       );
 }
 

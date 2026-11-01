@@ -3,8 +3,10 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/public_visitor_service.dart';
+import 'visitor_profile_chat_view.dart';
 
 /// "2d 04:15:09": a live countdown.
 String _clock(Duration d) {
@@ -171,9 +173,70 @@ class _PublicTimerViewState extends State<PublicTimerView> with WidgetsBindingOb
                   onRefresh: _load,
                   child: ListView(
                     padding: EdgeInsets.fromLTRB(16, 12, 16, 24 + MediaQuery.paddingOf(context).bottom),
-                    children: [_timerCard(page, theme), ..._ordersSection(page, visitor, theme)],
+                    children: [
+                      if (widget.kind == 'p' && (page.bio != null || page.socials.isNotEmpty || page.acceptMessages))
+                        _profileHeaderCard(page, theme),
+                      _timerCard(page, theme),
+                      ..._ordersSection(page, visitor, theme),
+                    ],
                   ),
                 ),
+    );
+  }
+
+  Widget _profileHeaderCard(PublicPage page, ThemeData theme) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (page.bio != null && page.bio!.trim().isNotEmpty) ...[
+              Text(
+                page.bio!.trim(),
+                style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (page.socials.isNotEmpty) ...[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: page.socials.map((s) {
+                  return ActionChip(
+                    avatar: const Icon(Icons.link_rounded, size: 16),
+                    label: Text(s.label),
+                    onPressed: () async {
+                      final uri = Uri.tryParse(s.url);
+                      if (uri != null) {
+                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      }
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (page.acceptMessages) ...[
+              FilledButton.icon(
+                icon: const Icon(Icons.chat_bubble_outline_rounded),
+                label: Text('Chat with ${page.name ?? 'them'}'),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => VisitorProfileChatView(
+                        publicId: widget.id,
+                        profileName: page.name,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 

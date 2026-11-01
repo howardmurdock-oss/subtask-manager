@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/partner_service.dart';
+import '../../services/chastity_timer_service.dart';
 import '../messenger/messenger_inbox_view.dart';
 import 'partner_directory_view.dart';
 
@@ -31,8 +32,12 @@ class _PartnersAndChatViewState extends State<PartnersAndChatView>
   @override
   Widget build(BuildContext context) {
     final partnerSvc = Provider.of<PartnerService>(context);
+    ChastityTimerService? timers;
+    try {
+      timers = Provider.of<ChastityTimerService>(context);
+    } catch (_) {}
     final pending = partnerSvc.pendingRequests.length;
-    final unread = partnerSvc.totalUnreadCount;
+    final unread = partnerSvc.totalUnreadCount + (timers?.profile?.unreadMessages ?? 0);
 
     Widget tab(String label, IconData icon, int count, Color badgeColor) => Tab(
           icon: count > 0

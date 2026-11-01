@@ -29,6 +29,8 @@ import '../../core/security/patreon_access.dart';
 import '../../services/sync_service.dart';
 import '../../services/background_link_service.dart';
 import '../../core/notifications/notification_service.dart';
+import '../../services/chastity_timer_service.dart';
+import '../chastity_timer/timer_profile_view.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({super.key});
@@ -468,6 +470,10 @@ class _SettingsViewState extends State<SettingsView> {
   Widget _buildPersonalIdentitySection(BuildContext context, SyncService sync, ThemeData theme) {
     final code = sync.pairingCode;
     final secret = sync.pairingSecret;
+    ChastityTimerService? timers;
+    try {
+      timers = Provider.of<ChastityTimerService>(context);
+    } catch (_) {}
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -646,6 +652,84 @@ class _SettingsViewState extends State<SettingsView> {
                     ),
                   ],
                 ),
+                const Divider(height: 20),
+                // Public Profile Page Row
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const TimerProfileView()),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'PUBLIC PROFILE PAGE',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.0,
+                                color: theme.colorScheme.onSurface.withOpacity(0.6),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              timers?.profile == null
+                                  ? 'Not set up yet'
+                                  : (timers?.profileLink ?? 'Active page'),
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: timers?.profile != null
+                                    ? theme.colorScheme.primary
+                                    : theme.colorScheme.onSurface.withOpacity(0.6),
+                                fontStyle: timers?.profile != null ? FontStyle.normal : FontStyle.italic,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              timers?.profile == null
+                                  ? 'Tap to set up your public timer and orders page.'
+                                  : 'Manage link, bio, socials, visitor chats, and orders.',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: theme.colorScheme.onSurface.withOpacity(0.55),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (timers?.profileLink != null) ...[
+                      IconButton(
+                        tooltip: 'Copy Public Link',
+                        icon: const Icon(Icons.copy_rounded, size: 18),
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: timers!.profileLink!));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Copied "${timers.profileLink}" to clipboard'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                    IconButton.filledTonal(
+                      tooltip: timers?.profile != null ? 'Manage Public Profile' : 'Set Up Public Profile',
+                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const TimerProfileView()),
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 16),
                 // Quick Action Buttons
                 Wrap(
@@ -660,7 +744,8 @@ class _SettingsViewState extends State<SettingsView> {
                         foregroundColor: theme.colorScheme.brightness == Brightness.dark ? Colors.black : Colors.white,
                       ),
                       onPressed: () {
-                        final invite = 'Orders App Pairing Credentials:\nPairing Code: $code\nE2EE Passphrase: $secret';
+                        final publicPart = timers?.profileLink != null ? '\nPublic Profile: ${timers!.profileLink}' : '';
+                        final invite = 'Orders App Pairing Credentials:\nPairing Code: $code\nE2EE Passphrase: $secret$publicPart';
                         Clipboard.setData(ClipboardData(text: invite));
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
@@ -669,6 +754,14 @@ class _SettingsViewState extends State<SettingsView> {
                           ),
                         );
                       },
+                    ),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.public_rounded, size: 16),
+                      label: const Text('Public Profile Page'),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const TimerProfileView()),
+                      ),
                     ),
                     OutlinedButton.icon(
                       icon: const Icon(Icons.autorenew_rounded, size: 16),

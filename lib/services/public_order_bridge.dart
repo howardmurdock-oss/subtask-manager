@@ -113,7 +113,7 @@ class PublicOrderBridge {
   ({PublicProofDestination to, String? directorCode, String? directorName})? destinationOf(ActiveOrder order) {
     final d = _deliveries[order.id];
     if (d == null) return null;
-    if (d.proofTo == PublicProofTo.issuer) {
+    if (d.proofTo == PublicProofTo.issuer || d.timerId == 'profile') {
       return (to: d.issuerKey == null ? PublicProofDestination.none : PublicProofDestination.issuer, directorCode: null, directorName: null);
     }
     final record = timers.recordOf(d.timerId);
@@ -134,7 +134,11 @@ class PublicOrderBridge {
   /// Skips left today on [order]'s timer.
   int skipsLeftFor(ActiveOrder order) {
     final d = _deliveries[order.id];
-    return d == null ? 0 : (timers.viewOf(d.timerId)?.orders?.skipsLeft ?? 0);
+    if (d == null) return 0;
+    if (d.timerId == 'profile') {
+      return timers.profileOrdersStatus?.skipsLeft ?? 0;
+    }
+    return timers.viewOf(d.timerId)?.orders?.skipsLeft ?? 0;
   }
 
   /// Done, with proof for its sender (encrypted) or for nobody: reported,
@@ -150,9 +154,13 @@ class PublicOrderBridge {
       // A photo for its sender is theirs to approve: it waits, and its
       // tokens with it, until they do - or the time to decide runs out.
       final checked = toSender && order.order.verificationType == VerificationType.photoProof;
-      final error = checked
-          ? await timers.submitPublicOrder(d.timerId, d.no, proof: proof)
-          : await timers.reportPublicOrder(d.timerId, d.no, completed: true, proof: proof);
+      final error = d.timerId == 'profile'
+          ? (checked
+              ? await timers.submitProfileOrder(d.no, proof: proof)
+              : await timers.reportProfileOrder(d.no, completed: true, proof: proof))
+          : (checked
+              ? await timers.submitPublicOrder(d.timerId, d.no, proof: proof)
+              : await timers.reportPublicOrder(d.timerId, d.no, completed: true, proof: proof));
       if (error != null && error != 'not-active') return error;
       if (checked && error == null) {
         d.submitted = true;
@@ -174,7 +182,9 @@ class PublicOrderBridge {
   Future<String?> skip(String activeId) async {
     final d = _deliveries[activeId];
     if (d == null) return 'not-active';
-    final error = await timers.skipPublicOrder(d.timerId, d.no);
+    final error = d.timerId == 'profile'
+        ? await timers.skipProfileOrder(d.no)
+        : await timers.skipPublicOrder(d.timerId, d.no);
     if (error != null && error != 'not-active') return error;
     d.reported = true;
     await _save();
@@ -193,13 +203,18 @@ class PublicOrderBridge {
       if (active != null) _deliver(r.id, active, orders.proofTo);
       _settleFromFeed(r.id, orders);
     }
+    final profileOrders = timers.profileOrdersStatus;
+    if (profileOrders != null) {
+      final active = profileOrders.active;
+      if (active != null) _deliver('profile', active, profileOrders.proofTo);
+      _settleFromFeed('profile', profileOrders);
+    }
   }
 
   Future<void> _deliver(String timerId, PublicOrderActive active, PublicProofTo proofTo) async {
     final id = activeIdFor(timerId, active.no);
     if (_deliveries.containsKey(id)) return;
     _deliveries[id] = _Delivery(timerId: timerId, no: active.no, issuerKey: active.issuerKey, proofTo: proofTo);
-    await _save();
     engine.assignOrder(
       active.def.toOrder(id: 'public-${active.def.id}'),
       id: id,
@@ -207,6 +222,7 @@ class PublicOrderBridge {
       assignedByPartnerName: 'the public',
       assignedAt: active.deliveredAt,
     );
+    await _save();
     await announce(timerId, active.no, active.def);
   }
 
@@ -293,7 +309,9 @@ class PublicOrderBridge {
   Future<void> _markSubmitted(String id, _Delivery d) async {
     _inFlight.add(id);
     try {
-      final error = await timers.submitPublicOrder(d.timerId, d.no);
+      final error = d.timerId == 'profile'
+          ? await timers.submitProfileOrder(d.no)
+          : await timers.submitPublicOrder(d.timerId, d.no);
       if (error != null && error != 'not-active') return;
       d.submitted = true;
       await _save();
@@ -309,7 +327,9 @@ class PublicOrderBridge {
       if (withProof != null && d.proofTo == PublicProofTo.issuer && d.issuerKey != null) {
         proof = _encryptProof(d.issuerKey!, imageBase64: withProof.proofImageBase64, note: withProof.submissionProof);
       }
-      final error = await timers.reportPublicOrder(d.timerId, d.no, completed: completed, proof: proof);
+      final error = d.timerId == 'profile'
+          ? await timers.reportProfileOrder(d.no, completed: completed, proof: proof)
+          : await timers.reportPublicOrder(d.timerId, d.no, completed: completed, proof: proof);
       // Too late (it ran out of time on the Worker) counts as settled; any
       // other failure is tried again on the next change.
       if (error != null && error != 'not-active') return;

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -164,15 +165,19 @@ class ChastityTimerService extends ChangeNotifier {
 
   /// Timers the page has been told of.
   static const String profileTimersKey = 'chastity_timer_profile_timers_v1';
+  static const String blockedVisitorsKey = 'chastity_timer_profile_blocked_visitors_v1';
 
   /// Where a player's page is served.
   static const String profileLinkBase = 'https://subtaskmanager.com/p/';
 
   TimerProfile? _profile;
   final Set<String> _profileTimers = {};
+  final Set<String> _blockedVisitors = {};
 
   TimerProfile? get profile => _profile;
   String? get profileLink => _profile == null ? null : '$profileLinkBase${_profile!.publicId}';
+  Set<String> get blockedVisitors => Set.unmodifiable(_blockedVisitors);
+  bool isVisitorBlocked(String visitorId) => _blockedVisitors.contains(visitorId);
 
   /// Makes the player's page, and tells it of every timer they are on.
   Future<String?> createProfile({String? name}) async {
@@ -191,21 +196,258 @@ class ChastityTimerService extends ChangeNotifier {
     return null;
   }
 
-  /// Changes the name shown on it, or whether past timers are listed.
-  Future<String?> updateProfile({String? name, bool clearName = false, bool? showHistory}) async {
+  /// Changes the name shown on it, past timers, bio, socials, messages, or orders.
+  Future<String?> updateProfile({
+    String? name,
+    bool clearName = false,
+    bool? showHistory,
+    String? bio,
+    bool clearBio = false,
+    List<ProfileSocial>? socials,
+    bool? acceptMessages,
+    PublicOrdersSettings? publicOrders,
+    bool clearOrders = false,
+  }) async {
     final p = _profile;
     if (p == null) return 'no-profile';
     final response = await _profileCall('settings', {
       if (name != null || clearName) 'name': clearName ? null : name,
       if (showHistory != null) 'showHistory': showHistory,
+      if (bio != null || clearBio) 'bio': clearBio ? null : bio,
+      if (socials != null) 'socials': socials.map((s) => s.toJson()).toList(),
+      if (acceptMessages != null) 'acceptMessages': acceptMessages,
+      if (publicOrders != null || clearOrders) 'publicOrders': clearOrders ? null : publicOrders?.toJson(),
     });
     if (!response.ok) return response.error ?? 'offline';
-    _profile = p.copyWith(
-      name: response.body['name'] as String?,
-      clearName: response.body['name'] == null,
-      showHistory: response.body['showHistory'] == true,
+    _profile = TimerProfile(
+      profileId: p.profileId,
+      key: p.key,
+      publicId: response.body['publicId'] as String? ?? p.publicId,
+      name: response.body.containsKey('name') ? response.body['name'] as String? : (clearName ? null : (name ?? p.name)),
+      showHistory: response.body.containsKey('showHistory') ? (response.body['showHistory'] == true) : (showHistory ?? p.showHistory),
+      bio: response.body.containsKey('bio') ? response.body['bio'] as String? : (clearBio ? null : (bio ?? p.bio)),
+      socials: response.body.containsKey('socials')
+          ? (((response.body['socials'] as List?) ?? const [])
+              .whereType<Map>()
+              .map((m) => ProfileSocial.fromJson(Map<String, dynamic>.from(m)))
+              .toList())
+          : (socials ?? p.socials),
+      acceptMessages: response.body.containsKey('acceptMessages')
+          ? (response.body['acceptMessages'] == true)
+          : (acceptMessages ?? p.acceptMessages),
+      unreadMessages: (response.body['unreadMessages'] as num?)?.toInt() ?? p.unreadMessages,
+      publicOrders: response.body.containsKey('publicOrders')
+          ? (response.body['publicOrders'] != null && response.body['publicOrders'] is Map
+              ? PublicOrdersSettings.fromJson(Map<String, dynamic>.from(response.body['publicOrders'] as Map))
+              : null)
+          : (clearOrders ? null : (publicOrders ?? p.publicOrders)),
     );
     await _saveProfile();
+    notifyListeners();
+    if (_profile?.publicOrders?.enabled == true) {
+      await fetchProfileOrders();
+    } else {
+      _profileOrdersStatus = null;
+      notifyListeners();
+    }
+    return null;
+  }
+
+  /// Visitor messages on the player's profile.
+  Future<List<ProfileMessage>> fetchProfileMessages() async {
+    if (_profile == null) return [];
+    final response = await _profileCall('messages', null, method: 'GET');
+    if (!response.ok) return [];
+    final list = ((response.body['messages'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => ProfileMessage.fromJson(Map<String, dynamic>.from(m)))
+        .toList();
+    final unread = (response.body['unreadCount'] as num?)?.toInt() ?? 0;
+    if (_profile!.unreadMessages != unread) {
+      _profile = _profile!.copyWith(unreadMessages: unread);
+      await _saveProfile();
+      notifyListeners();
+    }
+    return list;
+  }
+
+  Future<String?> markProfileMessagesRead({List<String>? ids, bool all = false}) async {
+    if (_profile == null) return 'no-profile';
+    final response = await _profileCall('messages', {
+      'action': 'read',
+      'ids': all ? 'all' : (ids ?? []),
+    });
+    if (!response.ok) return response.error ?? 'offline';
+    if (all) {
+      _profile = _profile!.copyWith(unreadMessages: 0);
+    } else if (ids != null) {
+      final newUnread = math.max(0, _profile!.unreadMessages - ids.length);
+      _profile = _profile!.copyWith(unreadMessages: newUnread);
+    }
+    await _saveProfile();
+    notifyListeners();
+    return null;
+  }
+
+  Future<String?> deleteProfileMessages({List<String>? ids, bool all = false}) async {
+    if (_profile == null) return 'no-profile';
+    final response = await _profileCall('messages', {
+      'action': 'delete',
+      'ids': all ? 'all' : (ids ?? []),
+    });
+    if (!response.ok) return response.error ?? 'offline';
+    await fetchProfileMessages();
+    return null;
+  }
+
+  /// List of visitor chat threads on the player's profile.
+  Future<List<ProfileChatThread>> fetchProfileChatThreads() async {
+    if (_profile == null) return [];
+    final response = await _profileCall('chats', null, method: 'GET');
+    if (!response.ok) return [];
+    final raw = response.body['threads'] ?? response.body['items'] ?? response.body;
+    final list = raw is List ? raw : const [];
+    return list
+        .whereType<Map>()
+        .map((m) {
+          final t = ProfileChatThread.fromJson(Map<String, dynamic>.from(m));
+          return t.copyWith(
+            isBlocked: t.isBlocked || isVisitorBlocked(t.visitorId),
+          );
+        })
+        .toList();
+  }
+
+  /// All messages in a chat thread with [visitorId].
+  Future<List<ProfileChatMessage>> fetchProfileChatMessages(String visitorId) async {
+    if (_profile == null) return [];
+    final response = await _profileCall('chats/$visitorId', null, method: 'GET');
+    if (!response.ok) return [];
+    final raw = response.body['messages'] ?? response.body['items'] ?? response.body;
+    final list = raw is List ? raw : const [];
+    return list
+        .whereType<Map>()
+        .map((m) => ProfileChatMessage.fromJson(Map<String, dynamic>.from(m)))
+        .toList();
+  }
+
+  /// Sends a reply from the player to [visitorId].
+  Future<String?> sendProfileChatReply(String visitorId, String text) async {
+    if (_profile == null) return 'no-profile';
+    final response = await _profileCall('chats/$visitorId', {
+      'text': text,
+    }, method: 'POST');
+    return response.ok ? null : (response.error ?? 'offline');
+  }
+
+  /// Deletes the entire conversation thread with [visitorId].
+  Future<String?> deleteProfileChatThread(String visitorId) async {
+    if (_profile == null) return 'no-profile';
+    final response = await _profileCall('chats/$visitorId', null, method: 'DELETE');
+    return response.ok ? null : (response.error ?? 'offline');
+  }
+
+  Future<void> _saveBlockedVisitors() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(blockedVisitorsKey, _blockedVisitors.toList());
+    } catch (_) {}
+  }
+
+  /// Blocks a visitor from sending messages and public orders.
+  Future<void> blockVisitor(String visitorId) async {
+    if (_blockedVisitors.add(visitorId)) {
+      await _saveBlockedVisitors();
+      notifyListeners();
+      if (_profile != null) {
+        _profileCall('chats/$visitorId', {'action': 'block'}, method: 'POST');
+      }
+    }
+  }
+
+  /// Unblocks a visitor.
+  Future<void> unblockVisitor(String visitorId) async {
+    if (_blockedVisitors.remove(visitorId)) {
+      await _saveBlockedVisitors();
+      notifyListeners();
+      if (_profile != null) {
+        _profileCall('chats/$visitorId', {'action': 'unblock'}, method: 'POST');
+      }
+    }
+  }
+
+  /// Toggles blocked status of a visitor and returns the new blocked state.
+  Future<bool> toggleBlockVisitor(String visitorId) async {
+    final nowBlocked = !_blockedVisitors.contains(visitorId);
+    if (nowBlocked) {
+      _blockedVisitors.add(visitorId);
+    } else {
+      _blockedVisitors.remove(visitorId);
+    }
+    await _saveBlockedVisitors();
+    notifyListeners();
+    if (_profile != null) {
+      _profileCall('chats/$visitorId', {
+        'action': nowBlocked ? 'block' : 'unblock',
+      }, method: 'POST');
+    }
+    return nowBlocked;
+  }
+
+  PublicOrdersStatus? _profileOrdersStatus;
+  PublicOrdersStatus? get profileOrdersStatus => _profileOrdersStatus;
+  DateTime? _lastProfileOrdersFetched;
+
+  Future<PublicOrdersStatus?> fetchProfileOrders() async {
+    if (_profile == null) return null;
+    _lastProfileOrdersFetched = DateTime.now();
+    final response = await _profileCall('orders', null, method: 'GET');
+    if (!response.ok) return null;
+    if (response.body['enabled'] != true) {
+      _profileOrdersStatus = null;
+      notifyListeners();
+      return null;
+    }
+    _profileOrdersStatus = PublicOrdersStatus.fromJson(response.body);
+    notifyListeners();
+    return _profileOrdersStatus;
+  }
+
+  Future<String?> reportProfileOrder(int no, {required bool completed, String? proof}) async {
+    if (_profile == null) return 'no-profile';
+    final response = await _profileCall('orders', {
+      'action': 'report',
+      'no': no,
+      'completed': completed,
+      if (proof != null) 'proof': proof,
+    });
+    if (!response.ok) return response.error ?? 'offline';
+    _profileOrdersStatus = PublicOrdersStatus.fromJson(response.body);
+    notifyListeners();
+    return null;
+  }
+
+  Future<String?> submitProfileOrder(int no, {String? proof}) async {
+    if (_profile == null) return 'no-profile';
+    final response = await _profileCall('orders', {
+      'action': 'submit',
+      'no': no,
+      if (proof != null) 'proof': proof,
+    });
+    if (!response.ok) return response.error ?? 'offline';
+    _profileOrdersStatus = PublicOrdersStatus.fromJson(response.body);
+    notifyListeners();
+    return null;
+  }
+
+  Future<String?> skipProfileOrder(int no) async {
+    if (_profile == null) return 'no-profile';
+    final response = await _profileCall('orders', {
+      'action': 'skip',
+      'no': no,
+    });
+    if (!response.ok) return response.error ?? 'offline';
+    _profileOrdersStatus = PublicOrdersStatus.fromJson(response.body);
     notifyListeners();
     return null;
   }
@@ -241,6 +483,16 @@ class ChastityTimerService extends ChangeNotifier {
       publicId: response.body['publicId'] as String,
       name: response.body['name'] as String?,
       showHistory: response.body['showHistory'] == true,
+      bio: response.body['bio'] as String?,
+      socials: ((response.body['socials'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((m) => ProfileSocial.fromJson(Map<String, dynamic>.from(m)))
+          .toList(),
+      acceptMessages: response.body['acceptMessages'] == true,
+      unreadMessages: (response.body['unreadMessages'] as num?)?.toInt() ?? 0,
+      publicOrders: response.body['publicOrders'] != null && response.body['publicOrders'] is Map
+          ? PublicOrdersSettings.fromJson(Map<String, dynamic>.from(response.body['publicOrders'] as Map))
+          : null,
     );
     _profileTimers
       ..clear()
@@ -251,9 +503,9 @@ class ChastityTimerService extends ChangeNotifier {
     return null;
   }
 
-  Future<TimerApiResponse> _profileCall(String op, Map<String, dynamic> body) => _call(
-      'POST', Uri.parse('${PushService.workerBaseUrl}/profile/${_profile!.profileId}/$op'),
-      key: _profile!.key, body: body);
+  Future<TimerApiResponse> _profileCall(String op, Map<String, dynamic>? body, {String method = 'POST'}) => _call(
+      method, Uri.parse('${PushService.workerBaseUrl}/profile/${_profile!.profileId}/$op'),
+      key: _profile!.key, body: (method == 'GET' || method == 'HEAD') ? null : body);
 
   /// Tells the page of a timer this device is the player on. Which of them
   /// show is the Worker's to decide, each time: link on, and on a director's
@@ -419,6 +671,12 @@ class ChastityTimerService extends ChangeNotifier {
       }
       if (pastEnd || stale) await refresh(r.id);
     }
+    if (_profile?.publicOrders?.enabled == true) {
+      if (_lastProfileOrdersFetched == null ||
+          now.difference(_lastProfileOrdersFetched!) >= const Duration(minutes: 2)) {
+        await fetchProfileOrders();
+      }
+    }
   }
 
   @override
@@ -470,6 +728,9 @@ class ChastityTimerService extends ChangeNotifier {
       _profileTimers
         ..clear()
         ..addAll(prefs.getStringList(profileTimersKey) ?? const []);
+      _blockedVisitors
+        ..clear()
+        ..addAll(prefs.getStringList(blockedVisitorsKey) ?? const []);
       final rawInvites = prefs.getString(invitesKey);
       _invites
         ..clear()
@@ -483,6 +744,9 @@ class ChastityTimerService extends ChangeNotifier {
     }
     _loaded = true;
     notifyListeners();
+    if (_profile?.publicOrders?.enabled == true) {
+      fetchProfileOrders();
+    }
   }
 
   Future<void> _save() async {
@@ -607,6 +871,9 @@ class ChastityTimerService extends ChangeNotifier {
   Future<void> refreshAll() async {
     for (final r in List.of(_records)) {
       await refresh(r.id);
+    }
+    if (_profile?.publicOrders?.enabled == true) {
+      await fetchProfileOrders();
     }
   }
 
@@ -747,15 +1014,23 @@ class ChastityTimerService extends ChangeNotifier {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
     try {
       final req = await client.openUrl(method, url).timeout(const Duration(seconds: 10));
-      req.headers.contentType = ContentType.json;
       if (key != null) req.headers.set('X-Timer-Key', key);
-      if (body != null) req.write(jsonEncode(body));
+      if (method != 'GET' && method != 'HEAD' && body != null) {
+        req.headers.contentType = ContentType.json;
+        req.write(jsonEncode(body));
+      }
       final res = await req.close().timeout(const Duration(seconds: 15));
       final text = await res.transform(utf8.decoder).join();
       Map<String, dynamic> decoded;
       try {
         final parsed = jsonDecode(text);
-        decoded = parsed is Map ? Map<String, dynamic>.from(parsed) : {};
+        if (parsed is Map) {
+          decoded = Map<String, dynamic>.from(parsed);
+        } else if (parsed is List) {
+          decoded = {'threads': parsed, 'messages': parsed, 'items': parsed};
+        } else {
+          decoded = {};
+        }
       } catch (_) {
         decoded = {};
       }

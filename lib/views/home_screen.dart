@@ -29,6 +29,7 @@ import 'chastity_timer/timer_invite.dart';
 import '../services/app_links.dart';
 import '../services/public_visitor_service.dart';
 import 'chastity_timer/public_timer_view.dart';
+import 'chastity_timer/visitor_profile_chat_view.dart';
 
 enum AppRole { player, director }
 
@@ -143,7 +144,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     final page = AppLinks.publicPageOf(uri);
     if (page == null) return;
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => PublicTimerView(kind: page.kind, id: page.id)));
+    if (page.chat) {
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => VisitorProfileChatView(publicId: page.id)));
+    } else {
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => PublicTimerView(kind: page.kind, id: page.id)));
+    }
   }
 
   Future<void> _showTimerFinishedDialog(ChastityTimerView view) async {
@@ -704,7 +709,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ? (_playerIndex < playerTabs.length ? playerTabs[_playerIndex] : playerTabs[0])
         : (_directorIndex < directorTabs.length ? directorTabs[_directorIndex] : directorTabs[0]);
 
-    final unreadCount = partnerSvc.totalUnreadCount;
+    ChastityTimerService? timers;
+    try {
+      timers = Provider.of<ChastityTimerService>(context);
+    } catch (_) {}
+    final unreadCount = partnerSvc.totalUnreadCount + (timers?.profile?.unreadMessages ?? 0);
     // One destination now covers both, so it carries both counts.
     final peopleBadge = unreadCount + pendingRequestsCount;
 

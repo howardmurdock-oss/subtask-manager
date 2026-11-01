@@ -108,8 +108,12 @@ function reply(body: unknown, status = 200): Response {
 export class ChastityTimer {
   private readonly sql: SqlStorage;
   private readonly orders: OrderQueue;
+  private readonly ctx: DurableObjectState;
+  private readonly env: Env;
 
-  constructor(private readonly ctx: DurableObjectState, private readonly env: Env) {
+  constructor(ctx: DurableObjectState, env: Env) {
+    this.ctx = ctx;
+    this.env = env;
     this.sql = ctx.storage.sql;
     this.sql.exec(`CREATE TABLE IF NOT EXISTS meta (k INTEGER PRIMARY KEY CHECK (k = 1), json TEXT NOT NULL)`);
     this.sql.exec(

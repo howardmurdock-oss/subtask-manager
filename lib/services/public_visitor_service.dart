@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/security/proof_crypto.dart';
+import '../models/chastity_timer.dart';
 import 'push_service.dart';
 
 /// A reply from the Worker: its status and JSON body.
@@ -49,6 +50,13 @@ class PublicPage {
     final o = timer?['orders'];
     return o is Map && o['enabled'] == true ? Map<String, dynamic>.from(o) : null;
   }
+
+  bool get acceptMessages => state['acceptMessages'] == true;
+  String? get bio => state['bio'] as String?;
+  List<ProfileSocial> get socials => ((state['socials'] as List?) ?? const [])
+      .whereType<Map>()
+      .map((m) => ProfileSocial.fromJson(Map<String, dynamic>.from(m)))
+      .toList();
 }
 
 /// One order this app sent from a public page.
@@ -121,16 +129,28 @@ class PublicVisitorService extends ChangeNotifier {
   final List<SentOrder> _sent = [];
   final List<WatchedPage> _watching = [];
   bool _loaded = false;
+  String? _chatNickname;
 
   bool get isVerified => _verified;
   List<SentOrder> get sent => List.unmodifiable(_sent);
   List<WatchedPage> get watching => List.unmodifiable(_watching);
   bool isWatching(String kind, String id) => _watching.any((w) => w.kind == kind && w.id == id);
+  String? get chatNickname => _chatNickname;
+
+  Future<void> setChatNickname(String nick) async {
+    _chatNickname = nick.trim();
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('stm_visitor_chat_nick', _chatNickname!);
+    } catch (_) {}
+  }
 
   Future<void> load() async {
     if (_loaded) return;
     try {
       final prefs = await SharedPreferences.getInstance();
+      _chatNickname = prefs.getString('stm_visitor_chat_nick');
       final raw = prefs.getString(prefsKey);
       if (raw != null) {
         final j = jsonDecode(raw) as Map<String, dynamic>;
@@ -288,6 +308,47 @@ class PublicVisitorService extends ChangeNotifier {
     return response.ok ? null : (response.error ?? 'offline');
   }
 
+  // ---- Profile Chat -----------------------------------------------------------------
+
+  String get visitorId {
+    if (_deviceId != null && _deviceId!.isNotEmpty) return _deviceId!;
+    _deviceId = _random(12);
+    _save();
+    return _deviceId!;
+  }
+
+  /// Fetches conversation messages with a public profile owner.
+  Future<List<ProfileChatMessage>> fetchProfileChatMessages(String publicId) async {
+    final vId = visitorId;
+    final res = await _call('GET', Uri.parse('$siteBase/p/$publicId/chat?visitorId=$vId'), headers: _deviceHeaders);
+    if (!res.ok) return const [];
+    final raw = res.body['messages'] ?? res.body;
+    final list = raw is List ? raw : const [];
+    return list
+        .whereType<Map>()
+        .map((m) => ProfileChatMessage.fromJson(Map<String, dynamic>.from(m)))
+        .toList();
+  }
+
+  /// Sends a chat message to a public profile owner.
+  Future<VisitorResponse> sendProfileChatMessage(
+    String publicId, {
+    required String text,
+    required String senderName,
+  }) async {
+    final vId = visitorId;
+    return await _call(
+      'POST',
+      Uri.parse('$siteBase/p/$publicId/chat'),
+      headers: _deviceHeaders,
+      body: {
+        'visitorId': vId,
+        'senderName': senderName,
+        'text': text,
+      },
+    );
+  }
+
   // ---- Plumbing -----------------------------------------------------------------------
 
   /// An error code, with 'verify' for "needs the one-time check first".
@@ -321,15 +382,23 @@ class PublicVisitorService extends ChangeNotifier {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
     try {
       final req = await client.openUrl(method, url).timeout(const Duration(seconds: 10));
-      req.headers.contentType = ContentType.json;
       headers?.forEach(req.headers.set);
-      if (body != null) req.write(jsonEncode(body));
+      if (method != 'GET' && method != 'HEAD' && body != null) {
+        req.headers.contentType = ContentType.json;
+        req.write(jsonEncode(body));
+      }
       final res = await req.close().timeout(const Duration(seconds: 20));
       final text = await res.transform(utf8.decoder).join();
       Map<String, dynamic> decoded;
       try {
         final parsed = jsonDecode(text);
-        decoded = parsed is Map ? Map<String, dynamic>.from(parsed) : {};
+        if (parsed is Map) {
+          decoded = Map<String, dynamic>.from(parsed);
+        } else if (parsed is List) {
+          decoded = {'messages': parsed, 'items': parsed};
+        } else {
+          decoded = {};
+        }
       } catch (_) {
         decoded = {};
       }

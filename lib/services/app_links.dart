@@ -56,11 +56,22 @@ class AppLinks {
     return uri != null && uri.scheme == 'subtaskmanager' ? uri : null;
   }
 
-  /// A public timer or player page a link points at: ('t' or 'p', its id).
-  static ({String kind, String id})? publicPageOf(Uri uri) {
-    final kind = uri.host;
-    final id = uri.pathSegments.isEmpty ? '' : uri.pathSegments.first;
+  /// A public timer or player page a link points at: ('t' or 'p', its id, chat).
+  static ({String kind, String id, bool chat})? publicPageOf(Uri uri) {
+    String kind = uri.host;
+    String id = '';
+    bool chat = false;
+
+    if (kind == 't' || kind == 'p') {
+      id = uri.pathSegments.isEmpty ? '' : uri.pathSegments.first;
+      chat = uri.pathSegments.length > 1 && uri.pathSegments[1] == 'chat';
+    } else if (uri.pathSegments.isNotEmpty && (uri.pathSegments[0] == 't' || uri.pathSegments[0] == 'p')) {
+      kind = uri.pathSegments[0];
+      id = uri.pathSegments.length > 1 ? uri.pathSegments[1] : '';
+      chat = uri.pathSegments.length > 2 && uri.pathSegments[2] == 'chat';
+    }
+
     if ((kind != 't' && kind != 'p') || !RegExp(r'^[A-Za-z0-9_-]{6,32}$').hasMatch(id)) return null;
-    return (kind: kind, id: id);
+    return (kind: kind, id: id, chat: chat);
   }
 }
