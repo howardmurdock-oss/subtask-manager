@@ -46,6 +46,39 @@ class ToyService extends ChangeNotifier {
   int get syncOffsetMs => _syncOffsetMs;
   String? get statusMessage => _statusMessage;
 
+  /// A ceiling on every speed sent, set while a partner is in control: the
+  /// owner's "partners may go up to" limit. Null when nobody else is driving.
+  int? _outputCap;
+  int? get outputCap => _outputCap;
+  set outputCap(int? cap) {
+    _outputCap = cap?.clamp(0, 20);
+    // A lower ceiling applies at once, not at the next command.
+    if (_outputCap != null && _lastSentSpeed > _outputCap!) {
+      final ceiling = _outputCap!;
+      _lastSentSpeed = -1;
+      setVibrateSpeed(ceiling);
+    }
+  }
+
+  /// Beat-pulse strength for a metronome started by live control, in place of
+  /// the owner's own manual intensity. Null to use the manual intensity.
+  int? intensityOverride;
+
+  /// The strength cadence pulses and steady buzz scale to.
+  int get effectiveIntensity => (intensityOverride ?? _manualIntensity).clamp(1, 20);
+
+  /// The speed last sent to the toy, 0 when still.
+  int get currentSpeed => _lastSentSpeed < 0 ? 0 : _lastSentSpeed;
+
+  /// Stands a toy in as connected, for tests: no Bluetooth involved.
+  @visibleForTesting
+  void debugSetConnected(ConnectedToyInfo? toy) {
+    _connectedToy = toy;
+    _state = toy == null ? ToyConnectionState.disconnected : ToyConnectionState.connected;
+    _lastSentSpeed = -1;
+    notifyListeners();
+  }
+
   /// Initializes the service and attempts to auto-reconnect to the last paired toy.
   Future<void> init() async {
     try {
@@ -302,6 +335,7 @@ class ToyService extends ChangeNotifier {
   }
 
   void _handleDisconnected() {
+    _lastSentSpeed = -1;
     _pulseTimer?.cancel();
     _pulseTimer = null;
     _writeCharacteristic = null;
@@ -335,23 +369,35 @@ class ToyService extends ChangeNotifier {
 
   /// Sets continuous vibration speed (0 to 20 for Lovense).
   Future<void> setVibrateSpeed(int speed) async {
-    final clamped = speed.clamp(0, 20);
+    final clamped = speed.clamp(0, _outputCap ?? 20);
+    _trailingSpeedTimer?.cancel();
+    _trailingSpeedTimer = null;
     if (clamped == _lastSentSpeed) return;
-    _lastSentSpeed = clamped;
 
-    // Throttle commands: Avoid sending faster than ~20Hz to prevent BLE buffer congestion
+    // Throttle commands: Avoid sending faster than ~20Hz to prevent BLE buffer
+    // congestion. A throttled speed is sent once the gap has passed rather
+    // than dropped - otherwise the last position of a dragged slider could be
+    // the one that never arrives.
     final now = DateTime.now();
-    if (_lastCommandTime != null &&
-        now.difference(_lastCommandTime!).inMilliseconds < 40 &&
-        clamped != 0) {
+    final sinceLast = _lastCommandTime == null ? null : now.difference(_lastCommandTime!).inMilliseconds;
+    if (sinceLast != null && sinceLast < 40 && clamped != 0) {
+      _trailingSpeedTimer = Timer(Duration(milliseconds: 40 - sinceLast), () {
+        _trailingSpeedTimer = null;
+        setVibrateSpeed(clamped);
+      });
       return;
     }
 
+    _lastSentSpeed = clamped;
     await sendRawCommand('Vibrate:$clamped;');
   }
 
+  Timer? _trailingSpeedTimer;
+
   /// Immediately shuts down all vibration motors on the connected hardware.
   Future<void> stopVibration() async {
+    _trailingSpeedTimer?.cancel();
+    _trailingSpeedTimer = null;
     _delayTimer?.cancel();
     _delayTimer = null;
     _pulseTimer?.cancel();
@@ -404,7 +450,7 @@ class ToyService extends ChangeNotifier {
 
   /// Rhythmic pulse: fires a short 100-140ms tap on the beat, then stops.
   void _handleBeatPulse(CadenceTick tick) {
-    final speed = _manualIntensity;
+    final speed = effectiveIntensity;
     final pulseDurationMs = (60000 / tick.currentBpm * 0.28).clamp(70, 160).round();
 
     setVibrateSpeed(speed);

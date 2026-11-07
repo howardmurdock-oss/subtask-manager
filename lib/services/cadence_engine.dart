@@ -302,7 +302,7 @@ class CadenceEngine extends ChangeNotifier {
       _elapsedSeconds,
       _totalDurationSeconds,
       seed: _seed,
-      maxCeiling: ToyService.instance.manualIntensity,
+      maxCeiling: ToyService.instance.effectiveIntensity,
     );
     ToyService.instance.setVibrateSpeed(speed);
   }

@@ -22,6 +22,7 @@ import 'services/public_order_bridge.dart';
 import 'services/app_links.dart';
 import 'services/public_visitor_service.dart';
 import 'services/toy/toy_service.dart';
+import 'views/toy/toy_partner_sections.dart';
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,6 +57,8 @@ void main(List<String> args) async {
   // After init, so partners are told this copy's features under the right
   // pairing code.
   syncService.startFeatureExchange();
+  // Live toy control: partners you allow can steer your connected toy.
+  syncService.startToyRemote();
 
   // The chastity timers this device can reach, kept up to date while it runs.
   final timerService = ChastityTimerService();
@@ -211,6 +214,11 @@ class _OrdersAppState extends State<OrdersApp> with WidgetsBindingObserver {
       debugShowCheckedModeBanner: false,
       theme: themeProvider.themeData,
       home: rootScreen,
+      // While a partner controls your toy, say so on every screen - except
+      // behind the PIN lock or the decoy, which must give nothing away.
+      builder: (context, child) => security.isPanicModeActive || isLocked
+          ? child!
+          : ToyRemoteBanner(child: child!),
     );
   }
 }

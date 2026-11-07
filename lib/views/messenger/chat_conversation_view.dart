@@ -1,3 +1,4 @@
+import '../toy/toy_control_view.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -270,6 +271,17 @@ class _ChatConversationViewState extends State<ChatConversationView> {
           ),
         ),
         actions: [
+          // Their toy, when they have it connected and have allowed us.
+          Builder(builder: (context) {
+            final toy = context.watch<SyncService>().partnerToy(currentPartner);
+            if (currentPartner.isBlocked || !(toy?.isOnline ?? false)) return const SizedBox.shrink();
+            return IconButton(
+              key: const Key('chat-toy-control'),
+              tooltip: "Control ${currentPartner.displayName}'s toy",
+              icon: const Icon(Icons.vibration_rounded),
+              onPressed: () => ToyControlView.openPartner(context, currentPartner),
+            );
+          }),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert_rounded),
             onSelected: (val) {

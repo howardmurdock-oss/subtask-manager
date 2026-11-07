@@ -42,6 +42,9 @@ enum SyncMessageType {
 
   /// The player turned down a timer sent while they had another running.
   timerDeclined,
+
+  /// A partner's toy came online or went offline for live control with us.
+  toyStatus,
 }
 
 class SyncMessage {

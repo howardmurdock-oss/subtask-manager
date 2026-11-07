@@ -1,3 +1,4 @@
+import '../toy/toy_control_view.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/partner_contact.dart';
@@ -507,6 +508,17 @@ class PartnerDirectoryView extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 12),
+                      if (!partner.isBlocked && (sync.partnerToy(partner)?.isOnline ?? false))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: FilledButton.tonalIcon(
+                            key: Key('directory-toy-${partner.pairingCode}'),
+                            icon: const Icon(Icons.vibration_rounded, size: 16),
+                            label: Text('Control toy · ${sync.partnerToy(partner)?.toyName ?? 'online'}',
+                                style: const TextStyle(fontSize: 12)),
+                            onPressed: () => ToyControlView.openPartner(context, partner),
+                          ),
+                        ),
                       Row(
                         children: [
                           if (!isActive && !partner.isBlocked)

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../services/toy/toy_models.dart';
 import '../../services/toy/toy_service.dart';
+import 'toy_control_view.dart';
+import 'toy_partner_sections.dart';
 
 /// Modal bottom sheet allowing players and directors to scan, pair,
 /// test, and configure Bluetooth novelty hardware telemetry.
@@ -149,6 +151,10 @@ class _ToyManagerSheetState extends State<ToyManagerSheet> {
                     const SizedBox(height: 16),
                   ],
 
+                  // Live control: partners' toys, and who may control yours
+                  const ToyPartnerSections(),
+                  const SizedBox(height: 16),
+
                   // Cadence & Metronome Sync Settings
                   _buildCadenceSettings(theme),
                   const SizedBox(height: 24),
@@ -240,6 +246,21 @@ class _ToyManagerSheetState extends State<ToyManagerSheet> {
               ],
             ),
             const SizedBox(height: 16),
+
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const Key('toy-open-control'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                icon: const Icon(Icons.tune_rounded),
+                label: const Text('Control your toy'),
+                onPressed: () => ToyControlView.openLocal(context),
+              ),
+            ),
+            const SizedBox(height: 10),
 
             // Action Buttons
             Row(
