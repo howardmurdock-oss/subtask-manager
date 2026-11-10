@@ -156,3 +156,67 @@ export class ToyRoom {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// TURN logins for toy sessions
+//
+// Sessions run over WebRTC, relayed by Cloudflare's TURN service: billed by
+// data, not by time, and a toy session is a trickle of data. The long-lived
+// TURN key stays here; each session is handed a short-lived login.
+// ---------------------------------------------------------------------------
+
+/** How long a session's TURN login lasts. A longer session asks again. */
+export const TURN_TTL_SECONDS = 3 * 60 * 60;
+
+export interface IceServer {
+  urls: string[];
+  username?: string;
+  credential?: string;
+}
+
+/**
+ * Keeps what a toy session should use: TURN only (every session is relayed,
+ * so partners never learn each other's address), minus port 53, which some
+ * networks and Chrome refuse and which only slows connecting.
+ */
+export function relayServers(raw: unknown): IceServer[] {
+  const servers = (raw as { iceServers?: unknown })?.iceServers;
+  const list = Array.isArray(servers) ? servers : servers ? [servers] : [];
+  const out: IceServer[] = [];
+  for (const s of list as Array<Record<string, unknown>>) {
+    const urls = (Array.isArray(s?.urls) ? s.urls : [s?.urls]).filter(
+      (u): u is string => typeof u === 'string' && /^turns?:/.test(u) && !/:53(\?|$)/.test(u),
+    );
+    if (urls.length === 0) continue;
+    out.push({
+      urls,
+      ...(typeof s.username === 'string' ? { username: s.username } : {}),
+      ...(typeof s.credential === 'string' ? { credential: s.credential } : {}),
+    });
+  }
+  return out;
+}
+
+/** A fresh TURN login from Cloudflare, or null if none could be had. */
+export async function mintTurnLogin(
+  keyId: string | undefined,
+  apiToken: string | undefined,
+  fetcher: typeof fetch = fetch,
+): Promise<IceServer[] | null> {
+  if (!keyId || !apiToken) return null;
+  try {
+    const res = await fetcher(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId.trim())}/credentials/generate-ice-servers`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiToken.trim()}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ttl: TURN_TTL_SECONDS }),
+      },
+    );
+    if (!res.ok) return null;
+    const servers = relayServers(await res.json());
+    return servers.length > 0 ? servers : null;
+  } catch {
+    return null;
+  }
+}

@@ -1,7 +1,9 @@
 // Build check for flutter_webrtc: two peer connections in one process,
-// a data channel between them, a round trip, then exit with a verdict.
+// a data channel between them relayed through Cloudflare TURN, a round
+// trip, then exit with a verdict.
 //   flutter run -d windows -t tool/webrtc_probe/main.dart
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -20,11 +22,26 @@ Future<void> main() async {
   }
 }
 
+/// A TURN login from the Worker, as a toy session will get one.
+Future<List<dynamic>> _turnServers() async {
+  final client = HttpClient();
+  try {
+    final req = await client.postUrl(Uri.parse('https://subtask-push.howard-murdock.workers.dev/toy/ice'));
+    final res = await req.close();
+    final body = await res.transform(utf8.decoder).join();
+    if (res.statusCode != 200) throw 'Worker answered ${res.statusCode}: $body';
+    return (jsonDecode(body) as Map)['iceServers'] as List;
+  } finally {
+    client.close();
+  }
+}
+
 Future<String> _probe() async {
+  // Relay only, as real sessions run: every byte goes through Cloudflare's
+  // TURN servers, so this proves they are reachable from here.
   final config = {
-    'iceServers': [
-      {'urls': 'stun:stun.cloudflare.com:3478'},
-    ],
+    'iceServers': await _turnServers(),
+    'iceTransportPolicy': 'relay',
   };
   final a = await createPeerConnection(config);
   final b = await createPeerConnection(config);

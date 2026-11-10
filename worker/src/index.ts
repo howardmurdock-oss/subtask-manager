@@ -19,7 +19,7 @@
  * app in Doze and let it decide what to show.
  */
 
-import { ToyRoom, toyRole, toyRoomName, validToyTopic } from './toy_room.ts';
+import { TURN_TTL_SECONDS, ToyRoom, mintTurnLogin, toyRole, toyRoomName, validToyTopic } from './toy_room.ts';
 import { ChastityTimer, randomToken, sha256Hex } from './timer.ts';
 import { expiredPage, profileGonePage, publicPage } from './public_page.ts';
 import { badgeSvg, embedPage, endedEmbedPage, previewText, type PublicView } from './embed.ts';
@@ -95,6 +95,9 @@ export interface Env {
   TIMER_CREATE_LIMIT?: RateLimit;
   TIMER_OP_LIMIT?: RateLimit;
   TIMER_PUBLIC_LIMIT?: RateLimit;
+  // Cloudflare TURN, for live toy sessions. Set with tool/set_turn_secrets.py.
+  TURN_KEY_ID?: string;
+  TURN_KEY_API_TOKEN?: string;
 }
 
 /** Cloudflare's rate-limit binding. */
@@ -210,6 +213,9 @@ export class TopicHub {
   constructor(ctx: DurableObjectState, _env: Env) {
     this.ctx = ctx;
     this.sql = ctx.storage.sql;
+    // Keep-alive pings are answered by Cloudflare without waking this object,
+    // and are not billed: a connected-but-quiet device costs nothing.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS messages (
          seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1702,6 +1708,16 @@ export default {
 
     // Desktop's live channel. The hub is addressed by topic, which is already
     // a hash of the pairing code.
+    if (request.method === 'POST' && url.pathname === '/toy/ice') {
+      // A short-lived TURN login for one toy session.
+      const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+      if (!(await withinLimit(env.TIMER_CREATE_LIMIT, `ice:${ip}`))) return slowDown();
+      const servers = await mintTurnLogin(env.TURN_KEY_ID, env.TURN_KEY_API_TOKEN);
+      return servers
+        ? json({ iceServers: servers, ttl: TURN_TTL_SECONDS })
+        : json({ error: 'turn-unavailable' }, 503);
+    }
+
     if (url.pathname === '/toy') {
       // Live toy control. Owner and partners meet in a room named for the
       // owner's topic; see toy_room.ts.

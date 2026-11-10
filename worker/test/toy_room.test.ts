@@ -150,3 +150,43 @@ test('pings are answered, oversized frames dropped', () => {
   room.message(a as unknown as WebSocket, 'x'.repeat(9000));
   assert.deepEqual(owner.sent, []);
 });
+
+test('TURN logins: relay addresses only, never port 53', async () => {
+  const { relayServers, mintTurnLogin } = await import('../src/toy_room.ts');
+  const answer = {
+    iceServers: [
+      { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.cloudflare.com:53'] },
+      {
+        urls: [
+          'turn:turn.cloudflare.com:3478?transport=udp',
+          'turn:turn.cloudflare.com:53?transport=udp',
+          'turns:turn.cloudflare.com:443?transport=tcp',
+        ],
+        username: 'u',
+        credential: 'c',
+      },
+    ],
+  };
+  assert.deepEqual(relayServers(answer), [
+    {
+      urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turns:turn.cloudflare.com:443?transport=tcp'],
+      username: 'u',
+      credential: 'c',
+    },
+  ]);
+  assert.deepEqual(relayServers({}), []);
+
+  let asked: { url: string; init: RequestInit } | null = null;
+  const fake = (async (url: string, init: RequestInit) => {
+    asked = { url, init };
+    return new Response(JSON.stringify(answer), { status: 201 });
+  }) as unknown as typeof fetch;
+  const servers = await mintTurnLogin(' key1 ', 'tok', fake);
+  assert.equal(servers?.[0].username, 'u');
+  assert.match(asked!.url, /\/turn\/keys\/key1\/credentials\/generate-ice-servers$/);
+  assert.equal((asked!.init.headers as Record<string, string>).authorization, 'Bearer tok');
+
+  assert.equal(await mintTurnLogin(undefined, 'tok', fake), null, 'no key, no login');
+  const refusing = (async () => new Response('no', { status: 403 })) as unknown as typeof fetch;
+  assert.equal(await mintTurnLogin('k', 't', refusing), null);
+});
