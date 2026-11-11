@@ -95,6 +95,14 @@ class ToyIce {
   }
 }
 
+/// Data only. flutter_webrtc otherwise offers to receive audio and video,
+/// which put 6 KB of codec lists in every offer - too big, once sealed, for
+/// the room to carry, so no line ever opened.
+const Map<String, dynamic> _dataOnly = {
+  'mandatory': {'OfferToReceiveAudio': false, 'OfferToReceiveVideo': false},
+  'optional': [],
+};
+
 /// A direct line over flutter_webrtc.
 class WebRtcToyPeer extends ToyPeer {
   RTCPeerConnection? _pc;
@@ -156,7 +164,7 @@ class WebRtcToyPeer extends ToyPeer {
       };
       if (offerer) {
         _wire(await pc.createDataChannel('toy', RTCDataChannelInit()..ordered = true));
-        final offer = await pc.createOffer();
+        final offer = await pc.createOffer(_dataOnly);
         await pc.setLocalDescription(offer);
         onSignal?.call({'k': 'offer', 'sdp': offer.sdp});
       } else {
@@ -196,7 +204,7 @@ class WebRtcToyPeer extends ToyPeer {
         case 'offer':
           await pc.setRemoteDescription(RTCSessionDescription(signal['sdp'] as String?, 'offer'));
           await _remoteReady(pc);
-          final answer = await pc.createAnswer();
+          final answer = await pc.createAnswer(_dataOnly);
           await pc.setLocalDescription(answer);
           onSignal?.call({'k': 'answer', 'sdp': answer.sdp});
           break;

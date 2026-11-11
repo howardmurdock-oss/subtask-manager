@@ -93,6 +93,12 @@ class _FakeLines {
   /// When false, offers are answered but lines never open.
   bool canOpen = true;
 
+  /// Offers as big as flutter_webrtc's default audio+video ones were.
+  bool bigOffers = false;
+
+  /// Lines fail as they start, as when no TURN login can be had.
+  bool failOnStart = false;
+
   ToyPeer make() {
     final line = _FakeLine(this);
     made.add(line);
@@ -117,9 +123,14 @@ class _FakeLine extends ToyPeer {
   @override
   Future<void> start({required bool offerer}) async {
     if (!offerer) return;
+    if (lines.failOnStart) {
+      closed = true;
+      scheduleMicrotask(() => onClosed?.call());
+      return;
+    }
     final name = 'offer-${lines._n++}';
     lines._offered[name] = this;
-    onSignal?.call({'k': 'offer', 'sdp': name});
+    onSignal?.call({'k': 'offer', 'sdp': name, if (lines.bigOffers) 'pad': 'x' * 6400});
     onSignal?.call({'k': 'cand', 'c': 'candidate:relay', 'mid': '0', 'idx': 0});
   }
 
@@ -588,6 +599,30 @@ void main() {
       expect(a.denied, isTrue);
       expect(a.direct, isFalse);
       expect(lines.open, isEmpty);
+    });
+
+    test('a line signal too big for the room: stay on the room, and stop asking', () async {
+      lines.bigOffers = true;
+      await startHost();
+      final a = await join(sharedA);
+      await _settle(1500);
+      expect(a.direct, isFalse);
+      expect(lines.made, hasLength(1), reason: 'every retry would be dropped the same way');
+      a.setLevel(9);
+      await _settle(100);
+      expect(toy.currentSpeed, 9);
+    });
+
+    test("a line that fails before opening isn't retried every second", () async {
+      lines.failOnStart = true;
+      await startHost();
+      final a = await join(sharedA);
+      await _settle(2500);
+      expect(a.direct, isFalse);
+      expect(lines.made, hasLength(1), reason: 'the next try waits 15 seconds');
+      a.setLevel(4);
+      await _settle(100);
+      expect(toy.currentSpeed, 4);
     });
 
     test('leaving the panel ends the line and stops the toy', () async {

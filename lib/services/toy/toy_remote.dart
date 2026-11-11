@@ -120,6 +120,10 @@ class ToyRoomSocket {
 
   bool get isConnected => _channel != null;
 
+  /// The most the Worker's room carries in one frame (TOY_MAX_FRAME there);
+  /// anything bigger is dropped without a word.
+  static const int maxFrame = 8 * 1024;
+
   static Uri urlFor(String topic, String role) => Uri.parse('${PushService.workerBaseUrl}/toy')
       .replace(scheme: 'wss', queryParameters: {'topic': topic, 'role': role});
 
@@ -810,10 +814,20 @@ class ToyRemoteController extends ChangeNotifier {
     final peer = make();
     _peer = peer;
     _peerId = id;
-    peer.onSignal = (s) => _send({...s, 't': 'rtc', 'id': id}, viaRoom: true);
+    var opened = false;
+    peer.onSignal = (s) {
+      if (!identical(_peer, peer)) return;
+      if (!_sendSignal({...s, 't': 'rtc', 'id': id})) {
+        // Too big for the room to carry: it would be dropped without a word,
+        // and so would every retry. Stay on the room.
+        _directRefused = true;
+        _lineEnded(wasOpen: false);
+      }
+    };
     peer.onFrame = handleFrame;
     peer.onOpen = () {
       if (!identical(_peer, peer)) return;
+      opened = true;
       _peerFailures = 0;
       _peerDeadline?.cancel();
       final expires = peer.expiresAt;
@@ -828,13 +842,24 @@ class ToyRemoteController extends ChangeNotifier {
       _notify();
     };
     peer.onClosed = () {
-      if (identical(_peer, peer)) _lineEnded(wasOpen: true);
+      // One that never opened failed, and is retried less and less often -
+      // not at once, which asked for a TURN login every second.
+      if (identical(_peer, peer)) _lineEnded(wasOpen: opened);
     };
     _peerDeadline?.cancel();
     _peerDeadline = Timer(lineDeadline, () {
       if (identical(_peer, peer) && !peer.isOpen) _lineEnded(wasOpen: false);
     });
     peer.start(offerer: true);
+  }
+
+  /// Sends a line signal through the room; false if it is too big to go.
+  bool _sendSignal(Map<String, dynamic> body) {
+    if (partner.pairingSecret.isEmpty) return false;
+    final frame = _seal(body, partner.pairingSecret);
+    if (frame.length > ToyRoomSocket.maxFrame) return false;
+    _room.send(frame);
+    return true;
   }
 
   void _onRtc(Map<String, dynamic> body) {
