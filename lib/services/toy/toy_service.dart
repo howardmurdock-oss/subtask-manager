@@ -31,6 +31,33 @@ class ToyService extends ChangeNotifier {
   // Pulse & safety timers
   Timer? _delayTimer;
   Timer? _pulseTimer;
+
+  /// Asks for the battery now and then: it was asked once, on connecting,
+  /// and never updated after.
+  Timer? _batteryTimer;
+  static const Duration batteryRefresh = Duration(minutes: 3);
+
+  /// Replies arrive in pieces and run together; one reply ends with ';'.
+  String _rxBuffer = '';
+
+  /// When the battery was last asked for. Only a number arriving soon after
+  /// counts as the battery: the toy answers other commands on the same
+  /// channel, and a stray number there once read as 0%.
+  DateTime? _batteryAskedAt;
+  static const Duration batteryReplyWindow = Duration(seconds: 4);
+
+  final List<String> _recentReplies = [];
+
+  /// The toy's last few replies, newest last, for the toy settings' details.
+  List<String> get recentReplies => List.unmodifiable(_recentReplies);
+
+  /// Which Bluetooth channels this toy is being driven through.
+  String? get channelInfo {
+    final w = _writeCharacteristic;
+    if (w == null) return null;
+    final n = _notifyCharacteristic;
+    return 'send ${w.characteristicUuid.str}, replies ${n?.characteristicUuid.str ?? 'none'}';
+  }
   DateTime? _lastCommandTime;
   int _lastSentSpeed = -1;
   int _syncOffsetMs = 60;
@@ -96,6 +123,9 @@ class ToyService extends ChangeNotifier {
     _connectedToy = toy;
     _state = toy == null ? ToyConnectionState.disconnected : ToyConnectionState.connected;
     _lastSentSpeed = -1;
+    _rxBuffer = '';
+    _recentReplies.clear();
+    _batteryAskedAt = null;
     notifyListeners();
   }
 
@@ -286,6 +316,16 @@ class ToyService extends ChangeNotifier {
         }
       }
 
+      // Replies come back in the same service commands go to. Whatever was
+      // found elsewhere (a generic service's notify) is only a last resort.
+      if (writeChar != null) {
+        final home = services.where((sv) => sv.characteristics.contains(writeChar)).firstOrNull;
+        final sibling = home?.characteristics
+            .where((c) => c != writeChar && (c.properties.notify || c.properties.indicate))
+            .firstOrNull;
+        if (sibling != null) notifyChar = sibling;
+      }
+
       if (writeChar == null) {
         _statusMessage = 'Could not find writable command channel on ${toy.name}';
         await device.disconnect();
@@ -313,14 +353,18 @@ class ToyService extends ChangeNotifier {
       await prefs.setString('setting_last_toy_name', toy.name);
 
       // Set up notification listener for battery query responses
+      _rxBuffer = '';
+      _recentReplies.clear();
       if (_notifyCharacteristic != null) {
         try {
           await _notifyCharacteristic!.setNotifyValue(true);
-          _notifySubscription = _notifyCharacteristic!.lastValueStream.listen((data) {
-            _handleIncomingData(data);
-          });
+          // onValueReceived, not lastValueStream: the latter also replays
+          // the last value it holds and echoes writes to its characteristic.
+          _notifySubscription = _notifyCharacteristic!.onValueReceived.listen(handleIncomingData);
           // Query battery level
           await queryBattery();
+          _batteryTimer?.cancel();
+          _batteryTimer = Timer.periodic(batteryRefresh, (_) => queryBattery());
         } catch (_) {}
       }
 
@@ -360,6 +404,10 @@ class ToyService extends ChangeNotifier {
   }
 
   void _handleDisconnected() {
+    _batteryTimer?.cancel();
+    _batteryTimer = null;
+    _batteryAskedAt = null;
+    _rxBuffer = '';
     _lastSentSpeed = -1;
     _pulseTimer?.cancel();
     _pulseTimer = null;
@@ -389,6 +437,7 @@ class ToyService extends ChangeNotifier {
   Future<void> queryBattery() async {
     if (!isConnected) return;
     // Standard Lovense battery request
+    _batteryAskedAt = DateTime.now();
     await sendRawCommand('Battery;');
   }
 
@@ -506,19 +555,39 @@ class ToyService extends ChangeNotifier {
     });
   }
 
-  void _handleIncomingData(List<int> bytes) {
-    try {
-      final text = utf8.decode(bytes).trim();
-      // Parse battery response: e.g. "85;" or integer
-      final clean = text.replaceAll(';', '').trim();
-      final level = int.tryParse(clean);
-      if (level != null && level >= 0 && level <= 100) {
-        if (_connectedToy != null) {
-          _connectedToy = _connectedToy!.copyWith(batteryLevel: level);
-          notifyListeners();
-        }
+  /// Bytes from the toy's reply channel. Public for tests.
+  @visibleForTesting
+  void handleIncomingData(List<int> bytes) {
+    if (bytes.isEmpty) return;
+    _rxBuffer += utf8.decode(bytes, allowMalformed: true);
+    // A reply that never ends is noise, not a reply.
+    if (_rxBuffer.length > 256) _rxBuffer = _rxBuffer.substring(_rxBuffer.length - 64);
+    while (true) {
+      final end = _rxBuffer.indexOf(';');
+      if (end < 0) break;
+      final reply = _rxBuffer.substring(0, end).trim();
+      _rxBuffer = _rxBuffer.substring(end + 1);
+      if (reply.isNotEmpty) _onReply(reply);
+    }
+  }
+
+  static final RegExp _batteryReply = RegExp(r'^s?(\d{1,3})$');
+
+  void _onReply(String reply) {
+    _recentReplies.add(reply);
+    if (_recentReplies.length > 12) _recentReplies.removeAt(0);
+
+    // "85" - or "s85" while it is vibrating - and only in answer to asking.
+    final m = _batteryReply.firstMatch(reply);
+    final asked = _batteryAskedAt;
+    if (m != null && asked != null && DateTime.now().difference(asked) <= batteryReplyWindow) {
+      final level = int.parse(m.group(1)!);
+      if (level <= 100 && _connectedToy != null) {
+        _batteryAskedAt = null;
+        _connectedToy = _connectedToy!.copyWith(batteryLevel: level);
       }
-    } catch (_) {}
+    }
+    notifyListeners();
   }
 
   @override

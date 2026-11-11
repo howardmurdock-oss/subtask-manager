@@ -295,6 +295,35 @@ class _ToyManagerSheetState extends State<ToyManagerSheet> {
                 ),
               ],
             ),
+
+            // What the toy actually says, for when something reads wrong
+            // (a battery at 0% that isn't).
+            Theme(
+              data: theme.copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: const Key('toy-connection-details'),
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(bottom: 4),
+                expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                title: const Text('Connection details', style: TextStyle(fontSize: 13)),
+                children: [
+                  SelectableText(
+                    [
+                      _toyService.channelInfo ?? 'No channel',
+                      _toyService.recentReplies.isEmpty
+                          ? 'No replies from the toy yet'
+                          : 'Toy replied: ${_toyService.recentReplies.join(' | ')}',
+                    ].join('\n'),
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
+                  ),
+                  TextButton.icon(
+                    onPressed: _toyService.queryBattery,
+                    icon: const Icon(Icons.battery_unknown_rounded, size: 16),
+                    label: const Text('Ask for battery again'),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
