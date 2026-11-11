@@ -7,6 +7,69 @@ import '../../services/toy/toy_remote.dart';
 import '../../services/toy/toy_service.dart';
 import 'toy_control_view.dart';
 
+/// Partners' toys on the director's main screen, so controlling one is a
+/// tap away rather than inside the toy settings. Hidden until a partner has
+/// shared a toy with you.
+class PartnerToysDashboardCard extends StatelessWidget {
+  const PartnerToysDashboardCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final sync = context.watch<SyncService>();
+    context.watch<PartnerService>();
+    final shared = sync.partnersWithToyShared();
+    if (shared.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Card(
+        key: const Key('dashboard-partner-toys'),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(children: [
+                Icon(Icons.favorite_rounded, color: theme.colorScheme.primary, size: 20),
+                const SizedBox(width: 8),
+                const Text("PARTNERS' TOYS", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+              ]),
+              const SizedBox(height: 4),
+              for (final p in shared)
+                Builder(builder: (context) {
+                  final status = sync.partnerToy(p);
+                  final online = status?.isOnline ?? false;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      online ? Icons.bluetooth_connected_rounded : Icons.bluetooth_disabled_rounded,
+                      color: online ? theme.colorScheme.primary : muted,
+                    ),
+                    title: Text(p.displayName, overflow: TextOverflow.ellipsis),
+                    subtitle: Text(
+                      online ? (status?.toyName ?? 'Toy connected') : 'Toy not connected right now',
+                      style: online ? null : TextStyle(color: muted),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: online
+                        ? FilledButton(
+                            key: Key('dashboard-toy-${p.pairingCode}'),
+                            onPressed: () => ToyControlView.openPartner(context, p),
+                            child: const Text('Control'),
+                          )
+                        : null,
+                  );
+                }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// The live-control parts of the toy sheet: partners' toys you can control,
 /// and which partners may control yours.
 class ToyPartnerSections extends StatelessWidget {

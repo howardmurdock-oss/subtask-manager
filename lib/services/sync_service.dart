@@ -1978,6 +1978,22 @@ class SyncService extends ChangeNotifier {
           .toList() ??
       const [];
 
+  @visibleForTesting
+  void debugSetPartnerToy(PartnerContact contact, PartnerToyStatus status) {
+    _partnerToys[PartnerService.normalizeCode(contact.pairingCode)] = status;
+    notifyListeners();
+  }
+
+  /// Partners who have shared a toy with this device at some point - online
+  /// now or not - with the ones online first.
+  List<PartnerContact> partnersWithToyShared() {
+    final shared = _partnerService?.unblockedContacts.where((c) => !c.isSelf && partnerToy(c) != null).toList() ??
+        <PartnerContact>[];
+    int rank(PartnerContact c) => (partnerToy(c)?.isOnline ?? false) ? 0 : 1;
+    shared.sort((a, b) => rank(a).compareTo(rank(b)));
+    return shared;
+  }
+
   Future<void> sendToyStatus(PartnerContact contact, {required bool online, String? toyName}) async {
     await _sendToContact(
       contact,
