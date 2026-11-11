@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -255,6 +256,21 @@ class CadenceEngine extends ChangeNotifier {
     ]);
   }
 
+  /// Android's ordinary player takes a couple of hundred milliseconds from
+  /// "play" to sound - enough to land a click between two of the toy's
+  /// pulses. Its low-latency player (SoundPool) is made for short sounds
+  /// like these, but only plays files.
+  static bool get _lowLatency => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  static final Map<Object, Future<String>> _clickFiles = {};
+
+  static Future<String> _clickFile(Object key, Uint8List Function() bytes) =>
+      _clickFiles[key] ??= () async {
+        final file = File('${Directory.systemTemp.path}/cadence_click_$key.wav');
+        await file.writeAsBytes(bytes(), flush: true);
+        return file.path;
+      }();
+
   /// Loads [bytes] into [player] unless it already holds them. True when
   /// the player is ready to play them.
   Future<bool> _load(AudioPlayer player, Object key, Uint8List Function() bytes) {
@@ -265,7 +281,16 @@ class CadenceEngine extends ChangeNotifier {
         // Keep the sound after it finishes: the default throws it away,
         // and the next beat would have to load it all over again.
         await player.setReleaseMode(ReleaseMode.stop);
-        await player.setSource(BytesSource(bytes()));
+        if (_lowLatency) {
+          final path = await _clickFile(key, bytes);
+          await player.setPlayerMode(PlayerMode.lowLatency);
+          await player
+              .setSource(DeviceFileSource(path))
+              // Ready or not by then, a beat may as well try.
+              .timeout(const Duration(seconds: 2), onTimeout: () {});
+        } else {
+          await player.setSource(BytesSource(bytes()));
+        }
         return true;
       } catch (_) {
         if (_loadedKey[player] == key) _loadedKey.remove(player);
@@ -280,7 +305,11 @@ class CadenceEngine extends ChangeNotifier {
   void _fire(AudioPlayer player, Object key, Uint8List Function() bytes) {
     final loading = _load(player, key, bytes);
     void go() {
-      if (player.state == PlayerState.playing) {
+      if (_lowLatency) {
+        // SoundPool never says a sound has ended, so the player still
+        // thinks it is playing and would ignore a plain resume.
+        player.stop().then((_) => player.resume()).catchError((_) {});
+      } else if (player.state == PlayerState.playing) {
         player.seek(Duration.zero).catchError((_) {});
       } else {
         player.resume().catchError((_) {});

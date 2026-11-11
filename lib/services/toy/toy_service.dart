@@ -119,7 +119,7 @@ class ToyService extends ChangeNotifier {
   }
 
   void setSyncOffset(int ms) {
-    _syncOffsetMs = ms.clamp(0, 300);
+    _syncOffsetMs = ms.clamp(0, 400);
     SharedPreferences.getInstance().then((prefs) {
       prefs.setInt('setting_toy_sync_offset_ms', _syncOffsetMs);
     }).catchError((_) {});

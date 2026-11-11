@@ -551,10 +551,12 @@ class _ToyManagerSheetState extends State<ToyManagerSheet> {
                   ),
                 ),
                 Slider(
-                  value: _toyService.syncOffsetMs.toDouble().clamp(0.0, 200.0),
+                  // Up to 400: Bluetooth headphones alone can hold the click
+                  // back 200-300 ms.
+                  value: _toyService.syncOffsetMs.toDouble().clamp(0.0, 400.0),
                   min: 0,
-                  max: 200,
-                  divisions: 40,
+                  max: 400,
+                  divisions: 80,
                   label: '+${_toyService.syncOffsetMs} ms',
                   onChanged: (val) {
                     _toyService.setSyncOffset(val.round());

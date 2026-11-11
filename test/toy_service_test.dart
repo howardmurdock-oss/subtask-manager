@@ -91,9 +91,9 @@ void main() {
       expect(service.manualIntensity, 16);
     });
 
-    test('Sync timing offset clamping preserves valid range [0..300]', () {
-      service.setSyncOffset(400);
-      expect(service.syncOffsetMs, 300);
+    test('Sync timing offset clamping preserves valid range [0..400]', () {
+      service.setSyncOffset(600);
+      expect(service.syncOffsetMs, 400);
 
       service.setSyncOffset(-50);
       expect(service.syncOffsetMs, 0);
