@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:orders_app/models/partner_contact.dart';
 import 'package:orders_app/services/toy/toy_models.dart';
 import 'package:orders_app/services/toy/toy_patterns.dart';
+import 'package:orders_app/services/toy/toy_peer.dart';
 import 'package:orders_app/services/toy/toy_player.dart';
 import 'package:orders_app/services/toy/toy_remote.dart';
 import 'package:orders_app/services/toy/toy_service.dart';
@@ -27,6 +28,9 @@ class _FakeRoom {
   final List<_FakeChannel> owners = [];
   final List<_FakeChannel> ctls = [];
 
+  /// Frames relayed, pings aside: what the Worker would be billed for.
+  int relayed = 0;
+
   Future<HubChannel> connect(Uri url) async {
     final ch = _FakeChannel(this, url.queryParameters['role']!);
     (ch.role == 'owner' ? owners : ctls).add(ch);
@@ -36,6 +40,7 @@ class _FakeRoom {
 
   void relay(_FakeChannel from, String data) {
     if (data == 'ping') return from.deliver('pong');
+    relayed++;
     for (final to in from.role == 'owner' ? ctls : owners) {
       to.deliver(data);
     }
@@ -75,6 +80,95 @@ class _FakeChannel implements HubChannel {
   Future<void> close() async {
     room.leave(this);
     await _ctrl.close();
+  }
+}
+
+/// Direct lines in memory: an offer finds its answerer by name, and once
+/// answered both ends open and pass frames straight to each other.
+class _FakeLines {
+  final Map<String, _FakeLine> _offered = {};
+  final List<_FakeLine> made = [];
+  int _n = 0;
+
+  /// When false, offers are answered but lines never open.
+  bool canOpen = true;
+
+  ToyPeer make() {
+    final line = _FakeLine(this);
+    made.add(line);
+    return line;
+  }
+
+  List<_FakeLine> get open => made.where((l) => l.isOpen).toList();
+}
+
+class _FakeLine extends ToyPeer {
+  _FakeLine(this.lines);
+  final _FakeLines lines;
+  _FakeLine? other;
+  bool _open = false;
+  bool closed = false;
+
+  @override
+  bool get isOpen => _open;
+  @override
+  DateTime? get expiresAt => null;
+
+  @override
+  Future<void> start({required bool offerer}) async {
+    if (!offerer) return;
+    final name = 'offer-${lines._n++}';
+    lines._offered[name] = this;
+    onSignal?.call({'k': 'offer', 'sdp': name});
+    onSignal?.call({'k': 'cand', 'c': 'candidate:relay', 'mid': '0', 'idx': 0});
+  }
+
+  @override
+  void handleSignal(Map<String, dynamic> signal) {
+    if (closed) return;
+    if (signal['k'] == 'offer') {
+      final offerer = lines._offered.remove(signal['sdp']);
+      if (offerer == null) return;
+      other = offerer;
+      offerer.other = this;
+      onSignal?.call({'k': 'answer', 'sdp': 'answer'});
+    } else if (signal['k'] == 'answer' && lines.canOpen) {
+      final o = other;
+      if (o == null || o.closed) return;
+      _open = true;
+      o._open = true;
+      onOpen?.call();
+      o.onOpen?.call();
+    }
+  }
+
+  @override
+  void send(String frame) {
+    final o = other;
+    if (_open && o != null && !o.closed) scheduleMicrotask(() => o.onFrame?.call(frame));
+  }
+
+  /// The network dropping it: both ends hear.
+  void drop() {
+    for (final end in [this, other]) {
+      if (end == null || end.closed) continue;
+      end.closed = true;
+      end._open = false;
+      end.onClosed?.call();
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    if (closed) return;
+    closed = true;
+    _open = false;
+    final o = other;
+    if (o != null && !o.closed) {
+      o.closed = true;
+      o._open = false;
+      o.onClosed?.call();
+    }
   }
 }
 
@@ -347,6 +441,162 @@ void main() {
       expect(ctx.statuses.last, 'Alex:offline');
       expect(room.owners, isEmpty);
       expect(a.ownerOnline, isFalse);
+    });
+  });
+
+  group('direct line', () {
+    const sharedA = 'secret-shared-with-alex-000000';
+    const sharedB = 'secret-shared-with-blair-00000';
+    final alex = PartnerContact(displayName: 'Alex', pairingCode: 'ALEX01', pairingSecret: sharedA);
+    final blair = PartnerContact(displayName: 'Blair', pairingCode: 'BLAIR1', pairingSecret: sharedB);
+    PartnerContact ownerAs(String secret) =>
+        PartnerContact(displayName: 'Owner', pairingCode: 'OWNER1', pairingSecret: secret);
+
+    late _FakeRoom room;
+    late _FakeLines lines;
+    late ToyRemoteHost host;
+    late ToyPlayer player;
+    final toy = ToyService.instance;
+    final controllers = <ToyRemoteController>[];
+
+    Future<ToyRemoteController> join(String secret) async {
+      final c = ToyRemoteController(
+        partner: ownerAs(secret),
+        topic: 'topic-for-OWNER1',
+        connector: room.connect,
+        peers: lines.make,
+      );
+      controllers.add(c);
+      await c.open();
+      await _settle(350);
+      return c;
+    }
+
+    Future<void> startHost({bool ownerCanMakeLines = true}) async {
+      host = ToyRemoteHost(
+        player: player,
+        connector: room.connect,
+        peers: ownerCanMakeLines ? lines.make : null,
+        // Longer than the panel's 2s heartbeat, as in the app.
+        quietLimit: const Duration(seconds: 3),
+      );
+      await host.start(_Ctx([alex, blair]));
+      await host.setAllowed(alex, true);
+    }
+
+    setUp(() {
+      SharedPreferences.setMockInitialValues({});
+      room = _FakeRoom();
+      lines = _FakeLines();
+      player = ToyPlayer(patternTick: const Duration(milliseconds: 20));
+      toy.outputCap = null;
+      toy.debugSetConnected(const ConnectedToyInfo(id: 'x', name: 'Test Toy', batteryLevel: 80));
+    });
+
+    tearDown(() async {
+      for (final c in controllers) {
+        await c.close();
+        c.dispose();
+      }
+      controllers.clear();
+      await host.stopService();
+      player.stop();
+      toy.outputCap = null;
+      toy.debugSetConnected(null);
+      ToyRemoteController.lineDeadline = const Duration(seconds: 20);
+    });
+
+    test('once the line opens, the session leaves the room', () async {
+      await startHost();
+      final a = await join(sharedA);
+      expect(a.direct, isTrue);
+      expect(host.isDirect(alex), isTrue);
+
+      final before = room.relayed;
+      a.setLevel(11);
+      await _settle(400);
+      expect(toy.currentSpeed, 11);
+      expect(a.state?.level, 11, reason: 'state comes back over the line too');
+      a.playPattern(ToyPattern.wave, 8);
+      await _settle(2300); // past a heartbeat
+      expect(player.activity, ToyActivity.pattern);
+      expect(host.controller?.displayName, 'Alex', reason: 'heartbeats arrive over the line');
+      expect(room.relayed, before, reason: 'nothing more through the Worker');
+    });
+
+    test('a dropped line falls back to the room at once, then reconnects', () async {
+      await startHost();
+      final a = await join(sharedA);
+      expect(a.direct, isTrue);
+
+      lines.open.first.drop();
+      expect(a.direct, isFalse);
+      a.setLevel(6);
+      await _settle(100);
+      expect(toy.currentSpeed, 6, reason: 'carried by the room meanwhile');
+
+      await _settle(1300);
+      expect(a.direct, isTrue, reason: 'a line that worked is replaced straight away');
+      expect(host.isDirect(alex), isTrue);
+      a.setLevel(3);
+      await _settle(100);
+      expect(toy.currentSpeed, 3);
+    });
+
+    test("a line that won't open is given up on, and the room carries on", () async {
+      ToyRemoteController.lineDeadline = const Duration(milliseconds: 300);
+      lines.canOpen = false;
+      await startHost();
+      final a = await join(sharedA);
+      await _settle(400);
+      expect(a.direct, isFalse);
+      expect(host.isDirect(alex), isFalse);
+      expect(lines.made.every((l) => l.closed), isTrue, reason: 'both ends let go');
+      a.setLevel(8);
+      await _settle(100);
+      expect(toy.currentSpeed, 8);
+    });
+
+    test("an owner who can't make lines keeps the session on the room", () async {
+      await startHost(ownerCanMakeLines: false);
+      final a = await join(sharedA);
+      expect(a.direct, isFalse);
+      expect(lines.made, hasLength(1));
+      await _settle(1500);
+      expect(lines.made, hasLength(1), reason: 'told not to, the panel stops asking');
+      a.setLevel(5);
+      await _settle(100);
+      expect(toy.currentSpeed, 5);
+    });
+
+    test('only an allowed partner gets a line, and losing permission ends it', () async {
+      await startHost();
+      final b = await join(sharedB);
+      expect(b.denied, isTrue);
+      expect(lines.made, isEmpty, reason: 'no line for someone not let in');
+
+      final a = await join(sharedA);
+      expect(a.direct, isTrue);
+      await host.setAllowed(alex, false);
+      await _settle(100);
+      expect(a.denied, isTrue);
+      expect(a.direct, isFalse);
+      expect(lines.open, isEmpty);
+    });
+
+    test('leaving the panel ends the line and stops the toy', () async {
+      await startHost();
+      final a = await join(sharedA);
+      a.setLevel(10);
+      await _settle(100);
+      expect(toy.currentSpeed, 10);
+      await a.close();
+      controllers.remove(a);
+      a.dispose();
+      await _settle(100);
+      expect(toy.currentSpeed, 0);
+      expect(host.controller, isNull);
+      expect(host.isDirect(alex), isFalse);
     });
   });
 }

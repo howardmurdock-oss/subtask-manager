@@ -89,6 +89,18 @@ android {
     }
 }
 
+// Release builds are for phones and tablets: x86_64 is almost entirely
+// emulators, and with WebRTC's native library it was ~30% of the APK.
+// (The release scripts also pass --target-platform android-arm,android-arm64;
+// this catches plugins' own x86_64 libraries.) Debug builds keep every ABI so
+// emulators still work.
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.packaging.jniLibs.excludes.add("lib/x86_64/**")
+        variant.packaging.jniLibs.excludes.add("lib/x86/**")
+    }
+}
+
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     // FileProvider, for handing the downloaded release to the installer.

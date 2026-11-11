@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,6 +13,7 @@ import '../partner_service.dart';
 import '../push_service.dart';
 import '../worker_socket_service.dart' show HubChannel, HubConnector;
 import 'toy_patterns.dart';
+import 'toy_peer.dart';
 import 'toy_player.dart';
 import 'toy_service.dart';
 
@@ -27,6 +29,12 @@ import 'toy_service.dart';
 // Everything is decided on the owner's device: who is allowed, the strength
 // ceiling, one partner in control at a time, and that the toy stops when the
 // partner in control goes quiet.
+//
+// Once a partner is let in, their panel offers a direct line (ToyPeer: WebRTC
+// relayed by Cloudflare TURN), signalled through the room as 'rtc' frames.
+// When it opens, both sides send everything over it instead and the room
+// sleeps; if it fails or closes, they carry on through the room as before.
+// The frames themselves are the same either way.
 // ---------------------------------------------------------------------------
 
 /// Envelope version for live frames: authenticated, unlike v1.
@@ -206,10 +214,12 @@ class ToyRemoteHost extends ChangeNotifier {
     ToyPlayer? player,
     ToyService? toy,
     HubConnector? connector,
+    ToyPeerFactory? peers,
     this.quietLimit = const Duration(seconds: 6),
   })  : _player = player ?? ToyPlayer.instance,
         _toyService = toy ?? ToyService.instance,
-        _connector = connector;
+        _connector = connector,
+        _peerFactory = peers;
 
   static final ToyRemoteHost instance = ToyRemoteHost();
 
@@ -220,6 +230,11 @@ class ToyRemoteHost extends ChangeNotifier {
   final ToyPlayer _player;
   final ToyService _toyService;
   final HubConnector? _connector;
+  final ToyPeerFactory? _peerFactory;
+  ToyPeerFactory? get _peers => _peerFactory ?? ToyPeer.factory;
+
+  /// Partner code -> their direct line, open or still being made.
+  final Map<String, _HostLine> _lines = {};
 
   /// How long the partner in control may go silent before the toy stops.
   final Duration quietLimit;
@@ -247,6 +262,10 @@ class ToyRemoteHost extends ChangeNotifier {
   int get cap => _cap;
   bool get paused => _paused;
   bool get roomConnected => _room?.isConnected ?? false;
+
+  /// Whether [partner]'s session runs over a direct line right now.
+  bool isDirect(PartnerContact partner) =>
+      _lines[PartnerService.normalizeCode(partner.pairingCode)]?.peer.isOpen ?? false;
 
   /// The partner in control right now, if any.
   PartnerContact? get controller => _controller == null ? null : _contactByCode(_controller!);
@@ -288,7 +307,10 @@ class ToyRemoteHost extends ChangeNotifier {
     if (!changed) return;
     if (!allow && _controller == code) _release(stopToy: true);
     // Before the room can close behind it, if this was the last partner.
-    if (!allow) _sendTo(partner, {'t': 'denied'});
+    if (!allow) {
+      _sendTo(partner, {'t': 'denied'});
+      _closeLine(code);
+    }
     await _saveSettings();
     final wasOnline = _wasOnline;
     // Going from nobody allowed to someone tells everyone allowed, this
@@ -339,10 +361,9 @@ class ToyRemoteHost extends ChangeNotifier {
 
   // ---- Lifecycle ----------------------------------------------------------
 
-  List<PartnerContact> _allowedPartners() =>
-      (_context?.partners ?? const <PartnerContact>[])
-          .where((c) => !c.isBlocked && _allowed.contains(PartnerService.normalizeCode(c.pairingCode)))
-          .toList();
+  List<PartnerContact> _allowedPartners() => (_context?.partners ?? const <PartnerContact>[])
+      .where((c) => !c.isBlocked && _allowed.contains(PartnerService.normalizeCode(c.pairingCode)))
+      .toList();
 
   PartnerContact? _contactByCode(String code) {
     for (final c in _context?.partners ?? const <PartnerContact>[]) {
@@ -395,6 +416,9 @@ class ToyRemoteHost extends ChangeNotifier {
     final room = _room;
     _room = null;
     _watching.clear();
+    for (final code in _lines.keys.toList()) {
+      _closeLine(code);
+    }
     await room?.close();
   }
 
@@ -405,6 +429,16 @@ class ToyRemoteHost extends ChangeNotifier {
     }
     final cutoff = DateTime.now().subtract(const Duration(seconds: 30));
     _watching.removeWhere((_, at) => at.isBefore(cutoff));
+    for (final code in _lines.keys.toList()) {
+      final line = _lines[code]!;
+      final expires = line.peer.expiresAt;
+      if (!_watching.containsKey(code) && line.startedAt.isBefore(cutoff)) {
+        _closeLine(code);
+      } else if (expires != null && DateTime.now().isAfter(expires.subtract(const Duration(minutes: 5)))) {
+        // Its TURN login is running out. The panel makes a new line.
+        _closeLine(code, tell: true);
+      }
+    }
   }
 
   void _release({required bool stopToy}) {
@@ -463,7 +497,12 @@ class ToyRemoteHost extends ChangeNotifier {
     }
     if (type == 'bye') {
       _watching.remove(code);
+      _closeLine(code);
       if (_controller == code) _release(stopToy: true);
+      return;
+    }
+    if (type == 'rtc') {
+      _onRtc(sender, code, body);
       return;
     }
 
@@ -529,6 +568,60 @@ class ToyRemoteHost extends ChangeNotifier {
     _scheduleState();
   }
 
+  // ---- Direct lines -------------------------------------------------------
+
+  /// Most lines one toy keeps at once, as the room's partner limit.
+  static const int maxLines = 10;
+
+  void _onRtc(PartnerContact sender, String code, Map<String, dynamic> body) {
+    final id = body['id'];
+    if (id is! String || id.isEmpty) return;
+    final kind = body['k'];
+    final existing = _lines[code];
+
+    if (kind == 'offer') {
+      final make = _peers;
+      if (make == null || (existing == null && _lines.length >= maxLines)) {
+        // Can't here: the panel stays on the room and stops asking.
+        _sendTo(sender, {'t': 'rtc', 'k': 'end', 'id': id, 'final': true}, viaRoom: true);
+        return;
+      }
+      _closeLine(code);
+      final peer = make();
+      final line = _HostLine(peer, id);
+      _lines[code] = line;
+      peer.onSignal = (s) => _sendTo(sender, {...s, 't': 'rtc', 'id': id}, viaRoom: true);
+      peer.onFrame = _onFrame;
+      peer.onOpen = notifyListeners;
+      peer.onClosed = () {
+        if (identical(_lines[code], line)) {
+          _lines.remove(code);
+          notifyListeners();
+        }
+      };
+      peer.start(offerer: false);
+      peer.handleSignal(body);
+      return;
+    }
+    if (existing == null || existing.id != id) return;
+    if (kind == 'end') {
+      _closeLine(code);
+    } else {
+      existing.peer.handleSignal(body);
+    }
+  }
+
+  void _closeLine(String code, {bool tell = false}) {
+    final line = _lines.remove(code);
+    if (line == null) return;
+    if (tell) {
+      final c = _contactByCode(code);
+      if (c != null) _sendTo(c, {'t': 'rtc', 'k': 'end', 'id': line.id}, viaRoom: true);
+    }
+    line.peer.close();
+    notifyListeners();
+  }
+
   // ---- State out ----------------------------------------------------------
 
   Map<String, dynamic> stateFor(PartnerContact partner) {
@@ -566,10 +659,23 @@ class ToyRemoteHost extends ChangeNotifier {
 
   void _sendStateTo(PartnerContact partner) => _sendTo(partner, stateFor(partner));
 
-  void _sendTo(PartnerContact partner, Map<String, dynamic> body) {
+  void _sendTo(PartnerContact partner, Map<String, dynamic> body, {bool viaRoom = false}) {
     if (partner.pairingSecret.isEmpty) return;
-    _room?.send(_seal(body, partner.pairingSecret));
+    final frame = _seal(body, partner.pairingSecret);
+    final line = viaRoom ? null : _lines[PartnerService.normalizeCode(partner.pairingCode)];
+    if (line != null && line.peer.isOpen) {
+      line.peer.send(frame);
+    } else {
+      _room?.send(frame);
+    }
   }
+}
+
+class _HostLine {
+  _HostLine(this.peer, this.id);
+  final ToyPeer peer;
+  final String id;
+  final DateTime startedAt = DateTime.now();
 }
 
 /// What a partner's panel knows about the toy it is steering.
@@ -600,7 +706,8 @@ class ToyRemoteController extends ChangeNotifier {
     required this.partner,
     required String topic,
     HubConnector? connector,
-  }) {
+    ToyPeerFactory? peers,
+  }) : _peerFactory = peers {
     _room = ToyRoomSocket(
       topic: topic,
       role: 'ctl',
@@ -616,6 +723,21 @@ class ToyRemoteController extends ChangeNotifier {
 
   final PartnerContact partner;
   late final ToyRoomSocket _room;
+  final ToyPeerFactory? _peerFactory;
+  ToyPeerFactory? get _peers => _peerFactory ?? ToyPeer.factory;
+
+  ToyPeer? _peer;
+  String? _peerId;
+  Timer? _peerRetry;
+  Timer? _peerDeadline;
+  Timer? _peerRenew;
+  int _peerFailures = 0;
+
+  /// The owner's device can't make direct lines; stay on the room.
+  bool _directRefused = false;
+
+  /// How long a new line has to open before the session gives up on it.
+  static Duration lineDeadline = const Duration(seconds: 20);
 
   bool _connected = false;
   bool _ownerOnline = false;
@@ -631,6 +753,9 @@ class ToyRemoteController extends ChangeNotifier {
   bool get ownerOnline => _ownerOnline;
   bool get denied => _denied;
   RemoteToyState? get state => _state;
+
+  /// Whether commands are going over a direct line rather than the room.
+  bool get direct => _peer?.isOpen ?? false;
 
   /// Someone else has control right now.
   bool get busy {
@@ -648,30 +773,127 @@ class ToyRemoteController extends ChangeNotifier {
     final presence = ToyPresence.parse(frame);
     if (presence != null) {
       _ownerOnline = presence.ownerOnline;
-      if (!_ownerOnline) _state = null;
+      if (!_ownerOnline) {
+        _state = null;
+        _dropLine();
+      }
       if (_ownerOnline) _send({'t': 'hello'});
       _notify();
       return;
     }
     final body = _open(frame, partner.pairingSecret);
     if (body == null) return; // For another partner.
+    if (body['t'] == 'rtc') {
+      _onRtc(body);
+      return;
+    }
     if (body['t'] == 'denied') {
       _denied = true;
       _state = null;
+      _dropLine();
     } else if (body['t'] == 'state') {
       _denied = false;
       _state = RemoteToyState(body);
+      // Let in: time to ask for a direct line, if there isn't one.
+      _maybeStartLine();
     }
     _notify();
   }
+
+  // ---- Direct line --------------------------------------------------------
+
+  void _maybeStartLine() {
+    if (_disposed || _directRefused || _peer != null || _peerRetry != null) return;
+    final make = _peers;
+    if (make == null || !_ownerOnline) return;
+    final id = _newLineId();
+    final peer = make();
+    _peer = peer;
+    _peerId = id;
+    peer.onSignal = (s) => _send({...s, 't': 'rtc', 'id': id}, viaRoom: true);
+    peer.onFrame = handleFrame;
+    peer.onOpen = () {
+      if (!identical(_peer, peer)) return;
+      _peerFailures = 0;
+      _peerDeadline?.cancel();
+      final expires = peer.expiresAt;
+      if (expires != null) {
+        // A fresh line before this one's TURN login runs out.
+        final renewIn = expires.difference(DateTime.now()) - const Duration(minutes: 10);
+        _peerRenew?.cancel();
+        _peerRenew = Timer(renewIn.isNegative ? Duration.zero : renewIn, () {
+          if (identical(_peer, peer)) _lineEnded(wasOpen: true);
+        });
+      }
+      _notify();
+    };
+    peer.onClosed = () {
+      if (identical(_peer, peer)) _lineEnded(wasOpen: true);
+    };
+    _peerDeadline?.cancel();
+    _peerDeadline = Timer(lineDeadline, () {
+      if (identical(_peer, peer) && !peer.isOpen) _lineEnded(wasOpen: false);
+    });
+    peer.start(offerer: true);
+  }
+
+  void _onRtc(Map<String, dynamic> body) {
+    final peer = _peer;
+    if (peer == null || body['id'] != _peerId) return;
+    if (body['k'] == 'end') {
+      if (body['final'] == true) _directRefused = true;
+      _lineEnded(wasOpen: peer.isOpen);
+    } else {
+      peer.handleSignal(body);
+    }
+  }
+
+  /// A line closed or never opened: back on the room, and try again later.
+  void _lineEnded({required bool wasOpen}) {
+    final was = _peer;
+    _dropLine();
+    if (was == null || _disposed || _directRefused) return;
+    if (!wasOpen) _peerFailures++;
+    // A line that worked and then ended (renewal, a network change) is
+    // replaced at once; one that never opened is retried less and less.
+    final wait =
+        wasOpen ? const Duration(seconds: 1) : Duration(seconds: min(300, 15 * (1 << min(_peerFailures - 1, 5))));
+    _peerRetry = Timer(wait, () {
+      _peerRetry = null;
+      if (_state != null && !_denied) _maybeStartLine();
+    });
+    _notify();
+  }
+
+  void _dropLine() {
+    _peerDeadline?.cancel();
+    _peerRenew?.cancel();
+    final peer = _peer;
+    final id = _peerId;
+    _peer = null;
+    _peerId = null;
+    if (peer == null) return;
+    // The owner's side lets go of its end too.
+    if (id != null) _send({'t': 'rtc', 'k': 'end', 'id': id}, viaRoom: true);
+    peer.close();
+  }
+
+  static final Random _random = Random.secure();
+  static String _newLineId() => List.generate(12, (_) => _random.nextInt(36).toRadixString(36)).join();
 
   void _notify() {
     if (!_disposed) notifyListeners();
   }
 
-  void _send(Map<String, dynamic> body) {
+  void _send(Map<String, dynamic> body, {bool viaRoom = false}) {
     if (partner.pairingSecret.isEmpty) return;
-    _room.send(_seal(body, partner.pairingSecret));
+    final frame = _seal(body, partner.pairingSecret);
+    final peer = _peer;
+    if (!viaRoom && peer != null && peer.isOpen) {
+      peer.send(frame);
+    } else {
+      _room.send(frame);
+    }
   }
 
   /// Sets a held level. Drags send at most ten a second; the last always goes.
@@ -715,7 +937,18 @@ class ToyRemoteController extends ChangeNotifier {
   Future<void> close() async {
     _heartbeat?.cancel();
     _levelTrailing?.cancel();
-    _send({'t': 'bye'});
+    _peerRetry?.cancel();
+    _peerRetry = null;
+    // Both ways: a line closing right behind it could lose it.
+    if (direct) _send({'t': 'bye'});
+    _send({'t': 'bye'}, viaRoom: true);
+    _directRefused = true;
+    final peer = _peer;
+    _peer = null;
+    _peerId = null;
+    _peerDeadline?.cancel();
+    _peerRenew?.cancel();
+    await peer?.close();
     await _room.close();
   }
 
@@ -724,6 +957,11 @@ class ToyRemoteController extends ChangeNotifier {
     _disposed = true;
     _heartbeat?.cancel();
     _levelTrailing?.cancel();
+    _peerRetry?.cancel();
+    _peerDeadline?.cancel();
+    _peerRenew?.cancel();
+    _peer?.close();
+    _peer = null;
     super.dispose();
   }
 }

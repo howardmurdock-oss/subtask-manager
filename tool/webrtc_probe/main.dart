@@ -8,6 +8,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:orders_app/services/toy/toy_peer.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +16,8 @@ Future<void> main() async {
   try {
     final result = await _probe().timeout(const Duration(seconds: 30));
     stdout.writeln('PROBE OK $result');
+    final lines = await _probeToyPeers().timeout(const Duration(seconds: 30));
+    stdout.writeln('PROBE OK toy lines: $lines');
     exit(0);
   } catch (e, st) {
     stdout.writeln('PROBE FAILED $e\n$st');
@@ -93,4 +96,52 @@ Future<String> _probe() async {
   await a.close();
   await b.close();
   return 'open=${openMs}ms rtt=${rttMs}ms got=$got back=$back candidates=$kinds';
+}
+
+/// The app's own direct-line class, both ends in one process, signals
+/// passed straight across as the room would carry them.
+Future<String> _probeToyPeers() async {
+  final panel = WebRtcToyPeer();
+  final owner = WebRtcToyPeer();
+  panel.onSignal = owner.handleSignal;
+  owner.onSignal = panel.handleSignal;
+  final opened = Completer<void>();
+  var opens = 0;
+  void open() {
+    if (++opens == 2 && !opened.isCompleted) opened.complete();
+  }
+
+  panel.onOpen = open;
+  owner.onOpen = open;
+  final atOwner = Completer<String>();
+  final atPanel = Completer<String>();
+  owner.onFrame = (f) {
+    if (!atOwner.isCompleted) atOwner.complete(f);
+    owner.send('state-for:$f');
+  };
+  panel.onFrame = (f) {
+    if (!atPanel.isCompleted) atPanel.complete(f);
+  };
+  var closedOnItsOwn = false;
+  owner.onClosed = () => closedOnItsOwn = true;
+
+  final started = Stopwatch()..start();
+  await owner.start(offerer: false);
+  await panel.start(offerer: true);
+  await opened.future;
+  final openMs = started.elapsedMilliseconds;
+  panel.send('hb');
+  final got = await atOwner.future;
+  final back = await atPanel.future;
+  final expires = panel.expiresAt;
+
+  // Closing the panel's end is heard at the owner's.
+  await panel.close();
+  final closeWait = Stopwatch()..start();
+  while (!closedOnItsOwn && closeWait.elapsed < const Duration(seconds: 10)) {
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+  await owner.close();
+  return 'open=${openMs}ms got=$got back=$back expires=$expires '
+      'ownerHeardClose=$closedOnItsOwn after ${closeWait.elapsedMilliseconds}ms';
 }

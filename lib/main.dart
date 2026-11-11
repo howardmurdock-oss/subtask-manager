@@ -6,6 +6,7 @@ import 'core/sound/sound_service.dart';
 import 'core/notifications/notification_service.dart';
 import 'services/order_engine.dart';
 import 'services/sync_service.dart';
+import 'services/toy/toy_peer.dart';
 import 'services/storage_service.dart';
 import 'services/partner_service.dart';
 import 'services/chat_service.dart';
@@ -58,6 +59,9 @@ void main(List<String> args) async {
   // pairing code.
   syncService.startFeatureExchange();
   // Live toy control: partners you allow can steer your connected toy.
+  // Sessions move onto a direct line (WebRTC through Cloudflare TURN) once
+  // they start, so the Worker's room only introduces them.
+  ToyPeer.factory = WebRtcToyPeer.new;
   syncService.startToyRemote();
 
   // The chastity timers this device can reach, kept up to date while it runs.

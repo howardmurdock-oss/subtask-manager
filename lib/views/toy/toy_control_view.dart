@@ -186,6 +186,7 @@ class RemoteToyTarget extends ToyControlTarget {
       if (_s?.youControl ?? false) 'You are in control.',
       if (c < 20) '${partner.displayName} has set a limit of $c/20.',
       'If you leave this page, the toy stops.',
+      if (ready) _ctl.direct ? 'Direct connection.' : 'Connected through the server.',
     ];
     return parts.join(' ');
   }
