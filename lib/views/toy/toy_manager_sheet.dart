@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../services/toy/toy_models.dart';
 import '../../services/toy/toy_service.dart';
+import 'toy_control_view.dart';
+import 'toy_partner_sections.dart';
 
 /// Modal bottom sheet allowing players and directors to scan, pair,
 /// test, and configure Bluetooth novelty hardware telemetry.
@@ -149,6 +151,10 @@ class _ToyManagerSheetState extends State<ToyManagerSheet> {
                     const SizedBox(height: 16),
                   ],
 
+                  // Live control: partners' toys, and who may control yours
+                  const ToyPartnerSections(),
+                  const SizedBox(height: 16),
+
                   // Cadence & Metronome Sync Settings
                   _buildCadenceSettings(theme),
                   const SizedBox(height: 24),
@@ -241,6 +247,21 @@ class _ToyManagerSheetState extends State<ToyManagerSheet> {
             ),
             const SizedBox(height: 16),
 
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const Key('toy-open-control'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                icon: const Icon(Icons.tune_rounded),
+                label: const Text('Control your toy'),
+                onPressed: () => ToyControlView.openLocal(context),
+              ),
+            ),
+            const SizedBox(height: 10),
+
             // Action Buttons
             Row(
               children: [
@@ -273,6 +294,35 @@ class _ToyManagerSheetState extends State<ToyManagerSheet> {
                   ),
                 ),
               ],
+            ),
+
+            // What the toy actually says, for when something reads wrong
+            // (a battery at 0% that isn't).
+            Theme(
+              data: theme.copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: const Key('toy-connection-details'),
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(bottom: 4),
+                expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                title: const Text('Connection details', style: TextStyle(fontSize: 13)),
+                children: [
+                  SelectableText(
+                    [
+                      _toyService.channelInfo ?? 'No channel',
+                      _toyService.recentReplies.isEmpty
+                          ? 'No replies from the toy yet'
+                          : 'Toy replied: ${_toyService.recentReplies.join(' | ')}',
+                    ].join('\n'),
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
+                  ),
+                  TextButton.icon(
+                    onPressed: _toyService.queryBattery,
+                    icon: const Icon(Icons.battery_unknown_rounded, size: 16),
+                    label: const Text('Ask for battery again'),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -530,10 +580,12 @@ class _ToyManagerSheetState extends State<ToyManagerSheet> {
                   ),
                 ),
                 Slider(
-                  value: _toyService.syncOffsetMs.toDouble().clamp(0.0, 200.0),
+                  // Up to 400: Bluetooth headphones alone can hold the click
+                  // back 200-300 ms.
+                  value: _toyService.syncOffsetMs.toDouble().clamp(0.0, 400.0),
                   min: 0,
-                  max: 200,
-                  divisions: 40,
+                  max: 400,
+                  divisions: 80,
                   label: '+${_toyService.syncOffsetMs} ms',
                   onChanged: (val) {
                     _toyService.setSyncOffset(val.round());

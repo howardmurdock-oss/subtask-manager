@@ -170,7 +170,7 @@ Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "su
 Write-Host "  [OK] Windows package built." -ForegroundColor Green
 
 Write-Host "`n==> Step 3: Compiling Android Release APK..." -ForegroundColor Cyan
-& $flutterBat build apk --release --no-tree-shake-icons
+& $flutterBat build apk --release --no-tree-shake-icons --target-platform android-arm,android-arm64
 if ($LASTEXITCODE -ne 0) { Write-Error "Android build failed."; exit 1 }
 Copy-Item -Path "build\app\outputs\flutter-apk\app-release.apk" -Destination "subTaskManager-Android-Release.apk" -Force
 Write-Host "  [OK] Android APK built." -ForegroundColor Green

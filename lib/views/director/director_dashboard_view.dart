@@ -15,6 +15,7 @@ import '../../models/quest_item.dart';
 import '../../widgets/base64_image.dart';
 import '../../models/chastity_timer.dart';
 import '../chastity_timer/timer_dashboard_card.dart';
+import '../toy/toy_partner_sections.dart';
 
 class DirectorDashboardView extends StatelessWidget {
   const DirectorDashboardView({super.key});
@@ -928,6 +929,9 @@ class DirectorDashboardView extends StatelessWidget {
         ),
         const SizedBox(height: 24),
 
+        // Live toy control, one tap from the main screen.
+        const PartnerToysDashboardCard(),
+
         // Pending Privilege Redemptions Section
         if (pendingRedemptions.isNotEmpty) ...[
           Text(
@@ -1395,13 +1399,16 @@ class DirectorDashboardView extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'PENDING PROOF REVIEWS (${reviewOrders.length})',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-                color: theme.colorScheme.onSurface.withOpacity(0.6),
+            Flexible(
+              child: Text(
+                'PENDING PROOF REVIEWS (${reviewOrders.length})',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                ),
               ),
             ),
             if (reviewOrders.isNotEmpty)

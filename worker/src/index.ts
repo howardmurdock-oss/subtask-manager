@@ -19,6 +19,7 @@
  * app in Doze and let it decide what to show.
  */
 
+import { TURN_TTL_SECONDS, ToyRoom, mintTurnLogin, toyRole, toyRoomName, validToyTopic } from './toy_room.ts';
 import { ChastityTimer, randomToken, sha256Hex } from './timer.ts';
 import { expiredPage, profileGonePage, publicPage } from './public_page.ts';
 import { badgeSvg, embedPage, endedEmbedPage, previewText, type PublicView } from './embed.ts';
@@ -94,6 +95,9 @@ export interface Env {
   TIMER_CREATE_LIMIT?: RateLimit;
   TIMER_OP_LIMIT?: RateLimit;
   TIMER_PUBLIC_LIMIT?: RateLimit;
+  // Cloudflare TURN, for live toy sessions. Set with tool/set_turn_secrets.py.
+  TURN_KEY_ID?: string;
+  TURN_KEY_API_TOKEN?: string;
 }
 
 /** Cloudflare's rate-limit binding. */
@@ -209,6 +213,9 @@ export class TopicHub {
   constructor(ctx: DurableObjectState, _env: Env) {
     this.ctx = ctx;
     this.sql = ctx.storage.sql;
+    // Keep-alive pings are answered by Cloudflare without waking this object,
+    // and are not billed: a connected-but-quiet device costs nothing.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS messages (
          seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,6 +239,12 @@ export class TopicHub {
 
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
       return json({ error: 'expected a websocket upgrade' }, 426);
+    }
+
+    if (url.pathname === '/toy') {
+      const role = toyRole(url.searchParams.get('role'));
+      if (!role) return json({ error: 'role is required' }, 400);
+      return new ToyRoom(this.ctx).accept(role);
     }
 
     const since = Number(url.searchParams.get('since') ?? '0');
@@ -270,6 +283,7 @@ export class TopicHub {
     const frame = JSON.stringify({ seq: inserted.seq, p: payload, k: kind });
     let delivered = 0;
     for (const ws of this.ctx.getWebSockets()) {
+      if (ToyRoom.isToySocket(this.ctx, ws)) continue;
       try {
         ws.send(frame);
         delivered++;
@@ -291,10 +305,15 @@ export class TopicHub {
   // Hibernation handlers. Without these an idle connection would keep the
   // object resident, which is what makes staying connected all day free.
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (ToyRoom.isToySocket(this.ctx, ws)) {
+      new ToyRoom(this.ctx).message(ws, message);
+      return;
+    }
     if (message === 'ping') ws.send('pong');
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    if (ToyRoom.isToySocket(this.ctx, ws)) new ToyRoom(this.ctx).closed(ws);
     try {
       // 1006 is "abnormal closure" and may not be sent back.
       ws.close(code === 1006 ? 1000 : code, reason);
@@ -303,7 +322,9 @@ export class TopicHub {
     }
   }
 
-  async webSocketError(): Promise<void> {}
+  async webSocketError(ws: WebSocket): Promise<void> {
+    if (ToyRoom.isToySocket(this.ctx, ws)) new ToyRoom(this.ctx).closed(ws);
+  }
 }
 
 /** Hands a payload to a topic's hub for any desktop listening on it. */
@@ -1687,6 +1708,29 @@ export default {
 
     // Desktop's live channel. The hub is addressed by topic, which is already
     // a hash of the pairing code.
+    if (request.method === 'POST' && url.pathname === '/toy/ice') {
+      // A short-lived TURN login for one toy session.
+      const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+      if (!(await withinLimit(env.TIMER_CREATE_LIMIT, `ice:${ip}`))) return slowDown();
+      const servers = await mintTurnLogin(env.TURN_KEY_ID, env.TURN_KEY_API_TOKEN);
+      return servers
+        ? json({ iceServers: servers, ttl: TURN_TTL_SECONDS })
+        : json({ error: 'turn-unavailable' }, 503);
+    }
+
+    if (url.pathname === '/toy') {
+      // Live toy control. Owner and partners meet in a room named for the
+      // owner's topic; see toy_room.ts.
+      const topic = url.searchParams.get('topic');
+      if (!validToyTopic(topic) || !toyRole(url.searchParams.get('role'))) {
+        return json({ error: 'topic and role are required' }, 400);
+      }
+      const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+      if (!(await withinLimit(env.TIMER_OP_LIMIT, `toy:${ip}`))) return slowDown();
+      const stub = env.TOPIC_HUB.get(env.TOPIC_HUB.idFromName(toyRoomName(topic)));
+      return stub.fetch(request);
+    }
+
     if (url.pathname === '/subscribe') {
       const topic = url.searchParams.get('topic');
       if (!topic) return json({ error: 'topic is required' }, 400);

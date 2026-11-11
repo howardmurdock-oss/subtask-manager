@@ -31,6 +31,33 @@ class ToyService extends ChangeNotifier {
   // Pulse & safety timers
   Timer? _delayTimer;
   Timer? _pulseTimer;
+
+  /// Asks for the battery now and then: it was asked once, on connecting,
+  /// and never updated after.
+  Timer? _batteryTimer;
+  static const Duration batteryRefresh = Duration(minutes: 3);
+
+  /// Replies arrive in pieces and run together; one reply ends with ';'.
+  String _rxBuffer = '';
+
+  /// When the battery was last asked for. Only a number arriving soon after
+  /// counts as the battery: the toy answers other commands on the same
+  /// channel, and a stray number there once read as 0%.
+  DateTime? _batteryAskedAt;
+  static const Duration batteryReplyWindow = Duration(seconds: 4);
+
+  final List<String> _recentReplies = [];
+
+  /// The toy's last few replies, newest last, for the toy settings' details.
+  List<String> get recentReplies => List.unmodifiable(_recentReplies);
+
+  /// Which Bluetooth channels this toy is being driven through.
+  String? get channelInfo {
+    final w = _writeCharacteristic;
+    if (w == null) return null;
+    final n = _notifyCharacteristic;
+    return 'send ${w.characteristicUuid.str}, replies ${n?.characteristicUuid.str ?? 'none'}';
+  }
   DateTime? _lastCommandTime;
   int _lastSentSpeed = -1;
   int _syncOffsetMs = 60;
@@ -40,11 +67,67 @@ class ToyService extends ChangeNotifier {
   bool get isConnected => _state == ToyConnectionState.connected && _connectedToy != null;
   bool get isScanning => _state == ToyConnectionState.scanning;
   ConnectedToyInfo? get connectedToy => _connectedToy;
+
+  String? _rememberedToyId;
+  String? _rememberedToyName;
+
+  /// The toy this device last connected to, which it reconnects to by itself.
+  String? get rememberedToyName => _rememberedToyName;
+
+  @visibleForTesting
+  void debugSetRemembered(String? name, {String id = 'test-toy'}) {
+    _rememberedToyName = name;
+    _rememberedToyId = name == null ? null : id;
+    notifyListeners();
+  }
+
+  /// Connects to the remembered toy again, without a scan.
+  Future<void> reconnectRemembered() async {
+    final id = _rememberedToyId;
+    final name = _rememberedToyName;
+    if (id != null && name != null) await autoReconnect(id, name);
+  }
   List<DiscoveredToy> get discoveredToys => List.unmodifiable(_discoveredToys);
   ToyCadenceMode get cadenceMode => _cadenceMode;
   int get manualIntensity => _manualIntensity;
   int get syncOffsetMs => _syncOffsetMs;
   String? get statusMessage => _statusMessage;
+
+  /// A ceiling on every speed sent, set while a partner is in control: the
+  /// owner's "partners may go up to" limit. Null when nobody else is driving.
+  int? _outputCap;
+  int? get outputCap => _outputCap;
+  set outputCap(int? cap) {
+    _outputCap = cap?.clamp(0, 20);
+    // A lower ceiling applies at once, not at the next command.
+    if (_outputCap != null && _lastSentSpeed > _outputCap!) {
+      final ceiling = _outputCap!;
+      _lastSentSpeed = -1;
+      setVibrateSpeed(ceiling);
+    }
+  }
+
+  /// Beat-pulse strength for a metronome started by live control, in place of
+  /// the owner's own manual intensity. Null to use the manual intensity.
+  int? intensityOverride;
+
+  /// The strength cadence pulses and steady buzz scale to.
+  int get effectiveIntensity => (intensityOverride ?? _manualIntensity).clamp(1, 20);
+
+  /// The speed last sent to the toy, 0 when still.
+  int get currentSpeed => _lastSentSpeed < 0 ? 0 : _lastSentSpeed;
+
+  /// Stands a toy in as connected, for tests: no Bluetooth involved.
+  @visibleForTesting
+  void debugSetConnected(ConnectedToyInfo? toy) {
+    _connectedToy = toy;
+    _state = toy == null ? ToyConnectionState.disconnected : ToyConnectionState.connected;
+    _lastSentSpeed = -1;
+    _rxBuffer = '';
+    _recentReplies.clear();
+    _batteryAskedAt = null;
+    notifyListeners();
+  }
 
   /// Initializes the service and attempts to auto-reconnect to the last paired toy.
   Future<void> init() async {
@@ -61,6 +144,9 @@ class ToyService extends ChangeNotifier {
       final lastId = prefs.getString('setting_last_toy_id');
       final lastName = prefs.getString('setting_last_toy_name');
       if (lastId != null && lastName != null) {
+        _rememberedToyId = lastId;
+        _rememberedToyName = lastName;
+        notifyListeners();
         autoReconnect(lastId, lastName);
       }
     } catch (_) {}
@@ -86,7 +172,7 @@ class ToyService extends ChangeNotifier {
   }
 
   void setSyncOffset(int ms) {
-    _syncOffsetMs = ms.clamp(0, 300);
+    _syncOffsetMs = ms.clamp(0, 400);
     SharedPreferences.getInstance().then((prefs) {
       prefs.setInt('setting_toy_sync_offset_ms', _syncOffsetMs);
     }).catchError((_) {});
@@ -230,6 +316,16 @@ class ToyService extends ChangeNotifier {
         }
       }
 
+      // Replies come back in the same service commands go to. Whatever was
+      // found elsewhere (a generic service's notify) is only a last resort.
+      if (writeChar != null) {
+        final home = services.where((sv) => sv.characteristics.contains(writeChar)).firstOrNull;
+        final sibling = home?.characteristics
+            .where((c) => c != writeChar && (c.properties.notify || c.properties.indicate))
+            .firstOrNull;
+        if (sibling != null) notifyChar = sibling;
+      }
+
       if (writeChar == null) {
         _statusMessage = 'Could not find writable command channel on ${toy.name}';
         await device.disconnect();
@@ -250,19 +346,25 @@ class ToyService extends ChangeNotifier {
       _statusMessage = 'Connected to ${toy.name}';
 
       // Save connection for auto-reconnect
+      _rememberedToyId = toy.id;
+      _rememberedToyName = toy.name;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('setting_last_toy_id', toy.id);
       await prefs.setString('setting_last_toy_name', toy.name);
 
       // Set up notification listener for battery query responses
+      _rxBuffer = '';
+      _recentReplies.clear();
       if (_notifyCharacteristic != null) {
         try {
           await _notifyCharacteristic!.setNotifyValue(true);
-          _notifySubscription = _notifyCharacteristic!.lastValueStream.listen((data) {
-            _handleIncomingData(data);
-          });
+          // onValueReceived, not lastValueStream: the latter also replays
+          // the last value it holds and echoes writes to its characteristic.
+          _notifySubscription = _notifyCharacteristic!.onValueReceived.listen(handleIncomingData);
           // Query battery level
           await queryBattery();
+          _batteryTimer?.cancel();
+          _batteryTimer = Timer.periodic(batteryRefresh, (_) => queryBattery());
         } catch (_) {}
       }
 
@@ -302,6 +404,11 @@ class ToyService extends ChangeNotifier {
   }
 
   void _handleDisconnected() {
+    _batteryTimer?.cancel();
+    _batteryTimer = null;
+    _batteryAskedAt = null;
+    _rxBuffer = '';
+    _lastSentSpeed = -1;
     _pulseTimer?.cancel();
     _pulseTimer = null;
     _writeCharacteristic = null;
@@ -330,28 +437,41 @@ class ToyService extends ChangeNotifier {
   Future<void> queryBattery() async {
     if (!isConnected) return;
     // Standard Lovense battery request
+    _batteryAskedAt = DateTime.now();
     await sendRawCommand('Battery;');
   }
 
   /// Sets continuous vibration speed (0 to 20 for Lovense).
   Future<void> setVibrateSpeed(int speed) async {
-    final clamped = speed.clamp(0, 20);
+    final clamped = speed.clamp(0, _outputCap ?? 20);
+    _trailingSpeedTimer?.cancel();
+    _trailingSpeedTimer = null;
     if (clamped == _lastSentSpeed) return;
-    _lastSentSpeed = clamped;
 
-    // Throttle commands: Avoid sending faster than ~20Hz to prevent BLE buffer congestion
+    // Throttle commands: Avoid sending faster than ~20Hz to prevent BLE buffer
+    // congestion. A throttled speed is sent once the gap has passed rather
+    // than dropped - otherwise the last position of a dragged slider could be
+    // the one that never arrives.
     final now = DateTime.now();
-    if (_lastCommandTime != null &&
-        now.difference(_lastCommandTime!).inMilliseconds < 40 &&
-        clamped != 0) {
+    final sinceLast = _lastCommandTime == null ? null : now.difference(_lastCommandTime!).inMilliseconds;
+    if (sinceLast != null && sinceLast < 40 && clamped != 0) {
+      _trailingSpeedTimer = Timer(Duration(milliseconds: 40 - sinceLast), () {
+        _trailingSpeedTimer = null;
+        setVibrateSpeed(clamped);
+      });
       return;
     }
 
+    _lastSentSpeed = clamped;
     await sendRawCommand('Vibrate:$clamped;');
   }
 
+  Timer? _trailingSpeedTimer;
+
   /// Immediately shuts down all vibration motors on the connected hardware.
   Future<void> stopVibration() async {
+    _trailingSpeedTimer?.cancel();
+    _trailingSpeedTimer = null;
     _delayTimer?.cancel();
     _delayTimer = null;
     _pulseTimer?.cancel();
@@ -404,7 +524,7 @@ class ToyService extends ChangeNotifier {
 
   /// Rhythmic pulse: fires a short 100-140ms tap on the beat, then stops.
   void _handleBeatPulse(CadenceTick tick) {
-    final speed = _manualIntensity;
+    final speed = effectiveIntensity;
     final pulseDurationMs = (60000 / tick.currentBpm * 0.28).clamp(70, 160).round();
 
     setVibrateSpeed(speed);
@@ -435,19 +555,39 @@ class ToyService extends ChangeNotifier {
     });
   }
 
-  void _handleIncomingData(List<int> bytes) {
-    try {
-      final text = utf8.decode(bytes).trim();
-      // Parse battery response: e.g. "85;" or integer
-      final clean = text.replaceAll(';', '').trim();
-      final level = int.tryParse(clean);
-      if (level != null && level >= 0 && level <= 100) {
-        if (_connectedToy != null) {
-          _connectedToy = _connectedToy!.copyWith(batteryLevel: level);
-          notifyListeners();
-        }
+  /// Bytes from the toy's reply channel. Public for tests.
+  @visibleForTesting
+  void handleIncomingData(List<int> bytes) {
+    if (bytes.isEmpty) return;
+    _rxBuffer += utf8.decode(bytes, allowMalformed: true);
+    // A reply that never ends is noise, not a reply.
+    if (_rxBuffer.length > 256) _rxBuffer = _rxBuffer.substring(_rxBuffer.length - 64);
+    while (true) {
+      final end = _rxBuffer.indexOf(';');
+      if (end < 0) break;
+      final reply = _rxBuffer.substring(0, end).trim();
+      _rxBuffer = _rxBuffer.substring(end + 1);
+      if (reply.isNotEmpty) _onReply(reply);
+    }
+  }
+
+  static final RegExp _batteryReply = RegExp(r'^s?(\d{1,3})$');
+
+  void _onReply(String reply) {
+    _recentReplies.add(reply);
+    if (_recentReplies.length > 12) _recentReplies.removeAt(0);
+
+    // "85" - or "s85" while it is vibrating - and only in answer to asking.
+    final m = _batteryReply.firstMatch(reply);
+    final asked = _batteryAskedAt;
+    if (m != null && asked != null && DateTime.now().difference(asked) <= batteryReplyWindow) {
+      final level = int.parse(m.group(1)!);
+      if (level <= 100 && _connectedToy != null) {
+        _batteryAskedAt = null;
+        _connectedToy = _connectedToy!.copyWith(batteryLevel: level);
       }
-    } catch (_) {}
+    }
+    notifyListeners();
   }
 
   @override

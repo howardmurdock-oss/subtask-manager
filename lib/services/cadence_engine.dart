@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -52,7 +53,19 @@ class CadenceEngine extends ChangeNotifier {
   // Dual audio players to allow smooth overlapping clicks even at high BPMs
   AudioPlayer? _playerA;
   AudioPlayer? _playerB;
+  AudioPlayer? _playerShift;
   bool _usePlayerA = true;
+
+  /// What each player has loaded ('shift' or a tone), and the load itself.
+  /// A beat only rewinds and plays: loading a sound takes long enough (up
+  /// to most of a second) that the toy, told over Bluetooth at the same
+  /// moment, would buzz well before the click is heard.
+  final Map<AudioPlayer, Object> _loadedKey = {};
+  final Map<AudioPlayer, Future<bool>> _loading = {};
+
+  /// Counts starts, so a start still waiting on its sounds is dropped when
+  /// stopped or started again meanwhile.
+  int _startGeneration = 0;
 
   // Unit-testing hooks
   void Function(CadenceTick tick)? onTickCallback;
@@ -91,6 +104,11 @@ class CadenceEngine extends ChangeNotifier {
     _currentBpm = _config.calculateBpmAt(_elapsedSeconds, _totalDurationSeconds, seed: _seed);
     _trend = _config.calculateTrendAt(_elapsedSeconds, _totalDurationSeconds, seed: _seed);
     if (_isRunning && !_isPaused) {
+      // A new tone (or the tempo-shift cue) is loaded now, not on a beat.
+      if (_config.enableAudio) {
+        _initAudioPlayers();
+        _preloadClicks();
+      }
       if (_config.enableToy && _config.toyMode == CadenceToyMode.continuous) {
         _startContinuousToyLoop();
       } else {
@@ -121,9 +139,23 @@ class CadenceEngine extends ChangeNotifier {
     _lastBeatTime = DateTime.now();
     _lastRandomStepIndex = -1;
 
-    _scheduleNextBeat(immediate: true);
-    _startContinuousToyLoop();
-    notifyListeners();
+    final generation = ++_startGeneration;
+    void begin() {
+      if (generation != _startGeneration || !_isRunning) return;
+      _lastBeatTime = DateTime.now();
+      _scheduleNextBeat(immediate: true);
+      _startContinuousToyLoop();
+      notifyListeners();
+    }
+
+    if (_config.enableAudio && _playerA != null) {
+      // The first beat waits for its click to be loaded, so the two land
+      // together from the start - but never longer than a second.
+      _preloadClicks().timeout(const Duration(seconds: 1), onTimeout: () {}).whenComplete(begin);
+      notifyListeners();
+    } else {
+      begin();
+    }
   }
 
   void pause() {
@@ -149,6 +181,7 @@ class CadenceEngine extends ChangeNotifier {
   }
 
   void stop() {
+    _startGeneration++;
     _beatTimer?.cancel();
     _beatTimer = null;
     _continuousToyTimer?.cancel();
@@ -157,6 +190,7 @@ class CadenceEngine extends ChangeNotifier {
     _isPaused = false;
     _playerA?.stop().catchError((_) {});
     _playerB?.stop().catchError((_) {});
+    _playerShift?.stop().catchError((_) {});
     ToyService.instance.stopVibration();
     notifyListeners();
   }
@@ -172,6 +206,10 @@ class CadenceEngine extends ChangeNotifier {
 
   void toggleAudio(bool enabled) {
     _config = _config.copyWith(enableAudio: enabled);
+    if (enabled && _isRunning) {
+      _initAudioPlayers();
+      _preloadClicks();
+    }
     notifyListeners();
   }
 
@@ -194,6 +232,7 @@ class CadenceEngine extends ChangeNotifier {
 
   void setTone(CadenceSoundTone tone) {
     _config = _config.copyWith(soundTone: tone);
+    if (_isRunning && _config.enableAudio) _preloadClicks();
     notifyListeners();
   }
 
@@ -201,7 +240,99 @@ class CadenceEngine extends ChangeNotifier {
     try {
       _playerA ??= AudioPlayer();
       _playerB ??= AudioPlayer();
+      _playerShift ??= AudioPlayer();
     } catch (_) {}
+  }
+
+  /// Loads the current click into both beat players and the tempo-shift cue
+  /// into its own, so no beat has to.
+  Future<void> _preloadClicks() async {
+    final tone = _config.soundTone;
+    await Future.wait([
+      for (final p in [_playerA, _playerB])
+        if (p != null) _load(p, tone, () => CadenceSoundGenerator.getWav(tone)),
+      if (_playerShift != null && _config.mode == CadenceMode.random)
+        _load(_playerShift!, 'shift', CadenceSoundGenerator.getShiftCueWav),
+    ]);
+  }
+
+  /// Android's ordinary player takes a couple of hundred milliseconds from
+  /// "play" to sound - enough to land a click between two of the toy's
+  /// pulses. Its low-latency player (SoundPool) is made for short sounds
+  /// like these, but only plays files.
+  static bool get _lowLatency => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  static final Map<Object, Future<String>> _clickFiles = {};
+
+  /// The low-latency load in progress, if any; the next waits for it.
+  static Future<void> _lowLatencyLoads = Future.value();
+
+  static Future<String> _clickFile(Object key, Uint8List Function() bytes) =>
+      _clickFiles[key] ??= () async {
+        final file = File('${Directory.systemTemp.path}/cadence_click_$key.wav');
+        await file.writeAsBytes(bytes(), flush: true);
+        return file.path;
+      }();
+
+  /// Loads [bytes] into [player] unless it already holds them. True when
+  /// the player is ready to play them.
+  Future<bool> _load(AudioPlayer player, Object key, Uint8List Function() bytes) {
+    if (_loadedKey[player] == key) return _loading[player] ?? Future.value(true);
+    _loadedKey[player] = key;
+    final loading = () async {
+      try {
+        // Keep the sound after it finishes: the default throws it away,
+        // and the next beat would have to load it all over again.
+        await player.setReleaseMode(ReleaseMode.stop);
+        if (_lowLatency) {
+          final path = await _clickFile(key, bytes);
+          // One at a time: a second player given a sound the first is
+          // still loading shares it before it exists, and stays silent
+          // for good - every other click went missing that way.
+          final before = _lowLatencyLoads;
+          final done = Completer<void>();
+          _lowLatencyLoads = done.future;
+          try {
+            await before;
+            await player.setPlayerMode(PlayerMode.lowLatency);
+            await player
+                .setSource(DeviceFileSource(path))
+                // Ready or not by then, a beat may as well try.
+                .timeout(const Duration(seconds: 2), onTimeout: () {});
+          } finally {
+            done.complete();
+          }
+        } else {
+          await player.setSource(BytesSource(bytes()));
+        }
+        return true;
+      } catch (_) {
+        if (_loadedKey[player] == key) _loadedKey.remove(player);
+        return false;
+      }
+    }();
+    _loading[player] = loading;
+    return loading;
+  }
+
+  /// Plays what [player] holds from the start, now if it is loaded.
+  void _fire(AudioPlayer player, Object key, Uint8List Function() bytes) {
+    final loading = _load(player, key, bytes);
+    void go() {
+      if (_lowLatency) {
+        // SoundPool never says a sound has ended, so the player still
+        // thinks it is playing and would ignore a plain resume.
+        player.stop().then((_) => player.resume()).catchError((_) {});
+      } else if (player.state == PlayerState.playing) {
+        player.seek(Duration.zero).catchError((_) {});
+      } else {
+        player.resume().catchError((_) {});
+      }
+    }
+
+    loading.then((ok) {
+      if (ok && _isRunning && !_isPaused && _loadedKey[player] == key) go();
+    });
   }
 
   void _scheduleNextBeat({bool immediate = false}) {
@@ -302,21 +433,22 @@ class CadenceEngine extends ChangeNotifier {
       _elapsedSeconds,
       _totalDurationSeconds,
       seed: _seed,
-      maxCeiling: ToyService.instance.manualIntensity,
+      maxCeiling: ToyService.instance.effectiveIntensity,
     );
     ToyService.instance.setVibrateSpeed(speed);
   }
 
   void _playBeatAudio({bool isShift = false}) {
     try {
-      final wavBytes = isShift
-          ? CadenceSoundGenerator.getShiftCueWav()
-          : CadenceSoundGenerator.getWav(_config.soundTone);
-
+      if (isShift) {
+        final p = _playerShift;
+        if (p != null) _fire(p, 'shift', CadenceSoundGenerator.getShiftCueWav);
+        return;
+      }
       final player = _usePlayerA ? _playerA : _playerB;
       _usePlayerA = !_usePlayerA;
-
-      player?.play(BytesSource(wavBytes)).catchError((_) {});
+      final tone = _config.soundTone;
+      if (player != null) _fire(player, tone, () => CadenceSoundGenerator.getWav(tone));
     } catch (_) {}
   }
 
@@ -338,6 +470,7 @@ class CadenceEngine extends ChangeNotifier {
     try {
       _playerA?.dispose();
       _playerB?.dispose();
+      _playerShift?.dispose();
     } catch (_) {}
     super.dispose();
   }

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orders_app/models/cadence_config.dart';
 import 'package:orders_app/services/cadence_engine.dart';
@@ -91,9 +93,9 @@ void main() {
       expect(service.manualIntensity, 16);
     });
 
-    test('Sync timing offset clamping preserves valid range [0..300]', () {
-      service.setSyncOffset(400);
-      expect(service.syncOffsetMs, 300);
+    test('Sync timing offset clamping preserves valid range [0..400]', () {
+      service.setSyncOffset(600);
+      expect(service.syncOffsetMs, 400);
 
       service.setSyncOffset(-50);
       expect(service.syncOffsetMs, 0);
@@ -116,6 +118,50 @@ void main() {
       // Should not throw or crash when disconnected
       expect(() => service.onCadenceTick(tick), returnsNormally);
       expect(() => service.stopVibration(), returnsNormally);
+    });
+  });
+
+  group('battery replies', () {
+    final toy = ToyService.instance;
+    void hear(String text) => toy.handleIncomingData(utf8.encode(text));
+    int battery() => toy.connectedToy!.batteryLevel;
+
+    setUp(() => toy.debugSetConnected(const ConnectedToyInfo(id: 'x', name: 'Lush 3')));
+    tearDown(() => toy.debugSetConnected(null));
+
+    test('the answer to asking is the battery, also when vibrating', () async {
+      await toy.queryBattery();
+      hear('85;');
+      expect(battery(), 85);
+      await toy.queryBattery();
+      hear('s82;');
+      expect(battery(), 82);
+    });
+
+    test('a reply split across packets is put back together', () async {
+      await toy.queryBattery();
+      hear('8');
+      expect(battery(), -1, reason: 'not finished yet');
+      hear('4;');
+      expect(battery(), 84);
+    });
+
+    test("a number nobody asked for isn't the battery", () async {
+      hear('0;');
+      expect(battery(), -1);
+      await toy.queryBattery();
+      hear('OK;');
+      hear('88;');
+      expect(battery(), 88);
+      hear('0;');
+      expect(battery(), 88, reason: 'one answer per question');
+    });
+
+    test('replies that run together are read one by one', () async {
+      await toy.queryBattery();
+      hear('OK;OK;91;');
+      expect(battery(), 91);
+      expect(toy.recentReplies, ['OK', 'OK', '91']);
     });
   });
 }

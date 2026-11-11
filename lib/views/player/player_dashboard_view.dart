@@ -20,6 +20,7 @@ import '../../services/debug_settings.dart';
 import '../../widgets/base64_image.dart';
 import '../../models/chastity_timer.dart';
 import '../chastity_timer/timer_dashboard_card.dart';
+import '../toy/toy_partner_sections.dart';
 import '../../services/public_order_bridge.dart';
 
 class PlayerDashboardView extends StatelessWidget {
@@ -1054,6 +1055,8 @@ class PlayerDashboardView extends StatelessWidget {
         const SizedBox(height: 12),
         const TimerDashboardCard(role: TimerRole.player),
         const SizedBox(height: 12),
+        // Your toy, one tap from the main screen.
+        const YourToyDashboardCard(),
 
         // Action Trigger Buttons
         Row(

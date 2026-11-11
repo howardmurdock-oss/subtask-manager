@@ -1,3 +1,4 @@
+import 'toy/toy_remote.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -1946,6 +1947,112 @@ class SyncService extends ChangeNotifier {
         ),
       );
 
+  // -------------------------------------------------------------------------
+  // Live toy control
+  //
+  // The control itself travels through a relay room (toy_remote.dart). These
+  // messages only say "my toy is available to you now" / "not any more", so a
+  // partner's screens can offer a Control button.
+  // -------------------------------------------------------------------------
+
+  static const String partnerToyKey = 'partner_toy_status_v1';
+
+  /// Partner code -> what they last said about their toy.
+  final Map<String, PartnerToyStatus> _partnerToys = {};
+  bool _partnerToysLoaded = false;
+
+  /// Starts this device's side of live toy control.
+  Future<void> startToyRemote() async {
+    await _loadPartnerToys();
+    await ToyRemoteHost.instance.start(_SyncToyContext(this));
+  }
+
+  /// What [contact] last said about their toy, or null if never.
+  PartnerToyStatus? partnerToy(PartnerContact contact) =>
+      _partnerToys[PartnerService.normalizeCode(contact.pairingCode)];
+
+  /// Partners whose toy is available to this device right now.
+  List<PartnerContact> partnersWithToyOnline() =>
+      _partnerService?.unblockedContacts
+          .where((c) => !c.isSelf && (partnerToy(c)?.isOnline ?? false))
+          .toList() ??
+      const [];
+
+  @visibleForTesting
+  void debugSetPartnerToy(PartnerContact contact, PartnerToyStatus status) {
+    _partnerToys[PartnerService.normalizeCode(contact.pairingCode)] = status;
+    notifyListeners();
+  }
+
+  /// Partners who have shared a toy with this device at some point - online
+  /// now or not - with the ones online first.
+  List<PartnerContact> partnersWithToyShared() {
+    final shared = _partnerService?.unblockedContacts.where((c) => !c.isSelf && partnerToy(c) != null).toList() ??
+        <PartnerContact>[];
+    int rank(PartnerContact c) => (partnerToy(c)?.isOnline ?? false) ? 0 : 1;
+    shared.sort((a, b) => rank(a).compareTo(rank(b)));
+    return shared;
+  }
+
+  Future<void> sendToyStatus(PartnerContact contact, {required bool online, String? toyName}) async {
+    await _sendToContact(
+      contact,
+      SyncMessage(
+        type: SyncMessageType.toyStatus,
+        senderId: _deviceId,
+        payload: {
+          'senderCode': _pairingCode,
+          'senderName': _nickname,
+          'online': online,
+          if (toyName != null) 'toyName': toyName,
+          'at': DateTime.now().millisecondsSinceEpoch,
+        },
+      ),
+    );
+  }
+
+  Future<void> _onToyStatus(SyncMessage msg) async {
+    final code = PartnerService.normalizeCode(msg.payload['senderCode'] as String? ?? '');
+    final contact = _contactFor(code: code, id: msg.senderId);
+    if (contact == null || code.isEmpty) return;
+    await _loadPartnerToys();
+    final at = (msg.payload['at'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch;
+    final previous = _partnerToys[code];
+    // Messages can arrive out of order (a queued push after a live one).
+    if (previous != null && previous.at.millisecondsSinceEpoch > at) return;
+    _partnerToys[code] = PartnerToyStatus(
+      online: msg.payload['online'] == true,
+      toyName: msg.payload['toyName'] as String?,
+      at: DateTime.fromMillisecondsSinceEpoch(at),
+    );
+    await _savePartnerToys();
+    notifyListeners();
+  }
+
+  Future<void> _loadPartnerToys() async {
+    if (_partnerToysLoaded) return;
+    _partnerToysLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(partnerToyKey);
+      if (raw == null) return;
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      decoded.forEach((code, v) {
+        if (v is Map) _partnerToys[code] = PartnerToyStatus.fromJson(Map<String, dynamic>.from(v));
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _savePartnerToys() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        partnerToyKey,
+        jsonEncode(_partnerToys.map((code, s) => MapEntry(code, s.toJson()))),
+      );
+    } catch (_) {}
+  }
+
   Future<void> _onFeatureHello(SyncMessage msg) async {
     final code = PartnerService.normalizeCode(msg.payload['senderCode'] as String? ?? '');
     final contact = _contactFor(code: code, id: msg.senderId);
@@ -3845,6 +3952,10 @@ class SyncService extends ChangeNotifier {
         await _onTimerDeclined(msg);
         break;
 
+      case SyncMessageType.toyStatus:
+        await _onToyStatus(msg);
+        break;
+
       default:
         break;
     }
@@ -4871,4 +4982,54 @@ class SyncService extends ChangeNotifier {
     _httpClient.close(force: true);
     super.dispose();
   }
+}
+
+/// What a partner last said about their toy.
+class PartnerToyStatus {
+  const PartnerToyStatus({required this.online, required this.at, this.toyName});
+
+  final bool online;
+  final String? toyName;
+  final DateTime at;
+
+  /// An "online" that old is not trusted: the owner's app may have been
+  /// closed without a chance to say so. The control panel checks for real.
+  static const Duration staleAfter = Duration(hours: 12);
+
+  bool get isOnline => online && DateTime.now().difference(at) < staleAfter;
+
+  Map<String, dynamic> toJson() => {
+        'online': online,
+        if (toyName != null) 'toyName': toyName,
+        'at': at.millisecondsSinceEpoch,
+      };
+
+  factory PartnerToyStatus.fromJson(Map<String, dynamic> json) => PartnerToyStatus(
+        online: json['online'] == true,
+        toyName: json['toyName'] as String?,
+        at: DateTime.fromMillisecondsSinceEpoch((json['at'] as num?)?.toInt() ?? 0),
+      );
+}
+
+class _SyncToyContext implements ToyRemoteContext {
+  _SyncToyContext(this._sync);
+  final SyncService _sync;
+
+  @override
+  String get myCode => _sync.pairingCode;
+
+  @override
+  String get myName => _sync.nickname;
+
+  @override
+  List<PartnerContact> get partners =>
+      _sync._partnerService?.unblockedContacts.where((c) => !c.isSelf && c.pairingCode.isNotEmpty).toList() ??
+      const [];
+
+  @override
+  Future<void> sendToyStatus(PartnerContact partner, {required bool online, String? toyName}) =>
+      _sync.sendToyStatus(partner, online: online, toyName: toyName);
+
+  @override
+  String topicFor(String code) => SyncService.getHashedTopic(code);
 }

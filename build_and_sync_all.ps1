@@ -26,7 +26,7 @@ Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "su
 Copy-Item -Path "subTaskManager-Windows-Release.zip" -Destination "OrdersApp-Windows-Release.zip" -Force
 
 Write-Host "==> Building Android Release APK..." -ForegroundColor Cyan
-& "F:\src\flutter\bin\flutter.bat" build apk --release --no-tree-shake-icons
+& "F:\src\flutter\bin\flutter.bat" build apk --release --no-tree-shake-icons --target-platform android-arm,android-arm64
 Copy-Item -Path "build\app\outputs\flutter-apk\app-release.apk" -Destination "subTaskManager-Android-Release.apk" -Force
 Copy-Item -Path "build\app\outputs\flutter-apk\app-release.apk" -Destination "OrdersApp-Android-Release.apk" -Force
 
