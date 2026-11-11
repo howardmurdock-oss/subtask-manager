@@ -256,10 +256,12 @@ class _ToyControlViewState extends State<ToyControlView> {
   bool _sound = false;
   int _minutes = 0;
 
+  /// Metronome chosen among the patterns: its settings show, ready to start.
+  bool _metronomeOpen = false;
+
   static const _durations = [0, 1, 2, 5, 10, 15, 30, 60];
 
-  bool get _needsDuration =>
-      _mode == CadenceMode.wave || _mode == CadenceMode.peak || _mode == CadenceMode.ramp;
+  bool get _needsDuration => _mode == CadenceMode.wave || _mode == CadenceMode.peak || _mode == CadenceMode.ramp;
 
   @override
   void initState() {
@@ -351,8 +353,6 @@ class _ToyControlViewState extends State<ToyControlView> {
                         _directCard(theme),
                         const SizedBox(height: 12),
                         _patternsCard(theme),
-                        const SizedBox(height: 12),
-                        _metronomeCard(theme),
                       ],
                     ),
                   ),
@@ -521,7 +521,11 @@ class _ToyControlViewState extends State<ToyControlView> {
         SizedBox(width: 28, child: Text('$_strength', textAlign: TextAlign.end)),
       ]);
 
+  /// Patterns, with the metronome as one of them: a beat whose tempo you
+  /// set, where the others are fixed shapes that just play.
   Widget _patternsCard(ThemeData theme) {
+    final running = t.activity == ToyActivity.metronome;
+    final showMetronome = running || _metronomeOpen;
     return _section(theme, 'Patterns', Icons.graphic_eq_rounded, [
       _strengthSlider(),
       const SizedBox(height: 4),
@@ -529,6 +533,23 @@ class _ToyControlViewState extends State<ToyControlView> {
         spacing: 8,
         runSpacing: 8,
         children: [
+          Tooltip(
+            message: 'A beat at a tempo you set, with an optional click',
+            child: ChoiceChip(
+              key: const Key('toy-pattern-metronome'),
+              avatar: const Icon(Icons.av_timer_rounded, size: 18),
+              label: const Text('Metronome'),
+              selected: showMetronome,
+              onSelected: (_) {
+                if (running) {
+                  t.stop();
+                  setState(() => _metronomeOpen = false);
+                } else {
+                  setState(() => _metronomeOpen = !_metronomeOpen);
+                }
+              },
+            ),
+          ),
           for (final p in ToyPattern.values)
             Tooltip(
               message: p.description,
@@ -537,6 +558,7 @@ class _ToyControlViewState extends State<ToyControlView> {
                 label: Text(p.displayName),
                 selected: t.activity == ToyActivity.pattern && t.pattern == p,
                 onSelected: (_) {
+                  setState(() => _metronomeOpen = false);
                   if (t.activity == ToyActivity.pattern && t.pattern == p) {
                     t.stop();
                   } else {
@@ -547,11 +569,16 @@ class _ToyControlViewState extends State<ToyControlView> {
             ),
         ],
       ),
+      if (showMetronome) ...[
+        const SizedBox(height: 12),
+        const Divider(height: 1),
+        const SizedBox(height: 12),
+        ..._metronomeSettings(running),
+      ],
     ]);
   }
 
-  Widget _metronomeCard(ThemeData theme) {
-    final running = t.activity == ToyActivity.metronome;
+  List<Widget> _metronomeSettings(bool running) {
     const modes = {
       CadenceMode.fixed: 'Steady',
       CadenceMode.wave: 'Wave',
@@ -562,10 +589,13 @@ class _ToyControlViewState extends State<ToyControlView> {
     final durations = _needsDuration ? _durations.where((d) => d > 0).toList() : _durations;
     final minutes = durations.contains(_minutes) ? _minutes : durations.first;
 
-    return _section(theme, 'Live metronome', Icons.av_timer_rounded, [
+    return [
+      const Text('Tempo', style: TextStyle(fontWeight: FontWeight.w600)),
+      const SizedBox(height: 6),
       Wrap(spacing: 8, runSpacing: 8, children: [
         for (final e in modes.entries)
           ChoiceChip(
+            key: Key('toy-tempo-${e.key.name}'),
             label: Text(e.value),
             selected: _mode == e.key,
             onSelected: (_) => setState(() => _mode = e.key),
@@ -609,7 +639,6 @@ class _ToyControlViewState extends State<ToyControlView> {
         },
       ),
       const SizedBox(height: 8),
-      _strengthSlider(),
       Row(children: [
         const Text('Length'),
         const SizedBox(width: 12),
@@ -655,6 +684,6 @@ class _ToyControlViewState extends State<ToyControlView> {
           OutlinedButton(onPressed: t.stop, child: const Text('Stop')),
         ],
       ]),
-    ]);
+    ];
   }
 }

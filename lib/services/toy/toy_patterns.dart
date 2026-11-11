@@ -5,8 +5,9 @@ import 'dart:math';
 /// A pattern is a shape over time, from 0 (still) to 1 (full). It always runs
 /// on the device the toy is connected to, so its timing is exact however slow
 /// the network is: a partner sends only "play wave at strength 14".
+///
+/// A plain on-off beat is the metronome's job, so there is no pattern for it.
 enum ToyPattern {
-  pulse,
   wave,
   escalate,
   heartbeat,
@@ -17,8 +18,6 @@ enum ToyPattern {
 extension ToyPatternInfo on ToyPattern {
   String get displayName {
     switch (this) {
-      case ToyPattern.pulse:
-        return 'Pulse';
       case ToyPattern.wave:
         return 'Wave';
       case ToyPattern.escalate:
@@ -34,8 +33,6 @@ extension ToyPatternInfo on ToyPattern {
 
   String get description {
     switch (this) {
-      case ToyPattern.pulse:
-        return 'On and off, every half second';
       case ToyPattern.wave:
         return 'Rises and falls smoothly';
       case ToyPattern.escalate:
@@ -54,8 +51,6 @@ extension ToyPatternInfo on ToyPattern {
   double levelAt(Duration elapsed, {int seed = 0}) {
     final ms = elapsed.inMilliseconds;
     switch (this) {
-      case ToyPattern.pulse:
-        return (ms ~/ 500).isEven ? 1 : 0;
       case ToyPattern.wave:
         // A 6-second swell that never quite stops, so it reads as one motion.
         final phase = (ms % 6000) / 6000;

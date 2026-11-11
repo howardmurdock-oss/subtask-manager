@@ -48,13 +48,15 @@ void main() {
     expect(player.pattern, ToyPattern.wave);
     expect(out.speeds, isNotEmpty);
 
-    await tester.scrollUntilVisible(find.byKey(const Key('toy-stop')), -200,
-        scrollable: find.byType(Scrollable).first);
+    await tester.scrollUntilVisible(find.byKey(const Key('toy-stop')), -200, scrollable: find.byType(Scrollable).first);
     await tester.tap(find.byKey(const Key('toy-stop')));
     await tester.pump();
     expect(player.activity, ToyActivity.idle);
     expect(out.stops, greaterThan(0));
 
+    await tester.ensureVisible(find.byKey(const Key('toy-pattern-metronome')));
+    await tester.tap(find.byKey(const Key('toy-pattern-metronome')));
+    await tester.pump();
     await tester.scrollUntilVisible(find.byKey(const Key('toy-metronome-start')), 300,
         scrollable: find.byType(Scrollable).first);
     expect(tester.takeException(), isNull);
@@ -62,11 +64,46 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
   });
 
+  testWidgets('the metronome is one of the patterns, and there is no Pulse', (tester) async {
+    toy.debugSetConnected(const ConnectedToyInfo(id: 'x', name: 'Test Toy', batteryLevel: 55));
+    final (player, _) = await pumpPanel(tester);
+    expect(find.text('Live metronome'), findsNothing, reason: 'no separate section');
+    expect(find.byKey(const Key('toy-pattern-pulse')), findsNothing);
+    expect(find.byKey(const Key('toy-metronome-start')), findsNothing, reason: 'settings only once chosen');
+
+    final metronome = find.byKey(const Key('toy-pattern-metronome'));
+    await tester.ensureVisible(metronome);
+    await tester.tap(metronome);
+    await tester.pump();
+    expect(find.byKey(const Key('toy-tempo-fixed')), findsOneWidget);
+    expect(find.byType(Slider).evaluate().where((e) => (e.widget as Slider).label != null).length, lessThanOrEqualTo(2),
+        reason: 'one strength slider for patterns and metronome alike');
+
+    await tester.ensureVisible(find.byKey(const Key('toy-metronome-start')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('toy-metronome-start')));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(player.activity, ToyActivity.metronome);
+
+    // Another pattern takes over and folds the metronome away.
+    await tester.ensureVisible(find.byKey(const Key('toy-pattern-heartbeat')));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.byKey(const Key('toy-pattern-heartbeat')));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(player.activity, ToyActivity.pattern);
+    expect(player.pattern, ToyPattern.heartbeat);
+    expect(find.byKey(const Key('toy-metronome-start')), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    player.stop();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
   testWidgets('without a toy the controls say why and do nothing', (tester) async {
     final (player, _) = await pumpPanel(tester);
     expect(find.text('Connect your toy first.'), findsOneWidget);
-    await tester.ensureVisible(find.byKey(const Key('toy-pattern-pulse')));
-    await tester.tap(find.byKey(const Key('toy-pattern-pulse')), warnIfMissed: false);
+    await tester.ensureVisible(find.byKey(const Key('toy-pattern-wave')));
+    await tester.tap(find.byKey(const Key('toy-pattern-wave')), warnIfMissed: false);
     await tester.pump();
     expect(player.activity, ToyActivity.idle);
   });

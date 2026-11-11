@@ -193,10 +193,16 @@ Future<void> _settle([int ms = 30]) => Future<void>.delayed(Duration(millisecond
 
 void main() {
   group('patterns', () {
-    test('pulse alternates every half second', () {
-      expect(ToyPattern.pulse.levelAt(const Duration(milliseconds: 100)), 1);
-      expect(ToyPattern.pulse.levelAt(const Duration(milliseconds: 600)), 0);
-      expect(ToyPattern.pulse.levelAt(const Duration(milliseconds: 1100)), 1);
+    test('heartbeat is two beats, the second softer, then a rest', () {
+      expect(ToyPattern.heartbeat.levelAt(const Duration(milliseconds: 50)), 1);
+      expect(ToyPattern.heartbeat.levelAt(const Duration(milliseconds: 200)), 0);
+      expect(ToyPattern.heartbeat.levelAt(const Duration(milliseconds: 300)), 0.8);
+      expect(ToyPattern.heartbeat.levelAt(const Duration(milliseconds: 800)), 0);
+      expect(ToyPattern.heartbeat.levelAt(const Duration(milliseconds: 1250)), 1, reason: 'and again');
+    });
+
+    test('there is no plain pulse pattern: the metronome does that', () {
+      expect(ToyPatternInfo.fromName('pulse'), isNull);
     });
 
     test('escalate builds for 30 seconds, then holds at full', () {
@@ -208,8 +214,8 @@ void main() {
     });
 
     test('speeds scale to the strength chosen, and still means 0', () {
-      expect(ToyPattern.pulse.speedAt(Duration.zero, 14), 14);
-      expect(ToyPattern.pulse.speedAt(const Duration(milliseconds: 600), 14), 0);
+      expect(ToyPattern.heartbeat.speedAt(Duration.zero, 14), 14);
+      expect(ToyPattern.heartbeat.speedAt(const Duration(milliseconds: 200), 14), 0);
       expect(ToyPattern.staircase.speedAt(Duration.zero, 20), 5);
       expect(ToyPattern.staircase.speedAt(const Duration(seconds: 13), 20), 20);
       for (final p in ToyPattern.values) {
@@ -243,10 +249,10 @@ void main() {
     test('a pattern plays on its own clock until stopped', () async {
       final out = _Recorder();
       final player = ToyPlayer(output: out, patternTick: const Duration(milliseconds: 20));
-      player.playPattern(ToyPattern.pulse, 10);
+      player.playPattern(ToyPattern.heartbeat, 10);
       await _settle(120);
       expect(out.speeds, isNotEmpty);
-      expect(out.speeds.every((s) => s == 0 || s == 10), isTrue);
+      expect(out.speeds.every((s) => s == 0 || s == 8 || s == 10), isTrue);
       player.stop();
       final sent = out.speeds.length;
       await _settle(80);
@@ -331,7 +337,7 @@ void main() {
       expect(a.state?.youControl, isTrue);
       expect(a.state?.level, 9);
 
-      a.playPattern(ToyPattern.pulse, 7);
+      a.playPattern(ToyPattern.heartbeat, 7);
       await _settle(100);
       expect(player.activity, ToyActivity.pattern);
       expect(player.strength, 7);
