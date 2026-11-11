@@ -264,6 +264,9 @@ class CadenceEngine extends ChangeNotifier {
 
   static final Map<Object, Future<String>> _clickFiles = {};
 
+  /// The low-latency load in progress, if any; the next waits for it.
+  static Future<void> _lowLatencyLoads = Future.value();
+
   static Future<String> _clickFile(Object key, Uint8List Function() bytes) =>
       _clickFiles[key] ??= () async {
         final file = File('${Directory.systemTemp.path}/cadence_click_$key.wav');
@@ -283,11 +286,22 @@ class CadenceEngine extends ChangeNotifier {
         await player.setReleaseMode(ReleaseMode.stop);
         if (_lowLatency) {
           final path = await _clickFile(key, bytes);
-          await player.setPlayerMode(PlayerMode.lowLatency);
-          await player
-              .setSource(DeviceFileSource(path))
-              // Ready or not by then, a beat may as well try.
-              .timeout(const Duration(seconds: 2), onTimeout: () {});
+          // One at a time: a second player given a sound the first is
+          // still loading shares it before it exists, and stays silent
+          // for good - every other click went missing that way.
+          final before = _lowLatencyLoads;
+          final done = Completer<void>();
+          _lowLatencyLoads = done.future;
+          try {
+            await before;
+            await player.setPlayerMode(PlayerMode.lowLatency);
+            await player
+                .setSource(DeviceFileSource(path))
+                // Ready or not by then, a beat may as well try.
+                .timeout(const Duration(seconds: 2), onTimeout: () {});
+          } finally {
+            done.complete();
+          }
         } else {
           await player.setSource(BytesSource(bytes()));
         }
