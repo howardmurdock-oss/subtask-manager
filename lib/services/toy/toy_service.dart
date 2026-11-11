@@ -40,6 +40,26 @@ class ToyService extends ChangeNotifier {
   bool get isConnected => _state == ToyConnectionState.connected && _connectedToy != null;
   bool get isScanning => _state == ToyConnectionState.scanning;
   ConnectedToyInfo? get connectedToy => _connectedToy;
+
+  String? _rememberedToyId;
+  String? _rememberedToyName;
+
+  /// The toy this device last connected to, which it reconnects to by itself.
+  String? get rememberedToyName => _rememberedToyName;
+
+  @visibleForTesting
+  void debugSetRemembered(String? name, {String id = 'test-toy'}) {
+    _rememberedToyName = name;
+    _rememberedToyId = name == null ? null : id;
+    notifyListeners();
+  }
+
+  /// Connects to the remembered toy again, without a scan.
+  Future<void> reconnectRemembered() async {
+    final id = _rememberedToyId;
+    final name = _rememberedToyName;
+    if (id != null && name != null) await autoReconnect(id, name);
+  }
   List<DiscoveredToy> get discoveredToys => List.unmodifiable(_discoveredToys);
   ToyCadenceMode get cadenceMode => _cadenceMode;
   int get manualIntensity => _manualIntensity;
@@ -94,6 +114,9 @@ class ToyService extends ChangeNotifier {
       final lastId = prefs.getString('setting_last_toy_id');
       final lastName = prefs.getString('setting_last_toy_name');
       if (lastId != null && lastName != null) {
+        _rememberedToyId = lastId;
+        _rememberedToyName = lastName;
+        notifyListeners();
         autoReconnect(lastId, lastName);
       }
     } catch (_) {}
@@ -283,6 +306,8 @@ class ToyService extends ChangeNotifier {
       _statusMessage = 'Connected to ${toy.name}';
 
       // Save connection for auto-reconnect
+      _rememberedToyId = toy.id;
+      _rememberedToyName = toy.name;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('setting_last_toy_id', toy.id);
       await prefs.setString('setting_last_toy_name', toy.name);
