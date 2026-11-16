@@ -9,13 +9,18 @@ import '../../services/order_engine.dart';
 import '../../services/sync_service.dart';
 import '../../services/partner_service.dart';
 import '../cadence/cadence_studio_view.dart';
+import '../tour/app_tour.dart';
 
 class OrderDispatchDialog extends StatefulWidget {
   final OrderItem? initialOrder;
 
-  const OrderDispatchDialog({super.key, this.initialOrder});
+  /// 0 Browse Library Tasks, 1 Custom Directive. Null: Custom when editing
+  /// [initialOrder], else the library.
+  final int? initialTab;
 
-  static Future<void> show(BuildContext context, {OrderItem? initialOrder}) {
+  const OrderDispatchDialog({super.key, this.initialOrder, this.initialTab});
+
+  static Future<void> show(BuildContext context, {OrderItem? initialOrder, int? initialTab}) {
     final isDesktop = MediaQuery.of(context).size.width > 700;
     if (isDesktop) {
       return showDialog(
@@ -32,7 +37,7 @@ class OrderDispatchDialog extends StatefulWidget {
               maxHeight: 740,
               minWidth: 480,
             ),
-            child: OrderDispatchDialog(initialOrder: initialOrder),
+            child: OrderDispatchDialog(initialOrder: initialOrder, initialTab: initialTab),
           ),
         ),
       );
@@ -47,7 +52,7 @@ class OrderDispatchDialog extends StatefulWidget {
         ),
         builder: (ctx) => SizedBox(
           height: MediaQuery.of(context).size.height * 0.85,
-          child: OrderDispatchDialog(initialOrder: initialOrder),
+          child: OrderDispatchDialog(initialOrder: initialOrder, initialTab: initialTab),
         ),
       );
     }
@@ -122,7 +127,7 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
     _tabController = TabController(
       length: 2,
       vsync: this,
-      initialIndex: widget.initialOrder != null ? 1 : 0,
+      initialIndex: widget.initialTab ?? (widget.initialOrder != null ? 1 : 0),
     );
 
     _initFormWithOrder(widget.initialOrder);
@@ -348,7 +353,7 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
           const SizedBox(height: 14),
 
           // Tabs
-          Container(
+          TourTargets.wrap('dispatch-tabs', Container(
             decoration: BoxDecoration(
               color: theme.colorScheme.surfaceVariant.withOpacity(0.4),
               borderRadius: BorderRadius.circular(12),
@@ -374,7 +379,7 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
                 ),
               ],
             ),
-          ),
+          )),
           const SizedBox(height: 12),
 
           // Tab views
@@ -703,12 +708,12 @@ class _OrderDispatchDialogState extends State<OrderDispatchDialog> with SingleTi
             ),
           ),
           const SizedBox(height: 6),
-          TextField(
+          TourTargets.wrap('dispatch-custom-title', TextField(
             controller: _titleController,
             decoration: const InputDecoration(
               hintText: 'e.g. 20-Minute Room Cleanse',
             ),
-          ),
+          )),
           const SizedBox(height: 14),
           Row(
             children: [

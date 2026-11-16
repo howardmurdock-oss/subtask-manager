@@ -14,6 +14,7 @@ import '../../core/security/encryption_helper.dart';
 import '../../models/cadence_config.dart';
 import 'pack_studio_view.dart';
 import 'order_dispatch_dialog.dart';
+import '../tour/app_tour.dart';
 
 class PackManagerView extends StatelessWidget {
   const PackManagerView({super.key});
@@ -337,7 +338,7 @@ class PackManagerView extends StatelessWidget {
             tooltip: 'Import from File (.orderpack)',
             onPressed: () => _importFromFile(context),
           ),
-          IconButton(
+          TourTargets.wrap('create-pack', IconButton(
             icon: const Icon(Icons.add),
             tooltip: 'Create Pack',
             onPressed: () {
@@ -346,7 +347,7 @@ class PackManagerView extends StatelessWidget {
                 MaterialPageRoute(builder: (_) => const PackStudioView()),
               );
             },
-          ),
+          )),
         ],
       ),
       body: SafeArea(

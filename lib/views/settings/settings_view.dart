@@ -31,6 +31,7 @@ import '../../services/background_link_service.dart';
 import '../../core/notifications/notification_service.dart';
 import '../../services/chastity_timer_service.dart';
 import '../chastity_timer/timer_profile_view.dart';
+import '../tour/app_tour.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({super.key});
@@ -903,6 +904,25 @@ class _SettingsViewState extends State<SettingsView> {
                 context,
                 MaterialPageRoute(builder: (_) => const StatsView()),
               ),
+            ),
+          ),
+
+          // The guided tour, any time after the first.
+          Card(
+            margin: const EdgeInsets.only(bottom: 20),
+            child: ListTile(
+              key: const Key('settings-app-tour'),
+              leading: CircleAvatar(
+                backgroundColor: theme.colorScheme.primary.withOpacity(0.18),
+                child: Icon(Icons.school_rounded, color: theme.colorScheme.primary),
+              ),
+              title: const Text('App tour', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(
+                'Where Director mode is, and how to make and send orders.',
+                style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.65)),
+              ),
+              trailing: const Icon(Icons.play_arrow_rounded),
+              onTap: AppTour.requestStart,
             ),
           ),
 
