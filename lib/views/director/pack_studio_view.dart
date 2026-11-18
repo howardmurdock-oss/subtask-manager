@@ -7,6 +7,7 @@ import '../../models/cadence_config.dart';
 import '../../services/order_engine.dart';
 import '../../widgets/draggable_dialog.dart';
 import '../cadence/cadence_studio_view.dart';
+import '../tour/app_tour.dart';
 
 class PackStudioView extends StatefulWidget {
   final OrderPack? existingPack;
@@ -898,11 +899,11 @@ class _PackStudioViewState extends State<PackStudioView> {
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 1.0),
               ),
               const Spacer(),
-              ElevatedButton.icon(
+              TourTargets.wrap('add-directive', ElevatedButton.icon(
                 onPressed: () => _showAddEditOrderDialog(),
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('Add Directive'),
-              ),
+              )),
             ],
           ),
           const SizedBox(height: 12),

@@ -30,6 +30,7 @@ import '../services/app_links.dart';
 import '../services/public_visitor_service.dart';
 import 'chastity_timer/public_timer_view.dart';
 import 'chastity_timer/visitor_profile_chat_view.dart';
+import 'tour/app_tour.dart';
 
 enum AppRole { player, director }
 
@@ -40,7 +41,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver implements TourHost {
   AppRole _currentRole = AppRole.player;
   int _playerIndex = 0;
   int _directorIndex = 0;
@@ -54,6 +55,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<Uri>? _linkSubscription;
   final Set<String> _timerDialogsShown = {};
   Timer? _updateTimer;
+  Timer? _tourOffer;
 
   /// A download from an update that never finished installing.
   String? _unfinishedUpdate;
@@ -63,6 +65,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadSavedRole();
+    AppTour.register(_startTour);
+    // The first time the app opens, the tour offers itself. Later, from Settings.
+    _tourOffer = Timer(const Duration(milliseconds: 1200), () async {
+      if (!mounted || AppTour.isRunning || await AppTour.hasBeenSeen()) return;
+      if (mounted) _startTour();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final sync = Provider.of<SyncService>(context, listen: false);
       _orderSubscription = sync.onOrderReceived.listen((order) {
@@ -115,6 +123,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _tourOffer?.cancel();
+    AppTour.register(null);
     WidgetsBinding.instance.removeObserver(this);
     _updateTimer?.cancel();
     _orderSubscription?.cancel();
@@ -225,6 +235,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         sync.setAppRole(ConnectionRole.player);
       }
     } catch (_) {}
+  }
+
+  // ---- App tour -----------------------------------------------------------
+
+  void _startTour() {
+    if (!mounted) return;
+    AppTour.start(context, this);
+  }
+
+  @override
+  bool get isDirector => _currentRole == AppRole.director;
+
+  @override
+  Future<void> setDirector(bool director) async {
+    if (isDirector != director) await _toggleRole();
+  }
+
+  @override
+  void showDirectorTab(int index) {
+    if (!mounted) return;
+    setState(() => _directorIndex = index);
   }
 
   Future<void> _toggleRole() async {
@@ -721,7 +752,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         title: Row(
           children: [
-            InkWell(
+            TourTargets.wrap('role-chip', InkWell(
               onTap: _toggleRole,
               borderRadius: BorderRadius.circular(12),
               child: Container(
@@ -773,7 +804,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ],
                 ),
               ),
-            ),
+            )),
             const SizedBox(width: 12),
             Expanded(
               child: LayoutBuilder(
@@ -895,9 +926,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           ),
                         ]
                       : [
-                          const NavigationRailDestination(
-                            icon: Icon(Icons.admin_panel_settings_outlined),
-                            selectedIcon: Icon(Icons.admin_panel_settings_rounded),
+                          NavigationRailDestination(
+                            icon: TourTargets.wrap('nav-d0', const Icon(Icons.admin_panel_settings_outlined)),
+                            selectedIcon: TourTargets.wrap('nav-d0-on', const Icon(Icons.admin_panel_settings_rounded)),
                             label: Text('Control'),
                           ),
                           const NavigationRailDestination(
@@ -905,9 +936,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             selectedIcon: Icon(Icons.auto_stories_rounded),
                             label: Text('Quests'),
                           ),
-                          const NavigationRailDestination(
-                            icon: Icon(Icons.folder_copy_outlined),
-                            selectedIcon: Icon(Icons.folder_copy_rounded),
+                          NavigationRailDestination(
+                            icon: TourTargets.wrap('nav-d2', const Icon(Icons.folder_copy_outlined)),
+                            selectedIcon: TourTargets.wrap('nav-d2-on', const Icon(Icons.folder_copy_rounded)),
                             label: Text('Packs'),
                           ),
                           NavigationRailDestination(
@@ -981,9 +1012,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                     ]
                   : [
-                      const NavigationDestination(
-                        icon: Icon(Icons.admin_panel_settings_outlined),
-                        selectedIcon: Icon(Icons.admin_panel_settings_rounded),
+                      NavigationDestination(
+                        icon: TourTargets.wrap('nav-d0', const Icon(Icons.admin_panel_settings_outlined)),
+                        selectedIcon: TourTargets.wrap('nav-d0-on', const Icon(Icons.admin_panel_settings_rounded)),
                         label: 'Control',
                       ),
                       const NavigationDestination(
@@ -991,9 +1022,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         selectedIcon: Icon(Icons.auto_stories_rounded),
                         label: 'Quests',
                       ),
-                      const NavigationDestination(
-                        icon: Icon(Icons.folder_copy_outlined),
-                        selectedIcon: Icon(Icons.folder_copy_rounded),
+                      NavigationDestination(
+                        icon: TourTargets.wrap('nav-d2', const Icon(Icons.folder_copy_outlined)),
+                        selectedIcon: TourTargets.wrap('nav-d2-on', const Icon(Icons.folder_copy_rounded)),
                         label: 'Packs',
                       ),
                       NavigationDestination(

@@ -16,6 +16,7 @@ import '../../widgets/base64_image.dart';
 import '../../models/chastity_timer.dart';
 import '../chastity_timer/timer_dashboard_card.dart';
 import '../toy/toy_partner_sections.dart';
+import '../tour/app_tour.dart';
 
 class DirectorDashboardView extends StatelessWidget {
   const DirectorDashboardView({super.key});
@@ -777,7 +778,7 @@ class DirectorDashboardView extends StatelessWidget {
                   ],
                 ),
                 const Divider(height: 20),
-                Row(
+                TourTargets.wrap('active-partner', Row(
                   children: [
                     const Icon(Icons.people_alt_outlined, size: 16, color: Colors.purpleAccent),
                     const SizedBox(width: 6),
@@ -859,7 +860,7 @@ class DirectorDashboardView extends StatelessWidget {
                         },
                       ),
                   ],
-                ),
+                )),
               ],
             ),
           ),
@@ -870,7 +871,7 @@ class DirectorDashboardView extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: ElevatedButton.icon(
+              child: TourTargets.wrap('dispatch-order', ElevatedButton.icon(
                 onPressed: () => _showDispatchDialog(context),
                 icon: const Icon(Icons.send_rounded, size: 18),
                 label: const Text('Dispatch Order'),
@@ -879,11 +880,11 @@ class DirectorDashboardView extends StatelessWidget {
                   backgroundColor: theme.colorScheme.primary,
                   foregroundColor: theme.colorScheme.brightness == Brightness.dark ? Colors.black : Colors.white,
                 ),
-              ),
+              )),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: OutlinedButton.icon(
+              child: TourTargets.wrap('schedule-order', OutlinedButton.icon(
                 onPressed: () => ScheduleOrderDialog.show(context, isDirectorMode: true),
                 icon: const Icon(Icons.schedule_rounded, size: 18),
                 label: const Text('Schedule Order'),
@@ -891,7 +892,7 @@ class DirectorDashboardView extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   side: BorderSide(color: theme.colorScheme.primary.withOpacity(0.5)),
                 ),
-              ),
+              )),
             ),
           ],
         ),

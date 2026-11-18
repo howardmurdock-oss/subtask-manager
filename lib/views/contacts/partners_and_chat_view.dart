@@ -5,6 +5,7 @@ import '../../services/partner_service.dart';
 import '../../services/chastity_timer_service.dart';
 import '../messenger/messenger_inbox_view.dart';
 import 'partner_directory_view.dart';
+import '../tour/app_tour.dart';
 
 /// Partners and conversations in one panel.
 ///
@@ -55,11 +56,11 @@ class _PartnersAndChatViewState extends State<PartnersAndChatView>
       appBar: AppBar(
         title: const Text('Contacts'),
         actions: [
-          IconButton(
+          TourTargets.wrap('add-partner', IconButton(
             tooltip: 'Add Partner',
             icon: const Icon(Icons.person_add_rounded),
             onPressed: () => PartnerDirectoryView.showAddPartner(context),
-          ),
+          )),
         ],
         bottom: TabBar(
           controller: _tabs,
